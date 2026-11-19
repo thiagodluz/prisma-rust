@@ -5,6 +5,7 @@
 
 pub mod game;
 pub mod matching;
+pub mod recovery;
 pub mod rng;
 pub mod tile;
 
