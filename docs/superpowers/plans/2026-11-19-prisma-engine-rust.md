@@ -73,7 +73,7 @@ prisma-rust/
 
 ---
 
-### Tarefa 1: Projeto e núcleo do tabuleiro
+### Task 1: Projeto e núcleo do tabuleiro
 
 **Conceitos de Rust para explicar nos comentários:** `struct`, `enum`, `Option`, `Copy`, arrays de tamanho fixo, `Box<dyn FnMut>`.
 
@@ -113,7 +113,7 @@ prisma-rust/
 
 ---
 
-### Tarefa 2: Embaralhar e resgate
+### Task 2: Embaralhar e resgate
 
 **Conceitos:** `&mut self`, laços, `Vec`, tentativas com limite.
 
@@ -136,7 +136,7 @@ Regras do `shuffle`: devolve `false` se `ended`, ou se Classic e `!automatic`. A
 
 ---
 
-### Tarefa 3: Especiais e dica
+### Task 3: Especiais e dica
 
 **Conceitos:** fatias (`&[usize]`), iteradores, `Vec` de structs.
 
@@ -163,7 +163,7 @@ Regras (de `engine.js`): `creations` junta sequências da mesma cor que se cruza
 
 ---
 
-### Tarefa 4: Jogada em cascata e pontuação
+### Task 4: Jogada em cascata e pontuação
 
 **Conceitos:** `match` em `enum`, cópia/`clone` do tabuleiro para os eventos, tipos inteiros e decimais.
 
@@ -200,7 +200,7 @@ Escopo desta tarefa: `play` e `resolve_board` completos até a contagem de níve
 
 ---
 
-### Tarefa 5: Fim da jogada e desfazer
+### Task 5: Fim da jogada e desfazer
 
 **Conceitos:** `Vec::push`/`remove`, histórico com limite, enum de resultado.
 
@@ -226,7 +226,7 @@ Mudanças: `play` guarda `snapshot()` antes da troca e chama `remember_state` s�
 
 ---
 
-### Tarefa 6: Restaurar save
+### Task 6: Restaurar save
 
 **Conceitos:** `Result`/`Option`, validação, contas com `checked_*`, `std::mem::replace`.
 
@@ -253,7 +253,7 @@ Regras: as do `restore` de `engine.js` (linhas 489–549), na mesma ordem: forma
 
 ---
 
-### Tarefa 7: Cheats de desenvolvedor
+### Task 7: Cheats de desenvolvedor
 
 **Conceitos:** conversão entre tipos inteiros (`i64` → `usize`), validação de entrada.
 
@@ -279,7 +279,7 @@ Regras: `engine.js` linhas 341–425. Todo cheat válido chama `remember_state` 
 
 ---
 
-### Tarefa 8: Conferência com o `engine.js` original
+### Task 8: Conferência com o `engine.js` original
 
 **Conceitos:** ler texto linha a linha, `split`, `parse`.
 
