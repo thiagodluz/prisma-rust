@@ -331,7 +331,9 @@ impl Game {
         // Soma os pontos e sobe de nível enquanto a meta for alcançada.
         self.score += earned;
         let old_level = self.level;
-        while self.score - self.level_start_score >= level_goal(self.level) {
+        // `saturating_sub` nunca "desce de zero": com `level_start_score` maior que `score`
+        // (campos públicos inconsistentes) a conta dá 0 em vez de pânico.
+        while self.score.saturating_sub(self.level_start_score) >= level_goal(self.level) {
             self.level_start_score += level_goal(self.level);
             // `saturating_add` "para no máximo" em vez de estourar (só um save absurdo chega lá).
             self.level = self.level.saturating_add(1);

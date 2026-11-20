@@ -346,3 +346,15 @@ fn level_goals_grow_gradually_to_6000_and_progress_can_cross_multiple_levels() {
     assert_eq!(game.level_start_score, level_goal(1));
     assert_eq!(game.score - game.level_start_score, game.score - level_goal(1));
 }
+
+#[test]
+fn a_level_start_beyond_the_score_does_not_panic_the_level_count() {
+    // Os campos de `Game` são públicos: um chamador pode deixá-los inconsistentes.
+    // A jogada não pode dar pânico por causa disso (a conta de subtração nunca "desce de zero").
+    let mut game = Game::with_random(lcg_random(7654321));
+    game.level_start_score = game.score + 10_000;
+    let (a, b) = match_move(&game);
+    let result = game.play(a, b);
+    assert!(result.valid);
+    assert_eq!(result.levels_gained, 0, "pontos abaixo do início do nível não sobem de nível");
+}

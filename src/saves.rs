@@ -176,6 +176,12 @@ impl Game {
     /// Saves antigos são migrados; um tabuleiro com combinações prontas é reembaralhado;
     /// um tabuleiro sem jogadas termina a partida (Clássico) ou ganha um Espectro (Zen).
     pub fn restore(&mut self, saved: &SavedGame) -> bool {
+        // 0. O contador de ids do jogo atual precisa ter folga: um save antigo pede ids novos
+        //    para as pedras, e o rescue pede mais um. Sem folga o contador estouraria no meio
+        //    do restore, então recusamos logo no começo, com o jogo intacto.
+        if self.next_id > MAX_SAVED_ID {
+            return false;
+        }
         // 1. Pontos: de 0 até o limite seguro.
         if !(0..=MAX_SAFE).contains(&saved.score) {
             return false;
@@ -212,8 +218,11 @@ impl Game {
             return false;
         };
 
-        // A partir daqui nada pode falhar, então a fonte de sorte emprestada sempre é devolvida.
+        // A partir daqui não há mais `return false`: tudo foi conferido (inclusive a folga dos
+        // ids, no passo 0), então a fonte de sorte emprestada sempre é devolvida no fim.
         // `std::mem::replace` tira a fonte do jogo e deixa uma de enfeite no lugar.
+        // (Só um pânico, como o de uma fonte de sorte estragada em `fresh_board`, deixaria o
+        // enfeite no jogo.)
         let placeholder: RandomSource = Box::new(|| 0.0);
         let random = std::mem::replace(&mut self.random, placeholder);
         let first_free_id = ids.iter().max().map_or(1, |highest| highest + 1);

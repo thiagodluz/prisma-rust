@@ -440,3 +440,19 @@ fn a_save_at_the_highest_level_can_still_be_played_without_overflow() {
     assert!(result.valid);
     assert_eq!(game.level, u32::MAX, "o nível para no máximo em vez de estourar");
 }
+
+#[test]
+fn restore_refuses_when_the_id_counter_has_no_room_left_for_new_tiles() {
+    let source = new_game();
+    // Um save antigo precisa de ids novos para as 64 pedras: com o contador no limite não há de onde tirar.
+    let old_save = save(SavedMode::Zen, 0, legacy_board(&source.board));
+    let (random, calls) = counting_random(3);
+    let mut game = Game::with_random(random);
+    game.next_id = u32::MAX;
+    let before = untouched(&game);
+    let draws = calls.get();
+    assert!(!game.restore(&old_save), "sem folga nos ids o save é recusado em vez de dar pânico");
+    assert_eq!(untouched(&game), before);
+    (game.random)();
+    assert_eq!(calls.get(), draws + 1, "a fonte de sorte continua a original");
+}
