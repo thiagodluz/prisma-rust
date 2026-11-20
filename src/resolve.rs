@@ -4,7 +4,7 @@ use crate::event::{Activation, Created, Event, MoveResult};
 use crate::game::Game;
 use crate::matching::{Matches, adjacent};
 use crate::progression::level_goal;
-use crate::tile::{SIZE, Tile, TileKind, position};
+use crate::tile::{Mode, SIZE, Tile, TileKind, position};
 
 /// Quando o jogador troca um Espectro de lugar, o efeito dele é direto (não depende de combinação).
 pub(crate) struct Direct {
@@ -167,6 +167,7 @@ impl Game {
         if self.ended || !adjacent(a, b) {
             return MoveResult::invalid();
         }
+        let previous = self.snapshot(); // o estado de antes da troca, para o "desfazer"
         self.swap(a, b);
         let found = self.matches();
         let spectrum: Vec<usize> = [a, b]
@@ -177,6 +178,7 @@ impl Game {
             self.swap(a, b); // a troca não serviu: desfaz
             return MoveResult::invalid();
         }
+        self.remember_state(previous); // só jogadas válidas entram no histórico
         let direct = if spectrum.is_empty() {
             None
         } else {
@@ -333,13 +335,37 @@ impl Game {
             self.level_start_score += level_goal(self.level);
             self.level += 1;
         }
+
+        // Subiu de nível: embaralha uma vez (se não conseguir, segue com o tabuleiro como está).
+        let mut shuffled = false;
+        if self.level > old_level {
+            let before = self.board;
+            shuffled = self.shuffle(true);
+            if shuffled {
+                events.push(Event::Shuffle { before, board: self.board, chain });
+            }
+        }
+
+        // Sem jogadas: no Clássico a partida acaba; no Zen o jogo cria um Espectro para destravar.
+        let mut rescued = false;
+        if !self.has_move() {
+            if self.mode == Mode::Classic && !self.no_defeat {
+                self.ended = true;
+                events.push(Event::GameOver { board: self.board, chain });
+            } else {
+                let index = self.rescue();
+                events.push(Event::Rescue { board: self.board, index, chain });
+                rescued = true;
+            }
+        }
+
         MoveResult {
             valid: true,
             events,
             earned,
             chain,
-            rescued: false,
-            shuffled: false,
+            rescued,
+            shuffled,
             ended: self.ended,
             levels_gained: self.level - old_level,
         }

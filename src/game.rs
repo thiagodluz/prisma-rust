@@ -4,6 +4,9 @@ use crate::matching::{Matches, adjacent, find_matches, swap_on};
 use crate::rng::{RandomSource, pick, system_random};
 use crate::tile::{Board, COLORS, Mode, SIZE, Tile, TileKind, position};
 
+/// Quantas jogadas o "desfazer" consegue voltar.
+const UNDO_LIMIT: usize = 50;
+
 /// Uma "fotografia" do jogo num instante, guardada para poder desfazer a jogada.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
@@ -156,6 +159,54 @@ impl Game {
     /// Troca de lugar duas pedras do tabuleiro do jogo.
     pub fn swap(&mut self, a: usize, b: usize) {
         swap_on(&mut self.board, a, b);
+    }
+
+    /// Tira uma "fotografia" do estado atual (para poder voltar a ele depois).
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            next_id: self.next_id,
+            board: self.board, // `Board` é `Copy`: isto já é uma cópia independente
+            score: self.score,
+            level: self.level,
+            level_start_score: self.level_start_score,
+            progression_offset: self.progression_offset,
+            mode: self.mode,
+            ended: self.ended,
+            no_defeat: self.no_defeat,
+        }
+    }
+
+    /// Guarda uma fotografia no histórico do "desfazer". Só as últimas 50 ficam guardadas.
+    pub fn remember_state(&mut self, previous: Snapshot) {
+        self.undo_history.push(previous); // `push` coloca no fim da lista
+        if self.undo_history.len() > UNDO_LIMIT {
+            self.undo_history.remove(0); // `remove(0)` tira a mais antiga, que está no começo
+        }
+    }
+
+    /// Há alguma jogada para desfazer?
+    pub fn can_undo_last_move(&self) -> bool {
+        !self.undo_history.is_empty()
+    }
+
+    /// Volta ao estado de antes da última jogada válida. Conta como recurso de desenvolvedor.
+    /// Devolve `false` se não havia nada para desfazer.
+    pub fn undo_last_move(&mut self) -> bool {
+        // `let ... else`: se `pop` não devolver nada (lista vazia), sai da função com `false`.
+        let Some(previous) = self.undo_history.pop() else {
+            return false;
+        };
+        self.next_id = previous.next_id;
+        self.board = previous.board;
+        self.score = previous.score;
+        self.level = previous.level;
+        self.level_start_score = previous.level_start_score;
+        self.progression_offset = previous.progression_offset;
+        self.mode = previous.mode;
+        self.ended = previous.ended;
+        self.no_defeat = previous.no_defeat;
+        self.cheats_used = true;
+        true
     }
 
     /// Existe alguma jogada possível no tabuleiro atual?
