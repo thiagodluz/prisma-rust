@@ -250,12 +250,8 @@ fn do_action(game: &mut Game, picker: &mut Picker, seed: u32) -> String {
             }
             3 => saved.level_start_score = Some(game.score as i64 + 1),
             4 => saved.progression_offset = Some(-1),
-            5 => {
-                // pontos abaixo do início do nível
-                if game.level_start_score > 0 {
-                    saved.score = game.level_start_score as i64 - 1;
-                }
-            }
+            // pontos abaixo do início do nível (só dá se o início for maior que zero)
+            5 if game.level_start_score > 0 => saved.score = game.level_start_score as i64 - 1,
             _ => {} // sem estrago
         }
         // Metade dos restores acontece no próprio jogo em andamento (confere o histórico de
