@@ -87,7 +87,8 @@ pub fn adjacent(a: usize, b: usize) -> bool {
     ar.abs_diff(br) + ac.abs_diff(bc) == 1
 }
 
-/// Troca de lugar as pedras das casas `a` e `b`.
+/// Troca de lugar as pedras das casas `a` e `b`. Os índices vão de 0 a 63: de 64 em diante
+/// o programa dá pânico.
 ///
 /// `&mut Board` é um empréstimo que permite alterar o tabuleiro.
 pub fn swap_on(board: &mut Board, a: usize, b: usize) {

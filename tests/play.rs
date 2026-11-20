@@ -344,7 +344,8 @@ fn level_goals_grow_gradually_to_6000_and_progress_can_cross_multiple_levels() {
     assert!(result.levels_gained > 0);
     assert_eq!(game.level, 2);
     assert_eq!(game.level_start_score, level_goal(1));
-    assert_eq!(game.score - game.level_start_score, game.score - level_goal(1));
+    // O progresso dentro do novo nível tem que ser menor que a meta dele, senão ainda faltava subir.
+    assert!(game.score - game.level_start_score < level_goal(game.level));
 }
 
 #[test]

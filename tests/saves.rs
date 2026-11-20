@@ -46,19 +46,35 @@ fn save(mode: SavedMode, score: i64, board: Vec<Vec<SavedTile>>) -> SavedGame {
     SavedGame { mode, score, board, ..Default::default() }
 }
 
-/// O que um save recusado não pode ter mexido.
-fn untouched(game: &Game) -> (Board, u32, Mode, u64, u32, u64, u64, bool, bool) {
-    (
-        game.board,
-        game.next_id,
-        game.mode,
-        game.score,
-        game.level,
-        game.level_start_score,
-        game.progression_offset,
-        game.ended,
-        game.cheats_used,
-    )
+/// Tudo o que um save recusado não pode ter mexido, num formato que o `assert_eq!` compara.
+#[derive(Debug, PartialEq)]
+struct Untouched {
+    board: Board,
+    next_id: u32,
+    mode: Mode,
+    score: u64,
+    level: u32,
+    level_start_score: u64,
+    progression_offset: u64,
+    ended: bool,
+    cheats_used: bool,
+    /// Quantas jogadas o "desfazer" ainda guarda.
+    undo_len: usize,
+}
+
+fn untouched(game: &Game) -> Untouched {
+    Untouched {
+        board: game.board,
+        next_id: game.next_id,
+        mode: game.mode,
+        score: game.score,
+        level: game.level,
+        level_start_score: game.level_start_score,
+        progression_offset: game.progression_offset,
+        ended: game.ended,
+        cheats_used: game.cheats_used,
+        undo_len: game.undo_history.len(),
+    }
 }
 
 fn sorted_tiles(board: &Board) -> Vec<Tile> {
@@ -184,8 +200,13 @@ fn v2_and_v3_progression_migrate_to_6000_without_losing_level_points_or_progress
 
 #[test]
 fn corrupt_saves_leave_the_current_game_untouched() {
-    let mut game = new_game();
+    let (random, calls) = counting_random(5);
+    let mut game = Game::with_random(random);
+    let (a, b) = match_move(&game);
+    assert!(game.play(a, b).valid); // agora o histórico de "desfazer" tem uma jogada guardada
+    assert_eq!(game.undo_history.len(), 1);
     let before = untouched(&game);
+    let draws = calls.get();
 
     let mut duplicate = full_board(&game.board);
     let SavedTile::Full { id: first_id, .. } = duplicate[0][0].clone() else { unreachable!() };
@@ -204,7 +225,8 @@ fn corrupt_saves_leave_the_current_game_untouched() {
         ..Default::default()
     };
     assert!(!game.restore(&wrong_level));
-    assert_eq!(untouched(&game), before);
+    assert_eq!(untouched(&game), before, "inclui o histórico de desfazer");
+    assert_eq!(calls.get(), draws, "um save recusado não gasta sorte");
 }
 
 #[test]

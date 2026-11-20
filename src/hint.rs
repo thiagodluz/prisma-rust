@@ -5,7 +5,8 @@ use crate::matching::adjacent;
 use crate::tile::{SIZE, TileKind};
 
 impl Game {
-    /// Procura a melhor jogada e devolve as duas casas a trocar, ou `None` se o jogo acabou.
+    /// Procura a melhor jogada e devolve as duas casas a trocar, ou `None` se o jogo acabou
+    /// ou se o tabuleiro não tem nenhuma jogada possível.
     ///
     /// Precisa de `&mut self` porque, para avaliar cada troca, ela troca as pedras no próprio
     /// tabuleiro e desfaz logo depois (o tabuleiro termina exatamente como começou).

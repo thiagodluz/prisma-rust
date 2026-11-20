@@ -25,6 +25,14 @@ pub struct Snapshot {
 ///
 /// Todos os campos são `pub` (públicos), como no JS, para o resto do programa (e os testes)
 /// poderem ler e mexer neles.
+///
+/// **Cuidado:** quem escreve direto nos campos precisa respeitar o que o jogo supõe, ou uma
+/// jogada pode dar pânico (erro que derruba o programa) ou demorar demais:
+/// - `level_start_score` não passa de `score`;
+/// - `score` fica abaixo de 2^53 (o limite dos saves; `cheat_add_points` e `restore` já respeitam);
+/// - `next_id` fica acima do id de toda pedra do tabuleiro e longe de `u32::MAX`.
+///
+/// Para mudar o jogo com segurança, prefira `play`, `restore` e os `cheat_*`.
 pub struct Game {
     /// Fonte de sorte; pode ser trocada de fora (os testes fazem isso).
     pub random: RandomSource,
@@ -41,7 +49,12 @@ pub struct Game {
     pub undo_history: Vec<Snapshot>,
     pub cheats_used: bool,
     pub no_defeat: bool,
-    /// Gancho de teste: quando `true`, o jogo age como se nunca houvesse jogadas possíveis.
+    /// **Só para testes.** Quando `true`, o jogo age como se nunca houvesse jogadas possíveis.
+    ///
+    /// Não ligue num jogo de verdade: com ele ligado, `new_game` e `restart` dão pânico (não
+    /// existe tabuleiro "jogável" para sortear) e todo embaralhar falha. O JS tem o mesmo
+    /// efeito, pois os testes de lá trocam `hasMove` por uma função que devolve sempre `false`.
+    #[doc(hidden)]
     pub force_no_moves: bool,
 }
 
@@ -156,7 +169,8 @@ impl Game {
         find_matches(&self.board)
     }
 
-    /// Troca de lugar duas pedras do tabuleiro do jogo.
+    /// Troca de lugar duas pedras do tabuleiro do jogo. Os índices vão de 0 a 63: de 64 em
+    /// diante o programa dá pânico (use `adjacent` e `play`, que conferem isso para você).
     pub fn swap(&mut self, a: usize, b: usize) {
         swap_on(&mut self.board, a, b);
     }

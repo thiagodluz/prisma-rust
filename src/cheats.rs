@@ -1,7 +1,9 @@
 //! Cheats de desenvolvedor.
 //!
 //! Todo cheat **válido** guarda o estado para o "desfazer" e marca `cheats_used = true`.
-//! Um pedido inválido devolve `false` (ou uma jogada inválida) e não muda absolutamente nada.
+//! Um pedido inválido devolve `false` (ou uma jogada inválida) e não muda nada no jogo.
+//! Única ressalva: `cheat_shuffle` que não acha um arranjo (raro) já gastou números da fonte de
+//! sorte tentando, como no JS; o tabuleiro e o resto do jogo continuam iguais.
 
 use crate::event::MoveResult;
 use crate::game::Game;
