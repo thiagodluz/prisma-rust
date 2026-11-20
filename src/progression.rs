@@ -19,8 +19,6 @@ pub(crate) fn goal_for(level: u64, cap: u64) -> u64 {
 /// Pontos acumulados no início do nível `level`: a soma das metas de todos os níveis anteriores.
 ///
 /// Devolve `None` se a conta estourar o tamanho do número (`checked_*` avisa em vez de dar erro).
-// Ainda sem uso fora dos testes: a Tarefa 6 (restaurar saves) vai usar, e este aviso some.
-#[allow(dead_code)]
 pub(crate) fn level_start_at(level: u64, cap: u64) -> Option<u64> {
     // Quantos níveis anteriores ainda estavam "subindo" (meta crescente) e quantos já estavam no teto.
     let rising_levels = level.saturating_sub(1).min(cap.saturating_sub(1800).div_ceil(150));
