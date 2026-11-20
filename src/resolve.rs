@@ -333,7 +333,8 @@ impl Game {
         let old_level = self.level;
         while self.score - self.level_start_score >= level_goal(self.level) {
             self.level_start_score += level_goal(self.level);
-            self.level += 1;
+            // `saturating_add` "para no máximo" em vez de estourar (só um save absurdo chega lá).
+            self.level = self.level.saturating_add(1);
         }
 
         // Subiu de nível: embaralha uma vez (se não conseguir, segue com o tabuleiro como está).

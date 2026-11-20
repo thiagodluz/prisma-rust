@@ -416,3 +416,27 @@ fn to_saved_round_trips_through_restore() {
     let highest = copy.board.iter().flatten().map(|tile| tile.id).max().expect("64 pedras");
     assert!(copy.next_id > highest, "as próximas pedras não repetem ids do tabuleiro");
 }
+
+#[test]
+fn a_save_at_the_highest_level_can_still_be_played_without_overflow() {
+    let source = new_game();
+    // Nível 4294967295 (o maior que cabe) com 5999 pontos de progresso: qualquer jogada sobe de nível.
+    let level = i64::from(u32::MAX);
+    let start = 107_100 + (level - 29) * 6000; // início desse nível, com a meta já no teto de 6000
+    let saved = SavedGame {
+        mode: SavedMode::Zen,
+        score: start + 5999,
+        board: full_board(&source.board),
+        progression_version: Some(4),
+        level: Some(level),
+        level_start_score: Some(start),
+        progression_offset: Some(0),
+        ..Default::default()
+    };
+    let mut game = new_game();
+    assert!(game.restore(&saved));
+    let (a, b) = match_move(&game);
+    let result = game.play(a, b);
+    assert!(result.valid);
+    assert_eq!(game.level, u32::MAX, "o nível para no máximo em vez de estourar");
+}
