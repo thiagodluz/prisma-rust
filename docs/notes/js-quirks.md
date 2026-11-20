@@ -2,8 +2,12 @@
 
 O motor Rust joga **exatamente** como o `engine.js` do Prisma: `tests/cross_check.rs` repete
 partidas inteiras geradas pelo JS e exige texto idêntico, rodada a rodada (jogada, pontos, nível,
-próximo id, eventos e tabuleiro com ids). Este arquivo lista o que é diferente **de propósito**,
-para ninguém se surpreender (e para a Fase 2 saber o que repetir no leitor de arquivos).
+próximo id, eventos e tabuleiro com ids). Já `tests/differential.rs` repete 20 partidas
+ALEATÓRIAS do JS (2000 ações misturadas: dica, jogadas inválidas, cheats, desfazer, embaralhar e
+saves certos e estragados) e compara cada ação por um "carimbo" do texto completo. Para refazer
+os arquivos de referência, ou ver o texto do JS de uma ação que divergiu, veja o começo de
+`tests/golden/generate-diff.mjs`. Este arquivo lista o que é diferente **de propósito**, para
+ninguém se surpreender (e para a Fase 2 saber o que repetir no leitor de arquivos).
 
 ## Nomes e formato
 

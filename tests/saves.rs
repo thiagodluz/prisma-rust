@@ -120,6 +120,38 @@ fn restoring_an_unsettled_save_rearranges_its_specials_instead_of_discarding_the
 }
 
 #[test]
+fn a_finished_classic_save_comes_back_finished_even_with_moves_left() {
+    let game = new_game();
+    assert!(game.has_move(), "o tabuleiro tem jogadas; só o save diz que acabou");
+    let mut saved = game.to_saved();
+    saved.mode = SavedMode::Classic;
+    saved.ended = true;
+
+    let mut restored = new_game();
+    assert!(restored.restore(&saved));
+    assert!(restored.ended);
+}
+
+#[test]
+fn the_ended_mark_is_ignored_where_the_game_cannot_end() {
+    let mut saved = new_game().to_saved();
+    saved.ended = true;
+
+    // O Zen nunca termina.
+    saved.mode = SavedMode::Zen;
+    let mut zen = new_game();
+    assert!(zen.restore(&saved));
+    assert!(!zen.ended);
+
+    // O Clássico com "sem derrota" ligado também não.
+    saved.mode = SavedMode::Classic;
+    saved.no_defeat = true;
+    let mut no_defeat = new_game();
+    assert!(no_defeat.restore(&saved));
+    assert!(!no_defeat.ended);
+}
+
+#[test]
 fn a_no_moves_save_restores_as_finished_classic_or_playable_zen() {
     let original = fixture();
     assert!(!original.has_move());
