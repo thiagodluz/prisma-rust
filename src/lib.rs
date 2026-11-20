@@ -3,6 +3,7 @@
 //! Esta biblioteca guarda as regras do jogo. Ela não desenha nada na tela, não toca som
 //! e não lê arquivos: isso fica para quem usar a biblioteca.
 
+pub mod cheats;
 pub mod event;
 pub mod game;
 pub mod hint;
