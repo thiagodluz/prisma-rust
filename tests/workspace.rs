@@ -33,3 +33,31 @@ fn nenhum_cargo_toml_usa_edition_2024() {
         );
     }
 }
+
+/// Pega o valor de uma linha `chave = "valor"` do `Cargo.toml` (só serve para linhas simples).
+fn valor_da_chave(texto: &str, chave: &str) -> String {
+    let inicio = format!("{chave} = \"");
+    texto
+        .lines()
+        .find_map(|linha| linha.trim_start().strip_prefix(inicio.as_str()))
+        .and_then(|resto| resto.split('"').next())
+        .unwrap_or_else(|| panic!("não achei {chave} = \"...\" no game/Cargo.toml"))
+        .to_owned()
+}
+
+/// O cargo-quad-apk procura a biblioteca do app pelo ÚLTIMO pedaço do `package_name`
+/// (em `com.thiagodluz.prisma.rust` seria `librust.so`), mas o arquivo é gravado com o nome
+/// do programa (`libprisma_game.so`). Se os dois não forem iguais, o APK instala mas o app
+/// fecha na hora com `library "librust.so" not found`.
+#[test]
+fn ultimo_pedaco_do_package_name_e_o_nome_do_programa() {
+    let texto = ler("game/Cargo.toml");
+    let programa = valor_da_chave(&texto, "name");
+    let package_name = valor_da_chave(&texto, "package_name");
+    let ultimo_pedaco = package_name.rsplit('.').next().unwrap();
+    assert_eq!(
+        ultimo_pedaco, programa,
+        "package_name = \"{package_name}\" termina em \"{ultimo_pedaco}\", mas o programa se \
+         chama \"{programa}\". O app fecharia ao abrir no Android (librust.so not found)."
+    );
+}

@@ -14,7 +14,10 @@ macroquad = "0.4"
 
 # Dados para o gerador de APK. Só o essencial por enquanto.
 [package.metadata.android]
-package_name = "com.thiagodluz.prisma.rust"
+# O último pedaço do package_name TEM de ser o nome do programa (`name` lá em cima): é por ele
+# que o Android acha a biblioteca (libprisma_game.so). Se mudar um, mude o outro; o teste
+# `tests/workspace.rs` avisa. (O Prisma em JS usa com.thiagodluz.prisma, então os dois convivem.)
+package_name = "com.thiagodluz.prisma_game"
 label = "Prisma (Rust)"
 # Ícones do app (gerados por tools/prepare_assets.py em android_res/mipmap-*/).
 res = "android_res"

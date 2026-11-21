@@ -47,7 +47,7 @@ O APK sai em `target/android-artifacts/debug/apk/`. Para a versão "release", ac
    Não precisa de login nem de zip; o Android baixa o `.apk` direto.
 2. Abrir o `.apk` baixado. O Android pede para permitir "instalar apps desconhecidos" para o
    navegador usado.
-3. O app aparece como **Prisma (Rust)** (identificador `com.thiagodluz.prisma.rust`, diferente
+3. O app aparece como **Prisma (Rust)** (identificador `com.thiagodluz.prisma_game`, diferente
    do `com.thiagodluz.prisma` do JS, então os dois convivem).
 
 A release `apk-mais-recente` é apagada e recriada a cada envio para a `main`, sempre com o
@@ -71,3 +71,13 @@ execução. Script: `tools/teste-emulador.sh`.
 
 Limites: o emulador usa a biblioteca de PC (x86), não a do celular (arm64); um erro que só
 existe no arm64 não aparece nele. Serve para pegar erros de programa e de montagem do APK.
+
+## Por que o `package_name` termina em `prisma_game`
+
+O cargo-quad-apk escreve no app "carregue a biblioteca chamada <último pedaço do package_name>",
+mas grava o arquivo com o nome do programa (`libprisma_game.so`). Com o nome antigo
+(`...prisma.rust`) o app procurava `librust.so`, não achava e fechava ao abrir
+(`UnsatisfiedLinkError: library "librust.so" not found`, visto no emulador). Por isso os dois
+nomes precisam bater; o teste `ultimo_pedaco_do_package_name_e_o_nome_do_programa` guarda isso.
+Como o `package_name` é o identificador do app, o app novo é outro para o Android: o
+"Prisma (Rust)" antigo, que nunca abriu, pode ser desinstalado.
