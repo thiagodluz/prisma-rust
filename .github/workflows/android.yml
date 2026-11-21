@@ -68,7 +68,10 @@ jobs:
       # Release de endereço fixo, para baixar o .apk direto no celular, sem zip e sem login:
       # https://github.com/thiagodluz/prisma-rust/releases/download/apk-mais-recente/prisma-rust.apk
       # A cada execução a release antiga é apagada e uma nova é criada com o APK mais recente.
+      # Só roda na branch main: um teste numa branch de trabalho não pode trocar o APK que o
+      # celular baixa pelo link fixo.
       - name: Publicar na release "apk-mais-recente"
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
