@@ -6,7 +6,13 @@
 # Roda no GitHub (.github/workflows/android.yml), com o emulador já ligado.
 # Termina com erro (1) se o app não instalar ou se fechar sozinho.
 
-PACOTE="com.thiagodluz.prisma.rust"
+# Identificador do app: lido do game/Cargo.toml (rode o script da raiz do projeto).
+PACOTE="$(sed -n 's/^package_name = "\(.*\)"/\1/p' game/Cargo.toml)"
+if [ -z "$PACOTE" ]; then
+  echo "Não achei package_name em game/Cargo.toml (rode o script da raiz do projeto)."
+  exit 1
+fi
+echo "Pacote: $PACOTE"
 PASTA_APK="${1:?faltou a pasta com o APK}"
 SAIDA="${2:?faltou a pasta de saída}"
 
