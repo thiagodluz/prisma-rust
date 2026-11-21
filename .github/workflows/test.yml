@@ -1,0 +1,15 @@
+name: Testes
+
+# Roda os testes a cada envio e a cada pedido de mesclagem.
+on:
+  push:
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Testa o motor e o jogo (a raiz sozinha só testaria o motor).
+      - run: cargo test --workspace

@@ -1,0 +1,34 @@
+name: Android
+
+# Gera o APK a cada envio para a main, ou quando alguém clicar em "Run workflow".
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A ferramenta que gera o APK carrega um Cargo antigo por dentro, que pode não ler o
+      # formato novo do Cargo.lock (versão 4). Só neste fluxo, sem commitar, voltamos o
+      # arquivo para a versão 3, que é igual para pacotes do crates.io.
+      - name: Deixar o Cargo.lock no formato antigo
+        run: sed -i 's/^version = 4$/version = 3/' Cargo.lock
+
+      # Imagem oficial do tutorial do Macroquad: já traz Rust, Android SDK/NDK e o
+      # cargo-quad-apk. Modo debug (assinado com uma chave de teste).
+      # O comando roda de dentro de `game/` (-w): a ferramenta ignora `-p` e só enxerga o
+      # pacote da pasta onde está; da raiz ela pegaria o motor e reclamaria que não acha o
+      # miniquad. O APK sai em target/android-artifacts/debug/apk/ na raiz do projeto.
+      - name: Gerar o APK
+        run: docker run --rm -v "$PWD":/root/src -w /root/src/game notfl3/cargo-apk cargo quad-apk build
+
+      - name: Guardar o APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: prisma-debug-apk
+          path: target/android-artifacts/debug/apk/*.apk
+          if-no-files-found: error

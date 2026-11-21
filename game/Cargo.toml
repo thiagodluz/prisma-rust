@@ -15,6 +15,9 @@ macroquad = "0.4"
 [package.metadata.android]
 package_name = "com.thiagodluz.prisma.rust"
 label = "Prisma (Rust)"
+# Ícones do app (gerados por tools/prepare_assets.py em android_res/mipmap-*/).
+res = "android_res"
+icon = "@mipmap/ic_launcher"
 
 [package.metadata.android.activity_attributes]
 # Androids novos exigem declarar isto; sem ele o app não instala.
