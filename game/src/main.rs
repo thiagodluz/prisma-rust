@@ -6,6 +6,7 @@ mod assets;
 mod contador;
 mod input;
 mod layout;
+mod linha;
 mod plataforma;
 mod render;
 mod tom;
