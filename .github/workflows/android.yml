@@ -6,9 +6,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Se chegar um envio novo enquanto o anterior ainda está gerando o APK, o antigo é cancelado.
+concurrency:
+  group: android
+  cancel-in-progress: true
+
 jobs:
   apk:
     runs-on: ubuntu-latest
+    # Escrever na release exige permissão de escrita no repositório (só neste fluxo).
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -41,3 +49,18 @@ jobs:
           name: prisma-debug-apk
           path: target/android-artifacts/debug/apk/*.apk
           if-no-files-found: error
+
+      # Release de endereço fixo, para baixar o .apk direto no celular, sem zip e sem login:
+      # https://github.com/thiagodluz/prisma-rust/releases/download/apk-mais-recente/prisma-rust.apk
+      # A cada execução a release antiga é apagada e uma nova é criada com o APK mais recente.
+      - name: Publicar na release "apk-mais-recente"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "$(ls target/android-artifacts/debug/apk/*.apk | head -n 1)" prisma-rust.apk
+          gh release delete apk-mais-recente --cleanup-tag --yes || true
+          gh release create apk-mais-recente prisma-rust.apk \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "APK mais recente (versão de teste)" \
+            --notes "Gerado automaticamente a partir do commit ${GITHUB_SHA::7}. É uma versão de teste, assinada com uma chave de debug que muda a cada geração: desinstale a versão anterior antes de instalar esta."

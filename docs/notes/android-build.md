@@ -3,8 +3,8 @@
 ## Resumo
 
 O GitHub Actions gera o APK a cada envio para a `main` (fluxo **Android**, arquivo
-`.github/workflows/android.yml`). O resultado fica como "artefato" da execução, com o nome
-`prisma-debug-apk`.
+`.github/workflows/android.yml`). O resultado vai para a release `apk-mais-recente` (endereço
+fixo, sem zip) e também fica como "artefato" da execução, com o nome `prisma-debug-apk`.
 
 ## Gerar na mão (se um dia for preciso)
 
@@ -42,12 +42,17 @@ O APK sai em `target/android-artifacts/debug/apk/`. Para a versão "release", ac
 
 ## Instalar no celular
 
-1. Na página da execução do fluxo **Android** no GitHub, baixar o artefato `prisma-debug-apk`
-   (um `.zip`).
-2. Extrair o `.zip` e abrir o `.apk`. O Android pede para permitir "instalar apps
-   desconhecidos" para o navegador ou o gerenciador de arquivos usado.
+1. No celular, abrir <https://github.com/thiagodluz/prisma-rust/releases/download/apk-mais-recente/prisma-rust.apk>
+   (a página da release é <https://github.com/thiagodluz/prisma-rust/releases/tag/apk-mais-recente>).
+   Não precisa de login nem de zip; o Android baixa o `.apk` direto.
+2. Abrir o `.apk` baixado. O Android pede para permitir "instalar apps desconhecidos" para o
+   navegador usado.
 3. O app aparece como **Prisma (Rust)** (identificador `com.thiagodluz.prisma.rust`, diferente
    do `com.thiagodluz.prisma` do JS, então os dois convivem).
+
+A release `apk-mais-recente` é apagada e recriada a cada envio para a `main`, sempre com o
+APK novo. Por segurança o fluxo também guarda o APK como artefato da execução
+(`prisma-debug-apk`, em zip).
 
 ## Assinatura (importante)
 
