@@ -18,13 +18,22 @@ jobs:
       - name: Deixar o Cargo.lock no formato antigo
         run: sed -i 's/^version = 4$/version = 3/' Cargo.lock
 
-      # Imagem oficial do tutorial do Macroquad: já traz Rust, Android SDK/NDK e o
-      # cargo-quad-apk. Modo debug (assinado com uma chave de teste).
+      # Imagem oficial do tutorial do Macroquad: já traz Android SDK/NDK e o cargo-quad-apk.
+      # Modo debug (assinado com uma chave de teste).
       # O comando roda de dentro de `game/` (-w): a ferramenta ignora `-p` e só enxerga o
       # pacote da pasta onde está; da raiz ela pegaria o motor e reclamaria que não acha o
       # miniquad. O APK sai em target/android-artifacts/debug/apk/ na raiz do projeto.
+      # A imagem traz um Rust antigo (1.79, de 2024); o motor usa `Option::is_none_or`, que só
+      # existe a partir do 1.82. Por isso o contêiner atualiza o Rust antes e instala de novo
+      # os alvos do Android para a versão nova.
       - name: Gerar o APK
-        run: docker run --rm -v "$PWD":/root/src -w /root/src/game notfl3/cargo-apk cargo quad-apk build
+        run: |
+          docker run --rm -v "$PWD":/root/src -w /root/src/game notfl3/cargo-apk sh -c '
+            rustup update stable &&
+            rustup default stable &&
+            rustup target add armv7-linux-androideabi aarch64-linux-android i686-linux-android &&
+            rustc --version &&
+            cargo quad-apk build'
 
       - name: Guardar o APK
         uses: actions/upload-artifact@v4
