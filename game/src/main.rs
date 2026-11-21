@@ -2,6 +2,7 @@
 //!
 //! As regras do jogo ficam no pacote `prisma_engine`; aqui só se desenha e se lê toque.
 
+mod assets;
 mod layout;
 
 use macroquad::prelude::*;
