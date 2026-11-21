@@ -13,12 +13,14 @@ mod plataforma;
 mod render;
 mod tom;
 
+use crate::app::App;
+use crate::input::Evento;
 use macroquad::audio::{load_sound_from_bytes, play_sound_once, Sound};
 // Atenção: o `info!` do miniquad não aceita `{nome}` dentro do texto; os valores vão como
 // argumentos (`info!("x={}", x)`), senão a chave aparece escrita no registro.
 use macroquad::logging::info;
 use macroquad::prelude::*;
-use prisma_engine::{lcg_random, Game, Tile, TileKind};
+use prisma_engine::{lcg_random, Game, Mode, Tile, TileKind};
 
 /// Configuração da janela. No Android o sistema escolhe o tamanho; no PC usamos 540×960,
 /// uma tela de celular em pé.
@@ -60,18 +62,18 @@ fn demo_game() -> Game {
     jogo
 }
 
-/// Qual tela abrir. No celular não há argumentos, então abre sempre a de teste.
+/// Qual tela abrir. No celular não há argumentos, então abre sempre o jogo.
 #[derive(Debug, PartialEq)]
 enum Tela {
-    /// A tela de teste do M0b: contador, som e vibração.
+    /// A tela de teste do M0b: contador, som e vibração (`--tela diagnostico`).
     Diagnostico,
     /// O tabuleiro de vitrine do M0a (só no PC, com `--tela vitrine`).
     Vitrine,
-    /// A tela de jogo (`--tela jogo`; com `--cena nome` mostra um momento fixo, para foto).
+    /// O jogo (o padrão). Com `--cena nome` mostra um momento fixo dele, para foto.
     Jogo,
 }
 
-/// Lê `--tela vitrine` nos argumentos; qualquer outra coisa (ou nada) abre o diagnóstico.
+/// Lê `--tela vitrine|diagnostico|jogo` nos argumentos; qualquer outra coisa (ou nada) abre o jogo.
 fn tela_pedida(args: &[String]) -> Tela {
     let valor = args
         .iter()
@@ -79,8 +81,8 @@ fn tela_pedida(args: &[String]) -> Tela {
         .and_then(|posicao| args.get(posicao + 1));
     match valor.map(String::as_str) {
         Some("vitrine") => Tela::Vitrine,
-        Some("jogo") => Tela::Jogo,
-        _ => Tela::Diagnostico,
+        Some("diagnostico") => Tela::Diagnostico,
+        _ => Tela::Jogo,
     }
 }
 
@@ -117,7 +119,7 @@ async fn main() {
     match tela_pedida(&argumentos) {
         Tela::Vitrine => rodar_vitrine(foto).await,
         Tela::Diagnostico => rodar_diagnostico(foto).await,
-        Tela::Jogo => rodar_cena(cena_pedida(&argumentos).unwrap_or_else(|| "inicio".to_string()), foto).await,
+        Tela::Jogo => rodar_jogo(foto, cena_pedida(&argumentos)).await,
     }
 }
 
@@ -135,17 +137,92 @@ async fn rodar_vitrine(foto: Option<String>) {
     }
 }
 
-/// Mostra uma cena fixa da tela de jogo (provisório da Task 6; a Task 7 liga o jogo de verdade).
-async fn rodar_cena(nome: String, foto: Option<String>) {
-    let Some(app) = cenas::cena(&nome) else {
-        eprintln!("cena desconhecida: {nome}");
-        std::process::exit(2);
+/// As linhas de registro com a posição do tabuleiro e dos botões, em PIXELS REAIS da tela
+/// (posição lógica × `escala`): o teste do celular virtual lê estas linhas para saber onde
+/// tocar. `jogar_novamente`, `cancelar` e `confirmar` são sempre registrados, mesmo quando
+/// estão escondidos; `embaralhar` só existe no Zen.
+fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32) -> Vec<String> {
+    let tabuleiro = tela.tabuleiro;
+    let mut linhas = vec![format!(
+        "PRISMA_M1 tabuleiro x={:.0} y={:.0} lado={:.0}",
+        tabuleiro.x * escala,
+        tabuleiro.y * escala,
+        tabuleiro.w * escala
+    )];
+    let mut botoes = vec![("zen", tela.aba_zen), ("classico", tela.aba_classico)];
+    if let Some(embaralhar) = tela.botao_embaralhar {
+        botoes.push(("embaralhar", embaralhar));
+    }
+    botoes.extend([
+        ("dica", tela.botao_dica),
+        ("novo_jogo", tela.botao_novo_jogo),
+        ("jogar_novamente", tela.botao_jogar_novamente),
+        ("cancelar", tela.dialogo_cancelar),
+        ("confirmar", tela.dialogo_confirmar),
+    ]);
+    for (nome, area) in botoes {
+        linhas.push(format!(
+            "PRISMA_M1 botao={} x={:.0} y={:.0}",
+            nome,
+            (area.x + area.w / 2.0) * escala,
+            (area.y + area.h / 2.0) * escala
+        ));
+    }
+    linhas
+}
+
+/// O jogo: lê o dedo (ou o mouse), anda com a animação, desenha e escreve no registro do
+/// Android as linhas `PRISMA_M1 ...` que o teste do celular virtual lê.
+/// Com `cena`, mostra um momento fixo do jogo (para foto) em vez de uma partida nova.
+async fn rodar_jogo(foto: Option<String>, cena: Option<String>) {
+    let mut app = match cena {
+        Some(nome) => cenas::cena(&nome).unwrap_or_else(|| {
+            eprintln!("cena desconhecida: {nome}");
+            std::process::exit(2);
+        }),
+        None => App::novo(),
     };
     let sprites = render::Sprites::load();
+    let calcular_tela = |app: &App| layout::tela_jogo(screen_width(), screen_height(), app.modo() == Mode::Zen);
+
     let mut quadro = 0u32;
+    // Tamanho e modo para os quais a posição dos botões já foi escrita no registro.
+    let mut geometria_registrada: Option<(f32, f32, Mode)> = None;
+    let mut ultima_posicao = (-1.0f32, -1.0f32);
     loop {
-        let tela = layout::tela_jogo(screen_width(), screen_height(), app.painel().embaralhar_visivel);
+        // No celular o toque vira clique do mouse (o Macroquad faz isso sozinho, como no M0b).
+        let tela = calcular_tela(&app);
+        let (x, y) = mouse_position();
+        if is_mouse_button_pressed(MouseButton::Left) {
+            app.tocar(Evento::Baixo { x, y }, &tela);
+        } else if is_mouse_button_down(MouseButton::Left) && (x, y) != ultima_posicao {
+            app.tocar(Evento::Mover { x, y }, &tela);
+        }
+        if is_mouse_button_released(MouseButton::Left) {
+            app.tocar(Evento::Cima { x, y }, &tela);
+        }
+        ultima_posicao = (x, y);
+
+        // Sem limitar o tempo: ao voltar do segundo plano a animação simplesmente termina.
+        // (No modo foto o jogo fica parado, para a cena sair exatamente como foi montada.)
+        if foto.is_none() {
+            app.avancar(get_frame_time() * 1000.0);
+        }
+
+        // O modo pode ter mudado com o toque: o desenho e o registro usam o layout novo.
+        let tela = calcular_tela(&app);
+        let situacao = (screen_width(), screen_height(), app.modo());
+        if geometria_registrada != Some(situacao) {
+            geometria_registrada = Some(situacao);
+            for linha in linhas_de_geometria(&tela, screen_dpi_scale()) {
+                info!("{}", linha);
+            }
+        }
+
         render::draw_jogo(&app, &sprites, &tela);
+        for linha in app.registro() {
+            info!("{}", linha);
+        }
         foto_do_quadro(&foto, quadro);
         quadro += 1;
         next_frame().await;
@@ -283,20 +360,66 @@ mod tests {
 
     #[test]
     fn tela_pedida_le_o_argumento_tela() {
+        assert_eq!(tela_pedida(&args(&["--tela", "diagnostico"])), Tela::Diagnostico);
         assert_eq!(tela_pedida(&args(&["--tela", "vitrine"])), Tela::Vitrine);
+        assert_eq!(tela_pedida(&args(&["--tela", "jogo"])), Tela::Jogo);
         assert_eq!(tela_pedida(&args(&["x", "--tela", "vitrine", "y"])), Tela::Vitrine);
-        assert_eq!(tela_pedida(&args(&[])), Tela::Diagnostico);
-        assert_eq!(tela_pedida(&args(&["--tela"])), Tela::Diagnostico);
-        assert_eq!(tela_pedida(&args(&["--tela", "xyz"])), Tela::Diagnostico);
+        // Sem argumento (como no celular) ou com argumento desconhecido: o jogo.
+        assert_eq!(tela_pedida(&args(&[])), Tela::Jogo);
+        assert_eq!(tela_pedida(&args(&["--tela"])), Tela::Jogo);
+        assert_eq!(tela_pedida(&args(&["--tela", "xyz"])), Tela::Jogo);
     }
 
     #[test]
-    fn tela_jogo_e_cena_sao_lidas_dos_argumentos() {
-        assert_eq!(tela_pedida(&args(&["--tela", "jogo"])), Tela::Jogo);
-        assert_eq!(cena_pedida(&args(&["--tela", "jogo", "--cena", "fim"])), Some("fim".to_string()));
+    fn cena_pedida_le_o_argumento_cena() {
+        assert_eq!(cena_pedida(&args(&["--tela", "jogo", "--cena", "limpando"])), Some("limpando".to_string()));
         assert_eq!(cena_pedida(&args(&["x", "--cena", "queda", "y"])), Some("queda".to_string()));
         assert_eq!(cena_pedida(&args(&["--cena"])), None);
         assert_eq!(cena_pedida(&args(&[])), None);
+    }
+
+    #[test]
+    fn registro_de_geometria_usa_pixels_reais() {
+        let tela = layout::tela_jogo(540.0, 960.0, true);
+        let linhas = linhas_de_geometria(&tela, 2.0);
+        assert_eq!(
+            linhas[0],
+            format!(
+                "PRISMA_M1 tabuleiro x={:.0} y={:.0} lado={:.0}",
+                tela.tabuleiro.x * 2.0,
+                tela.tabuleiro.y * 2.0,
+                tela.tabuleiro.w * 2.0
+            )
+        );
+        let nomes: Vec<&str> = linhas[1..].iter().map(|linha| linha.split(' ').nth(1).unwrap()).collect();
+        assert_eq!(
+            nomes,
+            [
+                "botao=zen",
+                "botao=classico",
+                "botao=embaralhar",
+                "botao=dica",
+                "botao=novo_jogo",
+                "botao=jogar_novamente",
+                "botao=cancelar",
+                "botao=confirmar"
+            ]
+        );
+        // O centro do botão Dica, em pixels reais (lógico x 2).
+        let dica = tela.botao_dica;
+        let esperado = format!(
+            "PRISMA_M1 botao=dica x={:.0} y={:.0}",
+            (dica.x + dica.w / 2.0) * 2.0,
+            (dica.y + dica.h / 2.0) * 2.0
+        );
+        assert!(linhas.contains(&esperado), "faltou: {esperado}");
+        // No Clássico não há Embaralhar, mas os botões escondidos continuam registrados.
+        let classico = layout::tela_jogo(540.0, 960.0, false);
+        let linhas = linhas_de_geometria(&classico, 2.0);
+        assert!(!linhas.iter().any(|linha| linha.contains("botao=embaralhar")));
+        for escondido in ["botao=jogar_novamente", "botao=cancelar", "botao=confirmar"] {
+            assert!(linhas.iter().any(|linha| linha.contains(escondido)), "faltou {escondido}");
+        }
     }
 
     #[test]
