@@ -6,6 +6,7 @@ mod assets;
 mod contador;
 mod layout;
 mod render;
+mod tom;
 
 use macroquad::prelude::*;
 use prisma_engine::{lcg_random, Game, Tile, TileKind};
