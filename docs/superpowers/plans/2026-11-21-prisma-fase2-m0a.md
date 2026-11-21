@@ -56,7 +56,7 @@
 
 ---
 
-### Tarefa 1: Workspace, edition 2021 e janela vazia
+### Task 1: Workspace, edition 2021 e janela vazia
 
 **Arquivos:**
 - Criar: `tests/workspace.rs`, `game/Cargo.toml`, `game/src/main.rs`
@@ -74,7 +74,7 @@
 
 ---
 
-### Tarefa 2: `layout` — onde fica o tabuleiro
+### Task 2: `layout` — onde fica o tabuleiro
 
 **Arquivos:**
 - Criar: `game/src/layout.rs`
@@ -100,7 +100,7 @@
 
 ---
 
-### Tarefa 3: Imagens — script, PNG e módulo `assets`
+### Task 3: Imagens — script, PNG e módulo `assets`
 
 **Arquivos:**
 - Criar: `tools/prepare_assets.py`, `game/assets/{gem,burst,cross}-{0..6}.png`, `game/assets/spectrum.png`, `game/assets/LICENSE-ART.md`, `game/android_res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png`, `game/src/assets.rs`
@@ -133,7 +133,7 @@
 
 ---
 
-### Tarefa 4: `render` e tabuleiro de vitrine, com "foto"
+### Task 4: `render` e tabuleiro de vitrine, com "foto"
 
 **Arquivos:**
 - Criar: `game/src/render.rs`
@@ -157,7 +157,7 @@
 
 ---
 
-### Tarefa 5: Arquivos do Android e do CI (sem GitHub ainda)
+### Task 5: Arquivos do Android e do CI (sem GitHub ainda)
 
 **Arquivos:**
 - Criar: `.github/workflows/test.yml`, `.github/workflows/android.yml`, `docs/notes/android-build.md`
@@ -176,7 +176,7 @@
 
 ---
 
-### Tarefa 6: Primeira execução no GitHub e APK no celular
+### Task 6: Primeira execução no GitHub e APK no celular
 
 **Pré-condição (só o Thiago pode cumprir):** criar no GitHub o repositório **vazio** `prisma-rust` (sem README, sem licença, sem .gitignore) e informar o endereço. As Tarefas 1–5 não dependem disso. Antes de qualquer `git push`, pedir o "pode" dele (ele aprova cada ação).
 
