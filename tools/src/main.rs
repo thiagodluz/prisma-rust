@@ -3,10 +3,8 @@
 //! - `prisma_tools emulador <pasta-do-apk> <pasta-de-saida>`: joga no celular virtual e confere.
 //! - `prisma_tools imagens <pasta-do-prisma-js> <pasta-do-jogo>`: gera as imagens do jogo.
 
-// A Task 3 (comando `emulador`) passa a usar o base64 e o registro; até lá eles só são testados.
-#[allow(dead_code)]
 mod base64;
-#[allow(dead_code)]
+mod emulador;
 mod registro;
 
 use std::path::PathBuf;
@@ -48,7 +46,10 @@ fn main() -> ExitCode {
             eprintln!("{uso}");
             ExitCode::from(2)
         }
-        // Provisório: os dois comandos entram nas Tasks 3 e 5.
+        Ok(Comando::Emulador { apk, saida }) => {
+            ExitCode::from(u8::try_from(emulador::rodar_do_programa(&apk, &saida)).unwrap_or(1))
+        }
+        // Provisório: o comando `imagens` entra na Task 5.
         Ok(comando) => {
             eprintln!("ERRO: ainda não implementado: {comando:?}");
             ExitCode::from(1)
