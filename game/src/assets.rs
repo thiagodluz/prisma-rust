@@ -7,9 +7,9 @@ use prisma_engine::{Tile, TileKind, COLORS};
 pub const CELL_PX: u32 = 128;
 /// Tamanho do PNG: a casa mais uma margem de 16 px de cada lado (para a pedra não ser cortada).
 pub const SPRITE_PX: u32 = 160;
-/// Quantas vezes o PNG é maior que a casa: ao desenhar, o PNG ocupa `casa × SPRITE_RATIO`,
-/// centrado na casa. Vale `SPRITE_PX / CELL_PX`.
-pub const SPRITE_RATIO: f32 = 1.25;
+/// Quantas vezes o PNG é maior que a casa (160 / 128 = 1,25): ao desenhar, o PNG ocupa
+/// `casa × SPRITE_RATIO`, centrado na casa.
+pub const SPRITE_RATIO: f32 = SPRITE_PX as f32 / CELL_PX as f32;
 
 /// Uma das 22 imagens. O número é a cor (0 a 6) e só existe de 0 a 6: quem cria `Sprite` é
 /// `sprite_for` (que confere) e `all_sprites`.
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn todo_png_decodifica_com_o_tamanho_combinado() {
-        assert_eq!(SPRITE_PX as f32 / CELL_PX as f32, SPRITE_RATIO);
+        assert_eq!(SPRITE_RATIO, 1.25);
         for sprite in all_sprites() {
             let imagem = abre(sprite);
             assert_eq!(
