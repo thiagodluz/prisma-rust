@@ -43,6 +43,21 @@ jobs:
             rustc --version &&
             cargo quad-apk build'
 
+      # Só informação (não reprova o fluxo): lista o que tem dentro do APK e quais funções cada
+      # biblioteca de cada processador expõe para o Android (JNI_OnLoad, Java_...).
+      - name: Conferir o que tem dentro do APK
+        run: |
+          APK="$(ls target/android-artifacts/debug/apk/*.apk | head -n 1)"
+          unzip -l "$APK"
+          mkdir -p /tmp/apk-aberto && unzip -q -o "$APK" -d /tmp/apk-aberto
+          for abi in armeabi-v7a arm64-v8a x86; do
+            LIB="/tmp/apk-aberto/lib/$abi/libprisma_game.so"
+            echo "===== $abi ====="
+            ls -l "$LIB"
+            readelf -d "$LIB" | grep -E "NEEDED|SONAME" || true
+            readelf --dyn-syms -W "$LIB" | grep -E "JNI_OnLoad|Java_|ANativeActivity|android_main| main$" | head -20 || true
+          done
+
       - name: Guardar o APK
         uses: actions/upload-artifact@v4
         with:
@@ -64,3 +79,49 @@ jobs:
             --prerelease \
             --title "APK mais recente (versão de teste)" \
             --notes "Gerado automaticamente a partir do commit ${GITHUB_SHA::7}. É uma versão de teste, assinada com uma chave de debug que muda a cada geração: desinstale a versão anterior antes de instalar esta."
+
+  # Abre o APK num celular virtual e confere se o app continua aberto; guarda o registro de
+  # erros e a foto da tela. Roda depois da release, então um defeito no app não impede de
+  # baixar o APK, só deixa este teste vermelho. Duas versões do Android, para comparar.
+  emulador:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { api: 30, arch: x86 }
+          - { api: 34, arch: x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar o APK gerado
+        uses: actions/download-artifact@v4
+        with:
+          name: prisma-debug-apk
+          path: apk
+
+      # O emulador precisa de acesso ao KVM (aceleração do processador).
+      - name: Liberar o KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Abrir o app no celular virtual
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          disable-animations: true
+          script: bash tools/teste-emulador.sh apk resultado
+
+      - name: Guardar o registro e a foto da tela
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulador-android-${{ matrix.api }}
+          path: resultado
+          if-no-files-found: ignore

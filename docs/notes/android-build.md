@@ -60,3 +60,14 @@ No modo debug, **cada execução do GitHub Actions usa uma chave de teste nova**
 deixa instalar um APK por cima de outro assinado com chave diferente: é preciso **desinstalar o
 app antes de instalar o seguinte** (e os dados dele se perdem). Isto é aceitável até o M1.
 No M2 (salvar partida) entra uma chave fixa guardada como segredo do GitHub.
+
+## Teste no celular virtual (emulador)
+
+Depois de gerar o APK, o fluxo **Android** tem um segundo trabalho (`emulador`) que abre o app
+num emulador do Android (versões 30 e 34), espera 20 segundos e confere se o app continua
+aberto. Ele guarda o registro de erros (`logcat.txt`) e a foto da tela (`tela.png`) como
+artefato `emulador-android-<versão>`, e imprime um resumo dos erros no próprio registro da
+execução. Script: `tools/teste-emulador.sh`.
+
+Limites: o emulador usa a biblioteca de PC (x86), não a do celular (arm64); um erro que só
+existe no arm64 não aparece nele. Serve para pegar erros de programa e de montagem do APK.
