@@ -137,6 +137,14 @@ async fn rodar_vitrine(foto: Option<String>) {
     }
 }
 
+/// A linha de registro de um toque (início do dedo), em pixels reais da tela do app. O teste
+/// do celular virtual toca num ponto conhecido da tela e compara com esta linha para saber
+/// quanto a janela do app está deslocada (por exemplo pela barra de status): o `adb` toca em
+/// coordenadas da tela, e o app mede o toque a partir do canto da própria janela.
+fn linha_de_toque(x: f32, y: f32, escala: f32) -> String {
+    format!("PRISMA_M1 toque x={:.0} y={:.0}", x * escala, y * escala)
+}
+
 /// As linhas de registro com a posição do tabuleiro e dos botões, em PIXELS REAIS da tela
 /// (posição lógica × `escala`): o teste do celular virtual lê estas linhas para saber onde
 /// tocar. `jogar_novamente`, `cancelar` e `confirmar` são sempre registrados, mesmo quando
@@ -194,6 +202,7 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>) {
         let tela = calcular_tela(&app);
         let (x, y) = mouse_position();
         if is_mouse_button_pressed(MouseButton::Left) {
+            info!("{}", linha_de_toque(x, y, screen_dpi_scale()));
             app.tocar(Evento::Baixo { x, y }, &tela);
         } else if is_mouse_button_down(MouseButton::Left) && (x, y) != ultima_posicao {
             app.tocar(Evento::Mover { x, y }, &tela);
@@ -376,6 +385,15 @@ mod tests {
         assert_eq!(cena_pedida(&args(&["x", "--cena", "queda", "y"])), Some("queda".to_string()));
         assert_eq!(cena_pedida(&args(&["--cena"])), None);
         assert_eq!(cena_pedida(&args(&[])), None);
+    }
+
+    #[test]
+    fn registro_de_toque_usa_pixels_reais() {
+        // Toque em (80,200) lógicos numa tela com escala 2: o teste do emulador compara isto com
+        // o ponto onde ele mesmo tocou, para descobrir quanto a janela do app está deslocada
+        // (barra de status) em relação à tela.
+        assert_eq!(linha_de_toque(80.0, 200.0, 2.0), "PRISMA_M1 toque x=160 y=400");
+        assert_eq!(linha_de_toque(0.4, 12.6, 1.0), "PRISMA_M1 toque x=0 y=13");
     }
 
     #[test]

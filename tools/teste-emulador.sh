@@ -14,7 +14,8 @@
 #
 # O app escreve no registro do Android linhas que começam com "PRISMA_M1" (veja `App::registro`
 # em game/src/app.rs e `rodar_jogo` em game/src/main.rs): a posição do tabuleiro e dos botões
-# (em pixels reais da tela) e o que acontece no jogo. Este script lê essas linhas.
+# (em pixels reais, medidos a partir do canto da janela do app), cada toque que recebe e o que
+# acontece no jogo. Este script lê essas linhas.
 
 # Identificador do app: lido do game/Cargo.toml (rode o script da raiz do projeto).
 PACOTE="$(sed -n 's/^package_name = "\(.*\)"/\1/p' game/Cargo.toml)"
@@ -111,9 +112,10 @@ tocar_botao() {
   local centro
   centro="$(centro_do_botao "$1")"
   [ -n "$centro" ] || falhou "o registro não tem a posição do botão '$1'"
-  echo "Tocando em '$1' ($centro)"
   # shellcheck disable=SC2086
-  adb shell input tap $centro
+  set -- "$1" $centro
+  echo "Tocando em '$1' (app: $2 $3; tela: $(($2 + OFF_X)) $(($3 + OFF_Y)))"
+  adb shell input tap $(($2 + OFF_X)) $(($3 + OFF_Y))
   sleep 1
   ler_registro
 }
@@ -132,11 +134,41 @@ ler_tabuleiro() {
     || falhou "o registro não tem a posição do tabuleiro"
 }
 
-# Centro de uma casa do tabuleiro (índice 0..63, linha a linha). Devolve "x y".
+# Centro de uma casa do tabuleiro (índice 0..63, linha a linha), em coordenadas da TELA (já
+# com o deslocamento da janela). Devolve "x y".
 # x = tx + (coluna + 0,5) * lado / 8; y = ty + (linha + 0,5) * lado / 8
 centro_da_casa() {
   local linha=$(($1 / 8)) coluna=$(($1 % 8))
-  echo $((TX + (2 * coluna + 1) * LADO / 16)) $((TY + (2 * linha + 1) * LADO / 16))
+  echo $((TX + OFF_X + (2 * coluna + 1) * LADO / 16)) $((TY + OFF_Y + (2 * linha + 1) * LADO / 16))
+}
+
+# O app mede os toques a partir do canto da PRÓPRIA janela, mas o `adb input` usa coordenadas
+# da TELA; no emulador a janela começa abaixo da barra de status (uns 28 px). Para descobrir o
+# deslocamento sem depender da versão do Android, toca num ponto da tela que não faz nada no
+# jogo (a margem de cima, acima das abas) e compara com a linha "PRISMA_M1 toque" que o app
+# escreve. Preenche OFF_X e OFF_Y.
+OFF_X=0
+OFF_Y=0
+calibrar_toque() {
+  local antes tela_x tela_y linha app_x app_y
+  antes="$(contar "PRISMA_M1 toque ")"
+  tela_x=$((TX + LADO / 2))
+  tela_y=60
+  echo "Calibrando: tocando na margem de cima, na tela em ($tela_x,$tela_y)"
+  adb shell input tap "$tela_x" "$tela_y"
+  sleep 1
+  ler_registro
+  [ "$(contar "PRISMA_M1 toque ")" -gt "$antes" ] || falhou "o app não registrou o toque de calibração"
+  linha="$(grep -F "PRISMA_M1 toque " "$SAIDA/logcat.txt" | tail -n 1)"
+  app_x="$(echo "$linha" | sed -n 's/.* x=\([0-9]*\) y=.*/\1/p')"
+  app_y="$(echo "$linha" | sed -n 's/.* y=\([0-9]*\).*/\1/p')"
+  [ -n "$app_x" ] && [ -n "$app_y" ] || falhou "a linha do toque veio sem x e y: $linha"
+  OFF_X=$((tela_x - app_x))
+  OFF_Y=$((tela_y - app_y))
+  echo "O app viu o toque em ($app_x,$app_y): a janela está deslocada em ($OFF_X,$OFF_Y) px da tela"
+  # Um deslocamento absurdo quer dizer que o toque caiu em outro lugar.
+  [ "$OFF_X" -ge 0 ] && [ "$OFF_X" -le 100 ] && [ "$OFF_Y" -ge 0 ] && [ "$OFF_Y" -le 200 ] \
+    || falhou "deslocamento da janela fora do esperado: ($OFF_X,$OFF_Y)"
 }
 
 # Espera (até 30 s, de meio em meio segundo) o registro ter mais linhas "animacao_terminou"
@@ -179,11 +211,12 @@ grep -qF "PRISMA_M1 pronto modo=zen" "$SAIDA/logcat.txt" \
   || falhou "faltou a linha 'PRISMA_M1 pronto modo=zen' (o jogo não abriu?)."
 echo "OK: o jogo abriu no modo Zen."
 ler_tabuleiro
-echo "Tabuleiro: x=$TX y=$TY lado=$LADO"
+echo "Tabuleiro (coordenadas do app): x=$TX y=$TY lado=$LADO"
 for botao in zen classico embaralhar dica novo_jogo confirmar; do
   [ -n "$(centro_do_botao "$botao")" ] || falhou "o registro não tem a posição do botão '$botao'"
 done
 foto 1-zen-inicio
+calibrar_toque
 
 # ---- 2. Zen: 5 jogadas arrastando o dedo ----
 pontos_zen=0

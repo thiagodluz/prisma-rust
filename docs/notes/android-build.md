@@ -67,7 +67,11 @@ Depois de gerar o APK, o fluxo **Android** tem um segundo trabalho (`emulador`) 
 Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
 
 1. abre o app, espera 15 segundos e confere que continua aberto e abriu direto no jogo
-   (`PRISMA_M1 pronto modo=zen`);
+   (`PRISMA_M1 pronto modo=zen`) e **calibra o toque**: o app mede os toques a partir do canto
+   da própria janela, mas o `adb input` usa coordenadas da tela, e no emulador a janela começa
+   abaixo da barra de status (uns 28 px). O script toca num ponto da margem de cima (que não
+   faz nada no jogo), lê no registro onde o app viu esse toque (`PRISMA_M1 toque x=.. y=..`) e
+   soma a diferença a todos os toques seguintes;
 2. **Zen:** 5 vezes, toca em "Dica", lê no registro quais são as duas pedras da dica, **arrasta
    o dedo** de uma até a outra (`adb shell input swipe`), espera a animação terminar e confere
    que a jogada valeu (`jogada valida=true`) e que os pontos subiram;
@@ -79,8 +83,8 @@ Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
 O app escreve no registro do Android linhas que começam com `PRISMA_M1` (função `App::registro`
 em `game/src/app.rs` e `rodar_jogo` em `game/src/main.rs`): a posição do tabuleiro e dos botões,
 **em pixels reais da tela** (para o script saber onde tocar), e o que acontece no jogo
-(`dica a=.. b=..`, `jogada valida=.. pontos=.. nivel=..`, `animacao_terminou`, `modo=..`,
-`novo_jogo ..`, `fim ..`). O script lê essas linhas. Ele guarda o registro de erros
+(`toque x=.. y=..`, `dica a=.. b=..`, `jogada valida=.. pontos=.. nivel=..`,
+`animacao_terminou`, `modo=..`, `novo_jogo ..`, `fim ..`). O script lê essas linhas. Ele guarda o registro de erros
 (`logcat.txt`) e uma foto da tela de cada etapa como artefato `emulador-android-<versão>`, e
 imprime um resumo no próprio registro da execução (as fotos saem em texto, entre
 `TELA_BASE64_INICIO` e `TELA_BASE64_FIM`). Script: `tools/teste-emulador.sh`.
