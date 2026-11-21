@@ -114,6 +114,187 @@ pub fn tela_diagnostico(largura: f32, altura: f32) -> TelaDiagnostico {
     }
 }
 
+// ---- Tela de jogo ----------------------------------------------------------------------------
+
+/// Alturas das peças, em frações da unidade `u` (o menor lado da tela).
+const ABAS_ALTURA: f32 = 0.085;
+const PAINEL_ALTURA: f32 = 0.11;
+const BARRA_ALTURA: f32 = 0.022;
+const ROTULO_ALTURA: f32 = 0.05;
+const BOTOES_ALTURA: f32 = 0.10;
+/// Espaço entre uma peça e a seguinte (e margem em cima e embaixo do conjunto).
+const ESPACO: f32 = 0.02;
+/// O tabuleiro (e tudo que fica alinhado com ele) ocupa no máximo 94% da largura.
+const LARGURA_MAXIMA: f32 = 0.94;
+/// Tamanho base da letra: 4,5% do menor lado.
+const TEXTO: f32 = 0.045;
+
+/// Onde fica cada peça da tela de jogo (abas, painel, tabuleiro, botões, cartão de fim e
+/// diálogo). Tudo em pixels, calculado a partir do tamanho da tela.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TelaJogo {
+    /// As duas abas de modo, lado a lado.
+    pub aba_zen: Rect,
+    pub aba_classico: Rect,
+    /// As três colunas do painel: PONTOS, NÍVEL, MELHOR.
+    pub pontos: Rect,
+    pub nivel: Rect,
+    pub melhor: Rect,
+    /// A barra de progresso do nível e a linha de texto logo abaixo dela.
+    pub barra: Rect,
+    pub rotulo: Rect,
+    /// O tabuleiro: sempre um quadrado.
+    pub tabuleiro: Rect,
+    /// Só existe no modo Zen (no Clássico não dá para embaralhar).
+    pub botao_embaralhar: Option<Rect>,
+    pub botao_dica: Rect,
+    pub botao_novo_jogo: Rect,
+    /// O cartão de "Fim de partida", por cima do tabuleiro, e o botão dele.
+    pub cartao_fim: Rect,
+    pub botao_jogar_novamente: Rect,
+    /// A pergunta "Começar novo jogo?", no meio da tela, e seus dois botões.
+    pub dialogo: Rect,
+    pub dialogo_cancelar: Rect,
+    pub dialogo_confirmar: Rect,
+    /// Tamanho base da letra.
+    pub texto: f32,
+}
+
+impl TelaJogo {
+    /// Tudo vazio: o que devolvemos quando a tela não existe. Nenhum toque cai em lugar nenhum.
+    const VAZIA: TelaJogo = TelaJogo {
+        aba_zen: Rect::VAZIO,
+        aba_classico: Rect::VAZIO,
+        pontos: Rect::VAZIO,
+        nivel: Rect::VAZIO,
+        melhor: Rect::VAZIO,
+        barra: Rect::VAZIO,
+        rotulo: Rect::VAZIO,
+        tabuleiro: Rect::VAZIO,
+        botao_embaralhar: None,
+        botao_dica: Rect::VAZIO,
+        botao_novo_jogo: Rect::VAZIO,
+        cartao_fim: Rect::VAZIO,
+        botao_jogar_novamente: Rect::VAZIO,
+        dialogo: Rect::VAZIO,
+        dialogo_cancelar: Rect::VAZIO,
+        dialogo_confirmar: Rect::VAZIO,
+        texto: 0.0,
+    };
+}
+
+/// Posição de tudo na tela de jogo.
+///
+/// De cima para baixo: abas, painel, barra, rótulo, tabuleiro, botões. O conjunto fica
+/// centrado na vertical. O tabuleiro é o maior quadrado que cabe: no máximo 94% da largura
+/// e no máximo a altura que sobra depois de reservar o resto. As outras peças têm a mesma
+/// largura do tabuleiro, para ficarem alinhadas com ele.
+///
+/// `com_embaralhar` falso (modo Clássico) tira o botão Embaralhar; os dois que sobram ficam
+/// centrados e do mesmo tamanho que ficariam entre três.
+///
+/// Uma tela "impossível" (tamanho zero, negativo, NaN ou infinito) devolve tudo vazio.
+pub fn tela_jogo(largura: f32, altura: f32, com_embaralhar: bool) -> TelaJogo {
+    let tela_valida = largura.is_finite() && altura.is_finite() && largura > 0.0 && altura > 0.0;
+    if !tela_valida {
+        return TelaJogo::VAZIA;
+    }
+    let unidade = largura.min(altura);
+    let espaco = ESPACO * unidade;
+    let abas_h = ABAS_ALTURA * unidade;
+    let painel_h = PAINEL_ALTURA * unidade;
+    let barra_h = BARRA_ALTURA * unidade;
+    let rotulo_h = ROTULO_ALTURA * unidade;
+    let botoes_h = BOTOES_ALTURA * unidade;
+
+    // Tudo menos o tabuleiro: cinco peças e cinco espaços entre as seis peças.
+    let fixo = abas_h + painel_h + barra_h + rotulo_h + botoes_h + 5.0 * espaco;
+    // O tabuleiro nunca passa da largura máxima nem da altura livre (reservando também uma
+    // margem de um espaço em cima e outra embaixo). A altura livre é sempre positiva, porque
+    // `fixo` mais as margens é 0,507 do menor lado, que nunca passa da altura.
+    let lado = (LARGURA_MAXIMA * largura).min(altura - fixo - 2.0 * espaco);
+
+    let conjunto = fixo + lado;
+    let esquerda = (largura - lado) / 2.0;
+    let faixa = |x: f32, y: f32, w: f32, h: f32| Rect { x, y, w, h };
+
+    // As posições de cima, descendo peça a peça.
+    let mut y = (altura - conjunto) / 2.0;
+    let abas_y = y;
+    y += abas_h + espaco;
+    let painel_y = y;
+    y += painel_h + espaco;
+    let barra_y = y;
+    y += barra_h + espaco;
+    let rotulo_y = y;
+    y += rotulo_h + espaco;
+    let tabuleiro_y = y;
+    y += lado + espaco;
+    let botoes_y = y;
+
+    // Abas: duas metades com um espaço no meio.
+    let aba_w = (lado - espaco) / 2.0;
+    // Painel: três colunas, a dos pontos mais larga (os números crescem).
+    let util = lado - 2.0 * espaco;
+    let (pontos_w, nivel_w, melhor_w) = (0.40 * util, 0.24 * util, 0.36 * util);
+    let nivel_x = esquerda + pontos_w + espaco;
+    let melhor_x = nivel_x + nivel_w + espaco;
+    // Botões: a largura é a de "três botões"; com dois, eles ficam centrados.
+    let botao_w = (lado - 2.0 * espaco) / 3.0;
+    let quantos = if com_embaralhar { 3.0 } else { 2.0 };
+    let primeiro_x = esquerda + (lado - (quantos * botao_w + (quantos - 1.0) * espaco)) / 2.0;
+    let passo = botao_w + espaco;
+    let (botao_embaralhar, botao_dica_x) = if com_embaralhar {
+        (Some(faixa(primeiro_x, botoes_y, botao_w, botoes_h)), primeiro_x + passo)
+    } else {
+        (None, primeiro_x)
+    };
+
+    let tabuleiro = faixa(esquerda, tabuleiro_y, lado, lado);
+
+    // Cartão de "Fim de partida": centrado no tabuleiro, com o botão perto da borda de baixo.
+    let cartao_w = 0.84 * lado;
+    let cartao_h = 0.56 * lado;
+    let cartao_fim = faixa(esquerda + (lado - cartao_w) / 2.0, tabuleiro_y + (lado - cartao_h) / 2.0, cartao_w, cartao_h);
+    let jogar_w = 0.64 * cartao_w;
+    let jogar_h = 0.22 * cartao_h;
+    let botao_jogar_novamente = faixa(
+        cartao_fim.x + (cartao_w - jogar_w) / 2.0,
+        cartao_fim.y + cartao_h - 0.08 * cartao_h - jogar_h,
+        jogar_w,
+        jogar_h,
+    );
+
+    // Diálogo de novo jogo: no meio da tela, com Cancelar à esquerda e confirmar à direita.
+    let dialogo_w = 0.86 * lado;
+    let dialogo_h = 0.44 * lado;
+    let dialogo = faixa((largura - dialogo_w) / 2.0, (altura - dialogo_h) / 2.0, dialogo_w, dialogo_h);
+    let margem_d = 0.05 * dialogo_w;
+    let escolha_w = (dialogo_w - 3.0 * margem_d) / 2.0;
+    let escolha_h = 0.26 * dialogo_h;
+    let escolha_y = dialogo.y + dialogo_h - 0.08 * dialogo_h - escolha_h;
+
+    TelaJogo {
+        aba_zen: faixa(esquerda, abas_y, aba_w, abas_h),
+        aba_classico: faixa(esquerda + aba_w + espaco, abas_y, aba_w, abas_h),
+        pontos: faixa(esquerda, painel_y, pontos_w, painel_h),
+        nivel: faixa(nivel_x, painel_y, nivel_w, painel_h),
+        melhor: faixa(melhor_x, painel_y, melhor_w, painel_h),
+        barra: faixa(esquerda, barra_y, lado, barra_h),
+        rotulo: faixa(esquerda, rotulo_y, lado, rotulo_h),
+        tabuleiro,
+        botao_embaralhar,
+        botao_dica: faixa(botao_dica_x, botoes_y, botao_w, botoes_h),
+        botao_novo_jogo: faixa(botao_dica_x + passo, botoes_y, botao_w, botoes_h),
+        cartao_fim,
+        botao_jogar_novamente,
+        dialogo,
+        dialogo_cancelar: faixa(dialogo.x + margem_d, escolha_y, escolha_w, escolha_h),
+        dialogo_confirmar: faixa(dialogo.x + 2.0 * margem_d + escolha_w, escolha_y, escolha_w, escolha_h),
+        texto: TEXTO * unidade,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +462,177 @@ mod tests {
             for botao in [tela.botao_som, tela.botao_vibrar] {
                 assert_eq!((botao.w, botao.h), (0.0, 0.0), "tela {largura}x{altura}");
                 assert!(!botao.contem(0.0, 0.0), "tela {largura}x{altura}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_tela_jogo {
+    use super::*;
+
+    /// Telas de teste: celulares em pé, tela alta, janela deitada, quadrada, estreita, larga e minúscula.
+    const TELAS: [(f32, f32); 9] = [
+        (540.0, 960.0),
+        (1080.0, 2340.0),
+        (1080.0, 2400.0),
+        (360.0, 640.0),
+        (800.0, 600.0),
+        (1000.0, 1000.0),
+        (200.0, 2000.0),
+        (2000.0, 200.0),
+        (50.0, 50.0),
+    ];
+
+    /// Todos os retângulos da tela de jogo que mostram algo ou recebem toque (sem os do
+    /// cartão de fim e do diálogo, que ficam por cima e têm testes próprios).
+    fn pecas(tela: &TelaJogo) -> Vec<(&'static str, Rect)> {
+        let mut pecas = vec![
+            ("aba_zen", tela.aba_zen),
+            ("aba_classico", tela.aba_classico),
+            ("pontos", tela.pontos),
+            ("nivel", tela.nivel),
+            ("melhor", tela.melhor),
+            ("barra", tela.barra),
+            ("rotulo", tela.rotulo),
+            ("tabuleiro", tela.tabuleiro),
+            ("botao_dica", tela.botao_dica),
+            ("botao_novo_jogo", tela.botao_novo_jogo),
+        ];
+        if let Some(embaralhar) = tela.botao_embaralhar {
+            pecas.push(("botao_embaralhar", embaralhar));
+        }
+        pecas
+    }
+
+    fn se_cruzam(a: Rect, b: Rect) -> bool {
+        // Estritamente: retângulos que só se encostam não se cruzam.
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    fn dentro(interno: Rect, externo: Rect) -> bool {
+        let folga = 1e-3;
+        interno.x >= externo.x - folga
+            && interno.y >= externo.y - folga
+            && interno.x + interno.w <= externo.x + externo.w + folga
+            && interno.y + interno.h <= externo.y + externo.h + folga
+    }
+
+    #[test]
+    fn tudo_cabe_na_tela() {
+        for (largura, altura) in TELAS {
+            for com_embaralhar in [true, false] {
+                let tela = tela_jogo(largura, altura, com_embaralhar);
+                let janela = Rect { x: 0.0, y: 0.0, w: largura, h: altura };
+                let mut todos = pecas(&tela);
+                todos.extend([
+                    ("cartao_fim", tela.cartao_fim),
+                    ("botao_jogar_novamente", tela.botao_jogar_novamente),
+                    ("dialogo", tela.dialogo),
+                    ("dialogo_cancelar", tela.dialogo_cancelar),
+                    ("dialogo_confirmar", tela.dialogo_confirmar),
+                ]);
+                for (nome, retangulo) in todos {
+                    assert!(retangulo.w > 0.0 && retangulo.h > 0.0, "{nome} sem tamanho em {largura}x{altura}");
+                    assert!(dentro(retangulo, janela), "{nome} fora da tela {largura}x{altura}: {retangulo:?}");
+                }
+                assert!(tela.texto > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn elementos_nao_se_sobrepoem() {
+        for (largura, altura) in TELAS {
+            for com_embaralhar in [true, false] {
+                let tela = tela_jogo(largura, altura, com_embaralhar);
+                let todos = pecas(&tela);
+                for (i, (nome_a, a)) in todos.iter().enumerate() {
+                    for (nome_b, b) in &todos[i + 1..] {
+                        assert!(!se_cruzam(*a, *b), "{nome_a} e {nome_b} se cruzam em {largura}x{altura}");
+                    }
+                }
+                // O cartão de fim fica dentro do tabuleiro e o botão dele dentro do cartão.
+                assert!(dentro(tela.cartao_fim, tela.tabuleiro), "cartão fora do tabuleiro em {largura}x{altura}");
+                assert!(dentro(tela.botao_jogar_novamente, tela.cartao_fim));
+                // O diálogo: botões dentro dele e um ao lado do outro.
+                assert!(dentro(tela.dialogo_cancelar, tela.dialogo));
+                assert!(dentro(tela.dialogo_confirmar, tela.dialogo));
+                assert!(!se_cruzam(tela.dialogo_cancelar, tela.dialogo_confirmar));
+            }
+        }
+    }
+
+    #[test]
+    fn ordem_vertical() {
+        for (largura, altura) in TELAS {
+            let tela = tela_jogo(largura, altura, true);
+            assert!(tela.aba_zen.y < tela.pontos.y, "{largura}x{altura}");
+            assert!(tela.pontos.y < tela.barra.y);
+            assert!(tela.barra.y < tela.rotulo.y);
+            assert!(tela.rotulo.y < tela.tabuleiro.y);
+            assert!(tela.tabuleiro.y < tela.botao_dica.y);
+            // As abas e as colunas do painel ficam na ordem da esquerda para a direita.
+            assert!(tela.aba_zen.x < tela.aba_classico.x);
+            assert!(tela.pontos.x < tela.nivel.x && tela.nivel.x < tela.melhor.x);
+        }
+    }
+
+    #[test]
+    fn tabuleiro_e_quadrado_e_grande_em_retrato() {
+        for (largura, altura) in TELAS {
+            let tela = tela_jogo(largura, altura, true);
+            assert!((tela.tabuleiro.w - tela.tabuleiro.h).abs() < 1e-3, "{largura}x{altura}");
+        }
+        let tela = tela_jogo(540.0, 960.0, true);
+        assert!(tela.tabuleiro.w >= 0.9 * 540.0, "em pé o tabuleiro ocupa quase a largura toda");
+    }
+
+    #[test]
+    fn conjunto_fica_centrado_na_vertical() {
+        for (largura, altura) in TELAS {
+            let tela = tela_jogo(largura, altura, true);
+            let em_cima = tela.aba_zen.y;
+            let embaixo = altura - (tela.botao_dica.y + tela.botao_dica.h);
+            assert!((em_cima - embaixo).abs() < 1e-2, "{largura}x{altura}: {em_cima} em cima, {embaixo} embaixo");
+        }
+    }
+
+    #[test]
+    fn embaralhar_some_e_os_outros_continuam_centrados() {
+        for (largura, altura) in TELAS {
+            let com = tela_jogo(largura, altura, true);
+            let sem = tela_jogo(largura, altura, false);
+            let embaralhar = com.botao_embaralhar.expect("com embaralhar tem o botão");
+            assert_eq!(sem.botao_embaralhar, None);
+            // Os botões que sobram têm o mesmo tamanho dos de antes.
+            assert!((sem.botao_dica.w - com.botao_dica.w).abs() < 1e-3);
+            assert!((sem.botao_dica.w - embaralhar.w).abs() < 1e-3);
+            // E ficam centrados no tabuleiro: sobra a mesma folga dos dois lados.
+            let esquerda = sem.botao_dica.x - sem.tabuleiro.x;
+            let direita = (sem.tabuleiro.x + sem.tabuleiro.w) - (sem.botao_novo_jogo.x + sem.botao_novo_jogo.w);
+            assert!((esquerda - direita).abs() < 1e-2, "{largura}x{altura}");
+            // O tabuleiro e o resto do layout não mudam de lugar.
+            assert_eq!(sem.tabuleiro, com.tabuleiro);
+            assert_eq!(sem.aba_zen, com.aba_zen);
+        }
+    }
+
+    #[test]
+    fn tela_invalida_da_tudo_vazio() {
+        for (largura, altura) in [(0.0, 0.0), (-1.0, 10.0), (10.0, -1.0), (f32::NAN, 10.0), (10.0, f32::NAN), (f32::INFINITY, 10.0)] {
+            for com_embaralhar in [true, false] {
+                let tela = tela_jogo(largura, altura, com_embaralhar);
+                let vazio = Rect::VAZIO;
+                for (nome, retangulo) in pecas(&tela) {
+                    assert_eq!(retangulo, vazio, "{nome} com tela {largura}x{altura}");
+                }
+                assert_eq!(tela.botao_embaralhar, None);
+                assert_eq!(tela.cartao_fim, vazio);
+                assert_eq!(tela.dialogo, vazio);
+                assert_eq!(tela.texto, 0.0);
+                // Nenhum toque cai em lugar nenhum.
+                assert!(!tela.tabuleiro.contem(0.0, 0.0));
             }
         }
     }

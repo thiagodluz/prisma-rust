@@ -1,0 +1,195 @@
+//! "Cenas": momentos fixos do jogo (sempre os mesmos) para tirar foto e conferir a olho.
+//!
+//! Cada cena é um `App` com sorte fixa levado a um instante conhecido, usando só o que o
+//! jogador também usa (`tocar`, `apertar`, `avancar`). A exceção é o motor, que é mexido
+//! direto nas cenas `nivel` e `fim` (para chegar logo ao nível 2 e ao fim de partida).
+
+use crate::app::{App, Botao};
+use crate::input::Evento;
+use crate::layout::{cell_rect, tela_jogo, TelaJogo};
+use crate::linha::{duracao_ms, Passo};
+use prisma_engine::SIZE;
+
+/// A tela de referência das cenas. Os toques são montados a partir dela; como o resultado
+/// (qual casa foi tocada) não depende do tamanho da tela, a cena serve para qualquer tamanho.
+fn tela() -> TelaJogo {
+    tela_jogo(540.0, 960.0, true)
+}
+
+/// O ponto do meio de uma casa, em pixels da tela de referência.
+fn centro(tela: &TelaJogo, casa: usize) -> (f32, f32) {
+    let retangulo = cell_rect(tela.tabuleiro, casa / SIZE, casa % SIZE);
+    (retangulo.x + retangulo.w / 2.0, retangulo.y + retangulo.h / 2.0)
+}
+
+/// Um toque rápido numa casa (encosta e solta no mesmo lugar).
+fn tocar_casa(app: &mut App, casa: usize) {
+    let tela = tela();
+    let (x, y) = centro(&tela, casa);
+    app.tocar(Evento::Baixo { x, y }, &tela);
+    app.tocar(Evento::Cima { x, y }, &tela);
+}
+
+/// Faz a jogada que a Dica sugeriria, arrastando o dedo de uma casa até a outra.
+fn jogada_boa(app: &mut App) {
+    let tela = tela();
+    let (a, b) = app.jogo_mut().hint().expect("o tabuleiro da cena tem jogada");
+    let (ax, ay) = centro(&tela, a);
+    let (bx, by) = centro(&tela, b);
+    app.tocar(Evento::Baixo { x: ax, y: ay }, &tela);
+    app.tocar(Evento::Mover { x: bx, y: by }, &tela);
+    app.tocar(Evento::Cima { x: bx, y: by }, &tela);
+}
+
+/// Deixa a animação andar (de 1 em 1 ms) até o passo atual ser do tipo procurado.
+fn avancar_ate(app: &mut App, procurado: fn(&Passo) -> bool) {
+    for _ in 0..20_000 {
+        if app.passo_atual().is_some_and(|(passo, _)| procurado(passo)) {
+            return;
+        }
+        app.avancar(1.0);
+    }
+    panic!("a cena não chegou ao passo procurado");
+}
+
+/// Deixa o passo atual andar até `fracao` da duração dele (0,5 = no meio).
+fn avancar_ate_a_fracao(app: &mut App, fracao: f32) {
+    let (duracao, decorrido) = app
+        .passo_atual()
+        .map(|(passo, decorrido)| (duracao_ms(passo), decorrido))
+        .expect("há um passo em andamento");
+    app.avancar((fracao * duracao - decorrido).max(0.0));
+}
+
+/// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
+/// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo` e `classico`.
+pub fn cena(nome: &str) -> Option<App> {
+    let mut app = App::com_sementes(7, 9);
+    match nome {
+        // Tabuleiro parado.
+        "inicio" => {}
+        // Uma casa tocada.
+        "selecionada" => tocar_casa(&mut app, 27),
+        // Botão Dica apertado.
+        "dica" => app.apertar(Botao::Dica),
+        // No meio da troca das duas pedras.
+        "troca" => {
+            jogada_boa(&mut app);
+            avancar_ate_a_fracao(&mut app, 0.5);
+        }
+        // A 50% da primeira limpeza: as pedras estão encolhendo.
+        "limpando" => {
+            jogada_boa(&mut app);
+            avancar_ate(&mut app, |passo| matches!(passo, Passo::Limpeza { .. }));
+            avancar_ate_a_fracao(&mut app, 0.5);
+        }
+        // A 40% da primeira queda: pedras no ar.
+        "queda" => {
+            jogada_boa(&mut app);
+            avancar_ate(&mut app, |passo| matches!(passo, Passo::Queda { .. }));
+            avancar_ate_a_fracao(&mut app, 0.4);
+        }
+        // No meio da faixa "Nível 2" (a jogada passa dos 1800 pontos).
+        "nivel" => {
+            app.jogo_mut().score = 1790;
+            jogada_boa(&mut app);
+            avancar_ate(&mut app, |passo| matches!(passo, Passo::Nivel { .. }));
+            avancar_ate_a_fracao(&mut app, 0.5);
+        }
+        // Clássico com a partida acabada: nível 3 e 4.321 pontos.
+        "fim" => {
+            app.apertar(Botao::Classico);
+            let jogo = app.jogo_mut();
+            jogo.ended = true;
+            jogo.score = 4321;
+            jogo.level = 3;
+        }
+        // A pergunta "Começar novo jogo?".
+        "dialogo" => app.apertar(Botao::NovoJogo),
+        // A aba do Clássico.
+        "classico" => app.apertar(Botao::Classico),
+        _ => return None,
+    }
+    Some(app)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linha::Passo;
+    use prisma_engine::Mode;
+
+    const NOMES: [&str; 10] =
+        ["inicio", "selecionada", "dica", "troca", "limpando", "queda", "nivel", "fim", "dialogo", "classico"];
+
+    fn passo_da_cena(nome: &str) -> &'static str {
+        let app = cena(nome).expect("a cena existe");
+        match app.passo_atual().map(|(passo, _)| passo) {
+            Some(Passo::Troca { .. }) => "troca",
+            Some(Passo::Limpeza { .. }) => "limpeza",
+            Some(Passo::Queda { .. }) => "queda",
+            Some(Passo::Embaralhar { .. }) => "embaralhar",
+            Some(Passo::Resgate { .. }) => "resgate",
+            Some(Passo::Nivel { .. }) => "nivel",
+            None => "nenhum",
+        }
+    }
+
+    #[test]
+    fn cada_cena_existe_e_nome_estranho_nao() {
+        for nome in NOMES {
+            assert!(cena(nome).is_some(), "cena {nome}");
+        }
+        assert!(cena("xyz").is_none());
+        assert!(cena("").is_none());
+        assert!(cena("INICIO").is_none());
+    }
+
+    #[test]
+    fn cenas_tem_o_estado_esperado() {
+        let inicio = cena("inicio").unwrap();
+        assert!(!inicio.ocupado());
+        assert_eq!(inicio.gestos().selecionada(), None);
+        assert_eq!(inicio.modo(), Mode::Zen);
+
+        assert!(cena("selecionada").unwrap().gestos().selecionada().is_some());
+        assert!(cena("dica").unwrap().dica().is_some());
+        assert_eq!(passo_da_cena("troca"), "troca");
+        assert_eq!(passo_da_cena("limpando"), "limpeza");
+        assert_eq!(passo_da_cena("queda"), "queda");
+        assert_eq!(passo_da_cena("nivel"), "nivel");
+        for nome in ["troca", "limpando", "queda", "nivel"] {
+            assert!(cena(nome).unwrap().ocupado(), "cena {nome}");
+        }
+        assert_eq!(cena("fim").unwrap().painel().fim, Some(("3".to_string(), "4.321".to_string())));
+        assert!(cena("dialogo").unwrap().painel().dialogo);
+        assert_eq!(cena("classico").unwrap().modo(), Mode::Classic);
+    }
+
+    #[test]
+    fn as_cenas_sao_sempre_as_mesmas() {
+        for nome in NOMES {
+            let (a, b) = (cena(nome).unwrap(), cena(nome).unwrap());
+            assert_eq!(a.jogo().board, b.jogo().board, "cena {nome}");
+            assert_eq!(a.estagio(), b.estagio(), "cena {nome}");
+        }
+    }
+
+    #[test]
+    fn as_cenas_de_animacao_estao_no_meio_do_passo() {
+        // "a meio caminho": nem no começo nem no fim do passo.
+        for nome in ["troca", "limpando", "queda", "nivel"] {
+            let app = cena(nome).unwrap();
+            let (passo, decorrido) = app.passo_atual().expect("em andamento");
+            let duracao = crate::linha::duracao_ms(passo);
+            assert!(decorrido > 0.1 * duracao && decorrido < 0.9 * duracao, "cena {nome}: {decorrido} de {duracao}");
+        }
+    }
+
+    #[test]
+    fn a_cena_nivel_sobe_de_nivel() {
+        let app = cena("nivel").unwrap();
+        assert_eq!(app.estagio().nivel, 2);
+        assert_eq!(app.painel().nivel, "2");
+    }
+}

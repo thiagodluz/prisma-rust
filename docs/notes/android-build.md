@@ -63,20 +63,34 @@ No M2 (salvar partida) entra uma chave fixa guardada como segredo do GitHub.
 
 ## Teste no celular virtual (emulador)
 
-Depois de gerar o APK, o fluxo **Android** tem um segundo trabalho (`emulador`) que roda o
-"teste de vida" do M0b num emulador do Android (versões 30 e 34):
+Depois de gerar o APK, o fluxo **Android** tem um segundo trabalho (`emulador`) que **joga o
+Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
 
-1. abre o app, espera 20 segundos e confere que continua aberto;
-2. confere que o contador gravou em arquivo (`PRISMA_M0B aberturas=1`) e que o som carregou;
-3. toca nos botões "Tocar som" e "Vibrar" (`adb shell input tap`, nas posições que o próprio
-   app escreve no registro) e confere as respostas `som=ok` e `vibracao=ok`. O emulador pode
-   não ter vibrador; o app então responde "este aparelho não tem vibrador", e isso também vale;
-4. fecha o app, abre de novo e confere que o contador subiu para 2 (o arquivo sobreviveu).
+1. abre o app, espera 15 segundos e confere que continua aberto e abriu direto no jogo
+   (`PRISMA_M1 pronto modo=zen`) e **calibra o toque**: o app mede os toques a partir do canto
+   da própria janela, mas o `adb input` usa coordenadas da tela, e no emulador a janela começa
+   abaixo da barra de status (uns 28 px). O script toca num ponto da margem de cima (que não
+   faz nada no jogo), lê no registro onde o app viu esse toque (`PRISMA_M1 toque x=.. y=..`) e
+   soma a diferença a todos os toques seguintes;
+2. **Zen:** 5 vezes, toca em "Dica", lê no registro quais são as duas pedras da dica, **arrasta
+   o dedo** de uma até a outra (`adb shell input swipe`), espera a animação terminar e confere
+   que a jogada valeu (`jogada valida=true`) e que os pontos subiram;
+3. **Clássico:** toca na aba, confere que começou com 0 pontos e faz 5 jogadas tocando numa
+   pedra e depois na vizinha (`adb shell input tap`);
+4. toca em "Novo jogo" e em "Confirmar" e confere que os pontos voltaram a 0;
+5. volta para a aba Zen e confere que os pontos do Zen continuam lá.
 
-O app escreve no registro do Android linhas que começam com `PRISMA_M0B`; o script lê essas
-linhas. Ele guarda o registro de erros (`logcat.txt`) e as fotos da tela como artefato
-`emulador-android-<versão>`, e imprime um resumo no próprio registro da execução (as fotos
-saem em texto, entre `TELA_BASE64_INICIO` e `TELA_BASE64_FIM`). Script: `tools/teste-emulador.sh`.
+O app escreve no registro do Android linhas que começam com `PRISMA_M1` (função `App::registro`
+em `game/src/app.rs` e `rodar_jogo` em `game/src/main.rs`): a posição do tabuleiro e dos botões,
+**em pixels reais da tela** (para o script saber onde tocar), e o que acontece no jogo
+(`toque x=.. y=..`, `dica a=.. b=..`, `jogada valida=.. pontos=.. nivel=..`,
+`animacao_terminou`, `modo=..`, `novo_jogo ..`, `fim ..`). O script lê essas linhas. Ele guarda o registro de erros
+(`logcat.txt`) e uma foto da tela de cada etapa como artefato `emulador-android-<versão>`, e
+imprime um resumo no próprio registro da execução (as fotos saem em texto, entre
+`TELA_BASE64_INICIO` e `TELA_BASE64_FIM`). Script: `tools/teste-emulador.sh`.
+
+O "teste de vida" do M0b (contador de aberturas, som, vibração) saiu do emulador; a tela dele
+continua no app e abre com `--tela diagnostico` no PC.
 
 O APK só vira a release `apk-mais-recente` quando o fluxo roda na branch `main`; numa branch
 de trabalho ele só gera o APK e roda o emulador (dá para disparar à mão:

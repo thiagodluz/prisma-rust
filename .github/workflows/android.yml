@@ -83,9 +83,10 @@ jobs:
             --title "APK mais recente (versão de teste)" \
             --notes "Gerado automaticamente a partir do commit ${GITHUB_SHA::7}. É uma versão de teste, assinada com uma chave de debug que muda a cada geração: desinstale a versão anterior antes de instalar esta."
 
-  # Abre o APK num celular virtual e confere se o app continua aberto; guarda o registro de
-  # erros e a foto da tela. Roda depois da release, então um defeito no app não impede de
-  # baixar o APK, só deixa este teste vermelho. Duas versões do Android, para comparar.
+  # Abre o APK num celular virtual e joga (Zen e Clássico, com toque e arrasto), conferindo
+  # as jogadas pelo registro do app; guarda o registro de erros e as fotos da tela. Roda depois
+  # da release, então um defeito no app não impede de baixar o APK, só deixa este teste
+  # vermelho. Duas versões do Android, para comparar.
   emulador:
     needs: apk
     runs-on: ubuntu-latest
@@ -116,7 +117,7 @@ jobs:
       - name: Instalar o ImageMagick
         run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
 
-      - name: Abrir o app no celular virtual
+      - name: Jogar no celular virtual
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
