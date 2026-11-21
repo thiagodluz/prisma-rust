@@ -1,6 +1,11 @@
 [package]
 name = "prisma_engine"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+
+# O projeto virou um "workspace": uma pasta com mais de um pacote.
+# A raiz continua sendo o motor (`prisma_engine`); `game/` é o jogo com tela (`prisma_game`).
+[workspace]
+members = ["game"]

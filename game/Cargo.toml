@@ -1,0 +1,23 @@
+[package]
+name = "prisma_game"
+version = "0.1.0"
+# Edition 2021 de propósito: a ferramenta que gera o APK (cargo-quad-apk) não lê a 2024.
+# O teste `tests/workspace.rs` avisa se alguém mudar isso.
+edition = "2021"
+
+[dependencies]
+# O motor do jogo (as regras), que fica na pasta de cima.
+prisma_engine = { path = ".." }
+# Biblioteca que abre a janela, desenha, lê toque e (mais tarde) toca som.
+macroquad = "0.4"
+
+# Dados para o gerador de APK. Só o essencial por enquanto.
+[package.metadata.android]
+package_name = "com.thiagodluz.prisma.rust"
+label = "Prisma (Rust)"
+
+[package.metadata.android.activity_attributes]
+# Androids novos exigem declarar isto; sem ele o app não instala.
+"android:exported" = "true"
+# Sempre em pé (retrato).
+"android:screenOrientation" = "portrait"

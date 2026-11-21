@@ -64,8 +64,12 @@ struct Reaction<'a> {
 impl Reaction<'_> {
     /// Põe uma pedra especial na fila para disparar (se ainda não disparou).
     fn enqueue(&mut self, index: usize) {
-        if let Some(tile) = self.game.tile(index)
-            && !self.protected.contains(&index)
+        // `let ... else` abre o `Option` e, se estiver vazio, sai da função na hora.
+        // (Antes isto era um `if let ... && ...`, que só existe na edition 2024.)
+        let Some(tile) = self.game.tile(index) else {
+            return;
+        };
+        if !self.protected.contains(&index)
             && tile.kind != TileKind::Normal
             && !self.seen.contains(&tile.id)
         {
