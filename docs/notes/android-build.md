@@ -11,7 +11,10 @@ O GitHub Actions gera o APK a cada envio para a `main` (fluxo **Android**, arqui
 Precisa de Docker. Na pasta do projeto:
 
 ```
-docker run --rm -v "$PWD":/root/src -w /root/src/game notfl3/cargo-apk cargo quad-apk build
+docker run --rm -v "$PWD":/root/src -w /root/src/game notfl3/cargo-apk sh -c '
+  rustup update stable && rustup default stable &&
+  rustup target add armv7-linux-androideabi aarch64-linux-android i686-linux-android &&
+  cargo quad-apk build'
 ```
 
 O APK sai em `target/android-artifacts/debug/apk/`. Para a versão "release", acrescentar
@@ -28,6 +31,10 @@ O APK sai em `target/android-artifacts/debug/apk/`. Para a versão "release", ac
   ("lock file version `4` was found, but this version of Cargo does not understand this
   lock file"). O fluxo troca a primeira linha de versão com `sed` antes de gerar o APK; o
   arquivo do repositório não muda.
+- **O Rust do contêiner é atualizado a cada execução.** A imagem `notfl3/cargo-apk` traz o
+  Rust 1.79 (de 2024) e o motor usa `Option::is_none_or`, que só existe a partir do 1.82.
+  Por isso o comando começa com `rustup update stable` e instala de novo os alvos do Android.
+  O Cargo antigo da ferramenta só lê os arquivos do projeto; quem compila é o `rustc` novo.
 - **O comando roda de dentro de `game/`.** A ferramenta ignora `-p prisma_game` e usa o
   pacote da pasta onde está. Da raiz ela pegaria o motor (que não depende do `miniquad`) e
   pararia com "no miniquad is found in the dependencies tree".
