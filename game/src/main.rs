@@ -2,6 +2,8 @@
 //!
 //! As regras do jogo ficam no pacote `prisma_engine`; aqui só se desenha e se lê toque.
 
+mod layout;
+
 use macroquad::prelude::*;
 
 /// Configuração da janela. No Android o sistema escolhe o tamanho; no PC usamos 540×960,
