@@ -6,10 +6,15 @@
 use std::collections::HashMap;
 
 use macroquad::prelude::*;
-use prisma_engine::{Board, SIZE};
+use prisma_engine::{position, Board, Tile, SIZE};
 
+use crate::app::{App, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
-use crate::layout::{self, board_rect, cell_rect, TelaDiagnostico};
+use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
+use crate::linha::{
+    deslocamento_troca, embaralhar_alfa, limpeza_da_casa, linhas_de_queda, nivel_faixa, queda_deslocamento,
+    queda_ms, resgate_da_casa,
+};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
 const FUNDO: Color = Color::from_hex(0x101229);
@@ -17,6 +22,14 @@ const FUNDO: Color = Color::from_hex(0x101229);
 const PAINEL: Color = Color::from_hex(0x0d142c);
 /// Cor dos botões da tela de teste.
 const BOTAO: Color = Color::from_hex(0x2a3f8f);
+/// Cores da tela de jogo.
+const TEXTO_SUAVE: Color = Color::from_hex(0x9aa5d9);
+const ABA_ATIVA: Color = Color::from_hex(0x3b52c4);
+const ABA_INATIVA: Color = Color::from_hex(0x1a2350);
+const BARRA_PREENCHIDA: Color = Color::from_hex(0x7f93ff);
+const DESTAQUE: Color = Color::from_hex(0xffd166);
+const CARTAO: Color = Color::from_hex(0x182046);
+const BORDA: Color = Color::from_hex(0x4a63d6);
 
 /// Todas as imagens já carregadas na placa de vídeo, uma `Texture2D` por `Sprite`.
 pub struct Sprites {
@@ -92,4 +105,343 @@ fn desenhar_botao(area: layout::Rect, rotulo: &str, tamanho: f32) {
     let x = area.x + (area.w - medida.width) / 2.0;
     let y = area.y + (area.h - medida.height) / 2.0 + medida.offset_y;
     draw_text(rotulo, x, y, tamanho, WHITE);
+}
+
+// ---- Tela de jogo ------------------------------------------------------------------------------
+
+/// A mesma cor com a opacidade multiplicada por `alfa` (de 0 a 1).
+fn com_alfa(cor: Color, alfa: f32) -> Color {
+    Color::new(cor.r, cor.g, cor.b, cor.a * alfa.clamp(0.0, 1.0))
+}
+
+#[derive(Clone, Copy)]
+enum Alinhamento {
+    Esquerda,
+    Centro,
+    Direita,
+}
+
+/// Escreve `texto` dentro de `area`, na vertical no meio. Se não couber na largura, a letra
+/// encolhe até caber.
+fn escrever(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento) {
+    if tamanho < 1.0 || area.w <= 0.0 {
+        return;
+    }
+    let mut tamanho = tamanho;
+    let medida = measure_text(texto, None, tamanho as u16, 1.0);
+    if medida.width > area.w {
+        tamanho *= area.w / medida.width;
+        if tamanho < 1.0 {
+            return;
+        }
+    }
+    let medida = measure_text(texto, None, tamanho as u16, 1.0);
+    // A altura vem de uma palavra de referência, para o texto não "pular" de acordo com as letras.
+    let referencia = measure_text("Ag", None, tamanho as u16, 1.0);
+    let x = match alinhamento {
+        Alinhamento::Esquerda => area.x,
+        Alinhamento::Centro => area.x + (area.w - medida.width) / 2.0,
+        Alinhamento::Direita => area.x + area.w - medida.width,
+    };
+    let y = area.y + (area.h - referencia.height) / 2.0 + referencia.offset_y;
+    draw_text(texto, x, y, tamanho, cor);
+}
+
+/// Um botão da tela de jogo: retângulo com borda e rótulo no meio. `ativo` falso apaga o botão.
+fn botao_da_tela(area: Rect, rotulo: &str, tamanho: f32, fundo: Color, ativo: bool) {
+    let alfa = if ativo { 1.0 } else { 0.4 };
+    draw_rectangle(area.x, area.y, area.w, area.h, com_alfa(fundo, alfa));
+    draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, com_alfa(BORDA, alfa));
+    let margem = 0.06 * area.w;
+    let dentro = Rect { x: area.x + margem, y: area.y, w: area.w - 2.0 * margem, h: area.h };
+    escrever(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro);
+}
+
+/// Desenha a imagem de uma pedra no meio de `casa`, com `escala` e `alfa`, deslocada de
+/// (`dx`, `dy`) pixels. Pedra sem imagem é pulada.
+fn desenhar_pedra(sprites: &Sprites, pedra: &Tile, casa: Rect, escala: f32, alfa: f32, (dx, dy): (f32, f32)) {
+    let Some(sprite) = sprite_for(pedra) else { return };
+    let Some(textura) = sprites.texturas.get(&sprite) else { return };
+    let lado = casa.w * SPRITE_RATIO * escala;
+    let x = casa.x + casa.w / 2.0 + dx - lado / 2.0;
+    let y = casa.y + casa.h / 2.0 + dy - lado / 2.0;
+    draw_texture_ex(
+        textura,
+        x,
+        y,
+        com_alfa(WHITE, alfa),
+        DrawTextureParams { dest_size: Some(vec2(lado, lado)), ..Default::default() },
+    );
+}
+
+/// Desenha as 64 casas de `tabuleiro`; `ajuste` decide, para cada casa, a escala, a opacidade
+/// e o deslocamento (em pixels) da pedra, ou `None` para não desenhá-la aqui.
+fn desenhar_casas(
+    sprites: &Sprites,
+    pedras: &Board,
+    area: Rect,
+    mut ajuste: impl FnMut(usize, Rect) -> Option<(f32, f32, (f32, f32))>,
+) {
+    for linha in 0..SIZE {
+        for coluna in 0..SIZE {
+            let casa = cell_rect(area, linha, coluna);
+            if let Some((escala, alfa, deslocamento)) = ajuste(linha * SIZE + coluna, casa) {
+                desenhar_pedra(sprites, &pedras[linha][coluna], casa, escala, alfa, deslocamento);
+            }
+        }
+    }
+}
+
+/// As pedras do tabuleiro: paradas, ou como estão no passo atual da animação.
+fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
+    let parada = |_: usize, _: Rect| Some((1.0, 1.0, (0.0, 0.0)));
+    let Some((passo, t)) = app.passo_atual() else {
+        desenhar_casas(sprites, &app.jogo().board, area, parada);
+        return;
+    };
+    use crate::linha::Passo;
+    match passo {
+        Passo::Troca { antes, a, b, valida } => {
+            let (a, b) = (*a, *b);
+            // As duas pedras da troca ficam por último (por cima das outras).
+            desenhar_casas(sprites, antes, area, |indice, _| (indice != a && indice != b).then_some((1.0, 1.0, (0.0, 0.0))));
+            let (linha_a, coluna_a) = position(a);
+            let (linha_b, coluna_b) = position(b);
+            let (casa_a, casa_b) = (cell_rect(area, linha_a, coluna_a), cell_rect(area, linha_b, coluna_b));
+            let d = deslocamento_troca(t, *valida);
+            let (dx, dy) = ((casa_b.x - casa_a.x) * d, (casa_b.y - casa_a.y) * d);
+            desenhar_pedra(sprites, &antes[linha_a][coluna_a], casa_a, 1.0, 1.0, (dx, dy));
+            desenhar_pedra(sprites, &antes[linha_b][coluna_b], casa_b, 1.0, 1.0, (-dx, -dy));
+        }
+        Passo::Limpeza { tabuleiro, celulas, ativadas, .. } => {
+            desenhar_casas(sprites, tabuleiro, area, |indice, _| {
+                if celulas.contains(&indice) {
+                    let (escala, alfa) = limpeza_da_casa(ativadas, indice, t);
+                    Some((escala, alfa, (0.0, 0.0)))
+                } else {
+                    Some((1.0, 1.0, (0.0, 0.0)))
+                }
+            });
+        }
+        Passo::Queda { tabuleiro, origens } => {
+            desenhar_casas(sprites, tabuleiro, area, |indice, casa| {
+                let origem = origens.get(indice).copied().unwrap_or(indice as i32);
+                let linha_destino = indice / SIZE;
+                let linhas = linhas_de_queda(origem, linha_destino);
+                let acima = queda_deslocamento(origem, linha_destino, t);
+                // Pedra nova (nasceu acima do tabuleiro) aparece enquanto desce: 0,45 → 1.
+                let alfa = if origem < 0 && linhas > 0 { 0.45 + 0.55 * (t / queda_ms(linhas)).clamp(0.0, 1.0) } else { 1.0 };
+                Some((1.0, alfa, (0.0, -acima * casa.h)))
+            });
+        }
+        Passo::Embaralhar { antes, depois } => {
+            let (mostra_novo, alfa) = embaralhar_alfa(t);
+            let pedras = if mostra_novo { depois } else { antes };
+            desenhar_casas(sprites, pedras, area, |_, _| Some((1.0, alfa, (0.0, 0.0))));
+        }
+        Passo::Resgate { tabuleiro, indice } => {
+            desenhar_casas(sprites, tabuleiro, area, |casa_indice, _| {
+                if casa_indice == *indice {
+                    let (escala, alfa) = resgate_da_casa(t);
+                    Some((escala, alfa, (0.0, 0.0)))
+                } else {
+                    Some((1.0, 1.0, (0.0, 0.0)))
+                }
+            });
+        }
+        // Na faixa de nível o tabuleiro já está no estado final.
+        Passo::Nivel { .. } => desenhar_casas(sprites, &app.jogo().board, area, parada),
+    }
+}
+
+/// A casa de número `indice` (0 a 63) do tabuleiro.
+fn casa_de(area: Rect, indice: usize) -> Rect {
+    cell_rect(area, indice / SIZE, indice % SIZE)
+}
+
+/// Realces que ficam ATRÁS das pedras (para não "sujar" a cor delas): fundo da casa marcada,
+/// do dedo em cima e da Dica.
+fn desenhar_fundos_de_realce(app: &App, area: Rect) {
+    let gestos = app.gestos();
+    if let Some(indice) = gestos.selecionada() {
+        let casa = casa_de(area, indice);
+        draw_rectangle(casa.x, casa.y, casa.w, casa.h, Color::new(1.0, 1.0, 1.0, 0.22));
+    }
+    if let Some(indice) = gestos.pressionada() {
+        let casa = casa_de(area, indice);
+        draw_rectangle(casa.x, casa.y, casa.w, casa.h, Color::new(1.0, 1.0, 1.0, 0.14));
+    }
+    if let Some((a, b)) = app.dica() {
+        let pulso = pulso_da_dica();
+        for indice in [a, b] {
+            let casa = casa_de(area, indice);
+            draw_rectangle(casa.x, casa.y, casa.w, casa.h, com_alfa(DESTAQUE, 0.25 * pulso));
+        }
+    }
+}
+
+/// A moldura da Dica pulsa: a opacidade vai e volta com o relógio (de 0,1 a 1).
+fn pulso_da_dica() -> f32 {
+    0.55 + 0.45 * (get_time() * 6.0).sin() as f32
+}
+
+/// Realces que ficam POR CIMA das pedras: contornos da casa marcada, do alvo do arrasto e da Dica.
+fn desenhar_contornos_de_realce(app: &App, area: Rect) {
+    let gestos = app.gestos();
+    if let Some(indice) = gestos.selecionada() {
+        let casa = casa_de(area, indice);
+        draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, WHITE);
+    }
+    if let Some(indice) = gestos.alvo_do_arrasto() {
+        let casa = casa_de(area, indice);
+        draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, com_alfa(WHITE, 0.8));
+    }
+    if let Some((a, b)) = app.dica() {
+        let pulso = pulso_da_dica();
+        for indice in [a, b] {
+            let casa = casa_de(area, indice);
+            draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 4.0, com_alfa(DESTAQUE, pulso));
+        }
+    }
+}
+
+/// As abas, o painel de números e a barra de progresso.
+fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
+    let t = tela.texto;
+    let zen = app.modo() == prisma_engine::Mode::Zen;
+    botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
+    botao_da_tela(tela.aba_classico, "Clássico", 1.05 * t, if zen { ABA_INATIVA } else { ABA_ATIVA }, true);
+
+    for (rotulo, valor, area) in [
+        ("PONTOS", &painel.pontos, tela.pontos),
+        ("NÍVEL", &painel.nivel, tela.nivel),
+        ("MELHOR", &painel.melhor, tela.melhor),
+    ] {
+        draw_rectangle(area.x, area.y, area.w, area.h, PAINEL);
+        let em_cima = Rect { h: 0.38 * area.h, ..area };
+        let embaixo = Rect { y: area.y + 0.38 * area.h, h: 0.62 * area.h, ..area };
+        escrever(rotulo, em_cima, 0.62 * t, TEXTO_SUAVE, Alinhamento::Centro);
+        escrever(valor, embaixo, 1.5 * t, WHITE, Alinhamento::Centro);
+    }
+
+    let barra = tela.barra;
+    draw_rectangle(barra.x, barra.y, barra.w, barra.h, ABA_INATIVA);
+    draw_rectangle(barra.x, barra.y, barra.w * painel.progresso, barra.h, BARRA_PREENCHIDA);
+    escrever(&painel.rotulo, tela.rotulo, 0.78 * t, TEXTO_SUAVE, Alinhamento::Centro);
+    if let Some(ganho) = &painel.ganho {
+        escrever(ganho, tela.rotulo, 0.9 * t, DESTAQUE, Alinhamento::Esquerda);
+    }
+}
+
+/// O aviso ("Supernova", "Tabuleiro reorganizado") numa pílula por cima do tabuleiro.
+fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
+    let tamanho = tela.texto;
+    if tamanho < 1.0 {
+        return;
+    }
+    let medida = measure_text(texto, None, tamanho as u16, 1.0);
+    let margem = 0.7 * tamanho;
+    let largura = (medida.width + 2.0 * margem).min(tela.tabuleiro.w);
+    let altura = 2.2 * tamanho;
+    let area = Rect {
+        x: tela.tabuleiro.x + (tela.tabuleiro.w - largura) / 2.0,
+        y: tela.tabuleiro.y + 0.08 * tela.tabuleiro.h,
+        w: largura,
+        h: altura,
+    };
+    draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.85));
+    draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, BORDA);
+    escrever(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro);
+}
+
+/// A faixa "Nível N" no meio do tabuleiro, crescendo e sumindo conforme `t` (ms).
+fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo) {
+    let (escala, alfa) = nivel_faixa(t);
+    let tabuleiro = tela.tabuleiro;
+    let largura = 0.8 * tabuleiro.w * escala;
+    let altura = 0.2 * tabuleiro.h * escala;
+    let area = Rect {
+        x: tabuleiro.x + (tabuleiro.w - largura) / 2.0,
+        y: tabuleiro.y + (tabuleiro.h - altura) / 2.0,
+        w: largura,
+        h: altura,
+    };
+    draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.95 * alfa));
+    draw_rectangle_lines(area.x, area.y, area.w, area.h, 3.0, com_alfa(DESTAQUE, alfa));
+    escrever(&format!("Nível {nivel}"), area, 2.4 * tela.texto * escala, com_alfa(DESTAQUE, alfa), Alinhamento::Centro);
+}
+
+/// O cartão de "Fim de partida", com o tabuleiro escurecido atrás.
+fn desenhar_fim(nivel: &str, pontos: &str, tela: &TelaJogo) {
+    let t = tela.texto;
+    let tabuleiro = tela.tabuleiro;
+    draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, Color::new(0.0, 0.0, 0.0, 0.55));
+    let cartao = tela.cartao_fim;
+    draw_rectangle(cartao.x, cartao.y, cartao.w, cartao.h, CARTAO);
+    draw_rectangle_lines(cartao.x, cartao.y, cartao.w, cartao.h, 2.0, BORDA);
+    let linha = |de: f32, ate: f32| Rect {
+        x: cartao.x + 0.05 * cartao.w,
+        y: cartao.y + de * cartao.h,
+        w: 0.9 * cartao.w,
+        h: (ate - de) * cartao.h,
+    };
+    escrever("Fim de partida", linha(0.05, 0.26), 1.5 * t, WHITE, Alinhamento::Centro);
+    escrever("Não há mais jogadas possíveis nesta partida.", linha(0.27, 0.41), 0.72 * t, TEXTO_SUAVE, Alinhamento::Centro);
+    escrever(&format!("Nível {nivel}   |   {pontos} pontos"), linha(0.43, 0.62), 1.1 * t, DESTAQUE, Alinhamento::Centro);
+    botao_da_tela(tela.botao_jogar_novamente, "Jogar novamente", 1.0 * t, ABA_ATIVA, true);
+}
+
+/// A pergunta "Começar novo jogo?", com a tela inteira escurecida atrás.
+fn desenhar_dialogo(tela: &TelaJogo) {
+    let t = tela.texto;
+    draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.0, 0.0, 0.0, 0.6));
+    let dialogo = tela.dialogo;
+    draw_rectangle(dialogo.x, dialogo.y, dialogo.w, dialogo.h, CARTAO);
+    draw_rectangle_lines(dialogo.x, dialogo.y, dialogo.w, dialogo.h, 2.0, BORDA);
+    let linha = |de: f32, ate: f32| Rect {
+        x: dialogo.x + 0.05 * dialogo.w,
+        y: dialogo.y + de * dialogo.h,
+        w: 0.9 * dialogo.w,
+        h: (ate - de) * dialogo.h,
+    };
+    escrever("Começar novo jogo?", linha(0.08, 0.32), 1.35 * t, WHITE, Alinhamento::Centro);
+    escrever("O progresso da partida atual será substituído.", linha(0.34, 0.50), 0.72 * t, TEXTO_SUAVE, Alinhamento::Centro);
+    botao_da_tela(tela.dialogo_cancelar, "Cancelar", t, ABA_INATIVA, true);
+    botao_da_tela(tela.dialogo_confirmar, "Novo jogo", t, ABA_ATIVA, true);
+}
+
+/// Desenha a tela de jogo inteira: abas, painel, tabuleiro, botões e, por cima, avisos, o
+/// cartão de fim de partida e a pergunta de novo jogo. Tudo vem do `App` (e do `Painel` que ele
+/// monta); aqui só se escolhe cor e posição.
+pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
+    clear_background(FUNDO);
+    let painel = app.painel();
+    desenhar_cabecalho(app, &painel, tela);
+
+    let tabuleiro = tela.tabuleiro;
+    draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, PAINEL);
+    desenhar_fundos_de_realce(app, tabuleiro);
+    desenhar_pedras(app, sprites, tabuleiro);
+    desenhar_contornos_de_realce(app, tabuleiro);
+    if let Some(aviso) = &painel.aviso {
+        desenhar_aviso(aviso, tela);
+    }
+    if let Some((crate::linha::Passo::Nivel { nivel }, t)) = app.passo_atual() {
+        desenhar_faixa_de_nivel(*nivel, t, tela);
+    }
+
+    // Os botões de baixo. Com a partida acabada, a Dica fica apagada.
+    let t = tela.texto;
+    if let (true, Some(embaralhar)) = (painel.embaralhar_visivel, tela.botao_embaralhar) {
+        botao_da_tela(embaralhar, "Embaralhar", t, ABA_INATIVA, true);
+    }
+    botao_da_tela(tela.botao_dica, "Dica", t, ABA_INATIVA, painel.dica_ativa);
+    botao_da_tela(tela.botao_novo_jogo, "Novo jogo", t, ABA_INATIVA, true);
+
+    if let Some((nivel, pontos)) = &painel.fim {
+        desenhar_fim(nivel, pontos, tela);
+    }
+    if painel.dialogo {
+        desenhar_dialogo(tela);
+    }
 }

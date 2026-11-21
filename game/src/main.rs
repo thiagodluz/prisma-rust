@@ -4,6 +4,7 @@
 
 mod app;
 mod assets;
+mod cenas;
 mod contador;
 mod input;
 mod layout;
@@ -66,6 +67,8 @@ enum Tela {
     Diagnostico,
     /// O tabuleiro de vitrine do M0a (só no PC, com `--tela vitrine`).
     Vitrine,
+    /// A tela de jogo (`--tela jogo`; com `--cena nome` mostra um momento fixo, para foto).
+    Jogo,
 }
 
 /// Lê `--tela vitrine` nos argumentos; qualquer outra coisa (ou nada) abre o diagnóstico.
@@ -76,8 +79,15 @@ fn tela_pedida(args: &[String]) -> Tela {
         .and_then(|posicao| args.get(posicao + 1));
     match valor.map(String::as_str) {
         Some("vitrine") => Tela::Vitrine,
+        Some("jogo") => Tela::Jogo,
         _ => Tela::Diagnostico,
     }
+}
+
+/// Lê `--cena nome` nos argumentos (um momento fixo do jogo, para tirar foto).
+fn cena_pedida(args: &[String]) -> Option<String> {
+    let posicao = args.iter().position(|argumento| argumento == "--cena")?;
+    args.get(posicao + 1).cloned()
 }
 
 /// No modo "foto": no segundo quadro (o primeiro "aquece" a tela) grava a imagem da tela
@@ -85,7 +95,13 @@ fn tela_pedida(args: &[String]) -> Tela {
 fn foto_do_quadro(foto: &Option<String>, quadro: u32) {
     if let Some(caminho) = foto {
         if quadro == 1 {
-            get_screen_data().export_png(caminho);
+            let mut imagem = get_screen_data();
+            // Peças com transparência (véus, faixas) deixam a foto com a "opacidade" do quadro
+            // abaixo de 255; na tela de verdade isso é ignorado, então a foto também ignora.
+            for pixel in imagem.bytes.chunks_exact_mut(4) {
+                pixel[3] = 255;
+            }
+            imagem.export_png(caminho);
             std::process::exit(0);
         }
     }
@@ -101,6 +117,7 @@ async fn main() {
     match tela_pedida(&argumentos) {
         Tela::Vitrine => rodar_vitrine(foto).await,
         Tela::Diagnostico => rodar_diagnostico(foto).await,
+        Tela::Jogo => rodar_cena(cena_pedida(&argumentos).unwrap_or_else(|| "inicio".to_string()), foto).await,
     }
 }
 
@@ -112,6 +129,23 @@ async fn rodar_vitrine(foto: Option<String>) {
     let mut quadro = 0u32;
     loop {
         render::draw_frame(&jogo.board, &sprites);
+        foto_do_quadro(&foto, quadro);
+        quadro += 1;
+        next_frame().await;
+    }
+}
+
+/// Mostra uma cena fixa da tela de jogo (provisório da Task 6; a Task 7 liga o jogo de verdade).
+async fn rodar_cena(nome: String, foto: Option<String>) {
+    let Some(app) = cenas::cena(&nome) else {
+        eprintln!("cena desconhecida: {nome}");
+        std::process::exit(2);
+    };
+    let sprites = render::Sprites::load();
+    let mut quadro = 0u32;
+    loop {
+        let tela = layout::tela_jogo(screen_width(), screen_height(), app.painel().embaralhar_visivel);
+        render::draw_jogo(&app, &sprites, &tela);
         foto_do_quadro(&foto, quadro);
         quadro += 1;
         next_frame().await;
@@ -254,6 +288,15 @@ mod tests {
         assert_eq!(tela_pedida(&args(&[])), Tela::Diagnostico);
         assert_eq!(tela_pedida(&args(&["--tela"])), Tela::Diagnostico);
         assert_eq!(tela_pedida(&args(&["--tela", "xyz"])), Tela::Diagnostico);
+    }
+
+    #[test]
+    fn tela_jogo_e_cena_sao_lidas_dos_argumentos() {
+        assert_eq!(tela_pedida(&args(&["--tela", "jogo"])), Tela::Jogo);
+        assert_eq!(cena_pedida(&args(&["--tela", "jogo", "--cena", "fim"])), Some("fim".to_string()));
+        assert_eq!(cena_pedida(&args(&["x", "--cena", "queda", "y"])), Some("queda".to_string()));
+        assert_eq!(cena_pedida(&args(&["--cena"])), None);
+        assert_eq!(cena_pedida(&args(&[])), None);
     }
 
     #[test]

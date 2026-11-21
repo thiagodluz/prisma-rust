@@ -46,7 +46,7 @@ pub fn formatar_numero(numero: u64) -> String {
     let mut texto = String::with_capacity(digitos.len() + digitos.len() / 3);
     for (posicao, digito) in digitos.chars().enumerate() {
         // Põe um ponto antes de cada grupo de três dígitos (contando da direita).
-        if posicao > 0 && (digitos.len() - posicao) % 3 == 0 {
+        if posicao > 0 && (digitos.len() - posicao).is_multiple_of(3) {
             texto.push('.');
         }
         texto.push(digito);
