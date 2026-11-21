@@ -2,6 +2,7 @@
 //!
 //! As regras do jogo ficam no pacote `prisma_engine`; aqui só se desenha e se lê toque.
 
+mod app;
 mod assets;
 mod contador;
 mod input;
