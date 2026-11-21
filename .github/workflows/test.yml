@@ -15,3 +15,5 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
       # Testa o motor e o jogo (a raiz sozinha só testaria o motor).
       - run: cargo test --workspace
+      # As ferramentas (teste do celular virtual e gerador de imagens) são outro pacote, fora do workspace.
+      - run: cargo test --manifest-path tools/Cargo.toml
