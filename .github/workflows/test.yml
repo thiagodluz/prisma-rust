@@ -11,5 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # O áudio do jogo usa a biblioteca ALSA do Linux na hora de juntar o programa.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
       # Testa o motor e o jogo (a raiz sozinha só testaria o motor).
       - run: cargo test --workspace

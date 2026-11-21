@@ -9,12 +9,14 @@ use macroquad::prelude::*;
 use prisma_engine::{Board, SIZE};
 
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
-use crate::layout::{board_rect, cell_rect};
+use crate::layout::{self, board_rect, cell_rect, TelaDiagnostico};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
 const FUNDO: Color = Color::from_hex(0x101229);
 /// Cor do painel atrás das pedras (a do tabuleiro ilustrado do JS).
 const PAINEL: Color = Color::from_hex(0x0d142c);
+/// Cor dos botões da tela de teste.
+const BOTAO: Color = Color::from_hex(0x2a3f8f);
 
 /// Todas as imagens já carregadas na placa de vídeo, uma `Texture2D` por `Sprite`.
 pub struct Sprites {
@@ -68,4 +70,26 @@ pub fn draw_frame(board: &Board, sprites: &Sprites) {
             );
         }
     }
+}
+
+/// Desenha a tela de teste do M0b: título, três linhas de resultado e dois botões.
+/// `linhas` são, de cima para baixo: contador, som e vibração.
+pub fn draw_diagnostico(tela: &TelaDiagnostico, linhas: [&str; 3]) {
+    clear_background(FUNDO);
+    draw_text("Prisma - teste de vida", tela.x_texto, tela.y_titulo, tela.tamanho_titulo, WHITE);
+    for (texto, y) in linhas.into_iter().zip(tela.y_linhas) {
+        draw_text(texto, tela.x_texto, y, tela.tamanho_texto, LIGHTGRAY);
+    }
+    desenhar_botao(tela.botao_som, "Tocar som", tela.tamanho_texto);
+    desenhar_botao(tela.botao_vibrar, "Vibrar", tela.tamanho_texto);
+}
+
+/// Um botão: retângulo cheio com o rótulo centrado.
+fn desenhar_botao(area: layout::Rect, rotulo: &str, tamanho: f32) {
+    draw_rectangle(area.x, area.y, area.w, area.h, BOTAO);
+    let medida = measure_text(rotulo, None, tamanho as u16, 1.0);
+    // `draw_text` recebe a linha de base do texto; `offset_y` é a altura do texto acima dela.
+    let x = area.x + (area.w - medida.width) / 2.0;
+    let y = area.y + (area.h - medida.height) / 2.0 + medida.offset_y;
+    draw_text(rotulo, x, y, tamanho, WHITE);
 }
