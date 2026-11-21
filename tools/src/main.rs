@@ -3,9 +3,11 @@
 //! - `prisma_tools emulador <pasta-do-apk> <pasta-de-saida>`: joga no celular virtual e confere.
 //! - `prisma_tools imagens <pasta-do-prisma-js> <pasta-do-jogo>`: gera as imagens do jogo.
 
-// A Task 3 (comando `emulador`) passa a usar o base64; até lá ele só é testado.
+// A Task 3 (comando `emulador`) passa a usar o base64 e o registro; até lá eles só são testados.
 #[allow(dead_code)]
 mod base64;
+#[allow(dead_code)]
+mod registro;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

@@ -1,0 +1,200 @@
+11-21 20:35:48.966  3376  3376 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:35:48.987  3376  3376 I AndroidRuntime: Using default boot image
+11-21 20:35:48.987  3376  3376 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:35:49.261  3376  3376 D AndroidRuntime: Calling main entry com.android.commands.monkey.Monkey
+11-21 20:35:49.338  3376  3376 I AndroidRuntime: VM exiting with result code 0.
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 tabuleiro x=10 y=194 lado=301
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=zen x=83 y=96
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=classico x=237 y=96
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=embaralhar x=58 y=517
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=dica x=160 y=517
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=novo_jogo x=262 y=517
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=jogar_novamente x=160 y=397
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=cancelar x=99 y=346
+11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=confirmar x=221 y=346
+11-21 20:35:50.224  3597  3633 I SAPP    : PRISMA_M1 pronto modo=zen
+11-21 20:36:09.448  4727  4727 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:09.449  4727  4727 I AndroidRuntime: Using default boot image
+11-21 20:36:09.449  4727  4727 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:10.317  4727  4727 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:10.354  4727  4727 D AndroidRuntime: Shutting down VM
+11-21 20:36:10.356  3597  3633 I SAPP    : PRISMA_M1 toque x=160 y=36
+11-21 20:36:14.229  5069  5069 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:14.230  5069  5069 I AndroidRuntime: Using default boot image
+11-21 20:36:14.265  5069  5069 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:14.773  5069  5069 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:14.785  3597  3633 I SAPP    : PRISMA_M1 toque x=160 y=517
+11-21 20:36:14.788  3597  3633 I SAPP    : PRISMA_M1 dica a=53 b=61
+11-21 20:36:14.807  5069  5069 D AndroidRuntime: Shutting down VM
+11-21 20:36:14.831  5069  5128 I AndroidRuntime: NOTE: attach of thread 'Binder:5069_1' failed
+11-21 20:36:18.714  5191  5191 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:18.724  5191  5191 I AndroidRuntime: Using default boot image
+11-21 20:36:18.724  5191  5191 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:18.877  5191  5191 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:18.885  3597  3633 I SAPP    : PRISMA_M1 toque x=216 y=438
+11-21 20:36:19.086  5191  5191 D AndroidRuntime: Shutting down VM
+11-21 20:36:19.088  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=195 nivel=1
+11-21 20:36:19.854  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:36:22.904  5412  5412 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:22.905  5412  5412 I AndroidRuntime: Using default boot image
+11-21 20:36:22.905  5412  5412 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:23.347  5412  5412 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:23.382  5412  5412 D AndroidRuntime: Shutting down VM
+11-21 20:36:23.388  3597  3633 I SAPP    : PRISMA_M1 toque x=160 y=517
+11-21 20:36:23.390  3597  3633 I SAPP    : PRISMA_M1 dica a=8 b=9
+11-21 20:36:26.390  5656  5656 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:26.392  5656  5656 I AndroidRuntime: Using default boot image
+11-21 20:36:26.392  5656  5656 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:26.636  5656  5656 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:26.654  3597  3633 I SAPP    : PRISMA_M1 toque x=28 y=250
+11-21 20:36:26.838  5656  5656 D AndroidRuntime: Shutting down VM
+11-21 20:36:26.839  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=270 nivel=1
+11-21 20:36:27.676  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:36:30.039  5696  5696 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:30.050  5696  5696 I AndroidRuntime: Using default boot image
+11-21 20:36:30.050  5696  5696 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:30.155  5696  5696 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:30.191  3597  3633 I SAPP    : PRISMA_M1 toque x=160 y=517
+11-21 20:36:30.191  5696  5696 D AndroidRuntime: Shutting down VM
+11-21 20:36:30.193  3597  3633 I SAPP    : PRISMA_M1 dica a=25 b=26
+11-21 20:36:32.215  5735  5735 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:32.222  5735  5735 I AndroidRuntime: Using default boot image
+11-21 20:36:32.222  5735  5735 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:32.341  5735  5735 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:32.352  3597  3633 I SAPP    : PRISMA_M1 toque x=66 y=325
+11-21 20:36:32.551  5735  5735 D AndroidRuntime: Shutting down VM
+11-21 20:36:32.554  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=935 nivel=1
+11-21 20:36:34.589  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:36:36.548  5817  5817 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:36.549  5817  5817 I AndroidRuntime: Using default boot image
+11-21 20:36:36.549  5817  5817 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:36.630  5817  5817 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:36.636  3597  3633 I SAPP    : PRISMA_M1 toque x=160 y=517
+11-21 20:36:36.636  5817  5817 D AndroidRuntime: Shutting down VM
+11-21 20:36:36.638  3597  3633 I SAPP    : PRISMA_M1 dica a=18 b=26
+11-21 20:36:36.640  5817  5828 I AndroidRuntime: NOTE: attach of thread 'Binder:5817_1' failed
+11-21 20:36:38.340  5832  5832 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:38.349  5832  5832 I AndroidRuntime: Using default boot image
+11-21 20:36:38.349  5832  5832 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:38.399  5832  5832 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:38.414  3597  3633 I SAPP    : PRISMA_M1 toque x=104 y=288
+11-21 20:36:38.601  5832  5832 D AndroidRuntime: Shutting down VM
+11-21 20:36:38.603  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=1235 nivel=1
+11-21 20:36:39.986  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:36:41.546  5853  5853 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:41.548  5853  5853 I AndroidRuntime: Using default boot image
+11-21 20:36:41.548  5853  5853 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:41.620  5853  5853 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:41.623  5853  5853 D AndroidRuntime: Shutting down VM
+11-21 20:36:41.626  3597  3633 I SAPP    : PRISMA_M1 toque x=160 y=517
+11-21 20:36:41.628  3597  3633 I SAPP    : PRISMA_M1 dica a=8 b=9
+11-21 20:36:41.632  5853  5864 I AndroidRuntime: NOTE: attach of thread 'Binder:5853_1' failed
+11-21 20:36:43.316  6000  6000 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:43.319  6000  6000 I AndroidRuntime: Using default boot image
+11-21 20:36:43.319  6000  6000 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:43.403  6000  6000 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:43.418  3597  3633 I SAPP    : PRISMA_M1 toque x=29 y=250
+11-21 20:36:43.618  6000  6000 D AndroidRuntime: Shutting down VM
+11-21 20:36:43.620  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=1310 nivel=1
+11-21 20:36:44.452  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:36:46.235  6026  6026 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:46.247  6026  6026 I AndroidRuntime: Using default boot image
+11-21 20:36:46.247  6026  6026 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:46.296  6026  6026 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:46.298  6026  6026 D AndroidRuntime: Shutting down VM
+11-21 20:36:46.306  6026  6037 I AndroidRuntime: NOTE: attach of thread 'Binder:6026_1' failed
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 toque x=237 y=96
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 tabuleiro x=10 y=194 lado=301
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 botao=zen x=83 y=96
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 botao=classico x=237 y=96
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 botao=dica x=109 y=517
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 botao=novo_jogo x=211 y=517
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 botao=jogar_novamente x=160 y=397
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 botao=cancelar x=99 y=346
+11-21 20:36:46.313  3597  3633 I SAPP    : PRISMA_M1 botao=confirmar x=221 y=346
+11-21 20:36:46.314  3597  3633 I SAPP    : PRISMA_M1 modo=classico pontos=0
+11-21 20:36:49.194  6045  6045 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:49.199  6045  6045 I AndroidRuntime: Using default boot image
+11-21 20:36:49.199  6045  6045 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:49.277  6045  6045 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:49.280  6045  6045 D AndroidRuntime: Shutting down VM
+11-21 20:36:49.282  6045  6057 I AndroidRuntime: NOTE: attach of thread 'Binder:6045_2' failed
+11-21 20:36:49.285  3597  3633 I SAPP    : PRISMA_M1 toque x=109 y=517
+11-21 20:36:49.286  3597  3633 I SAPP    : PRISMA_M1 dica a=4 b=12
+11-21 20:36:50.992  6063  6063 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:50.999  6063  6063 I AndroidRuntime: Using default boot image
+11-21 20:36:50.999  6063  6063 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:51.066  6063  6063 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:51.071  6063  6063 D AndroidRuntime: Shutting down VM
+11-21 20:36:51.085  3597  3633 I SAPP    : PRISMA_M1 toque x=179 y=212
+11-21 20:36:52.050  6076  6076 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:52.063  6076  6076 I AndroidRuntime: Using default boot image
+11-21 20:36:52.064  6076  6076 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:52.133  6076  6076 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:52.135  6076  6076 D AndroidRuntime: Shutting down VM
+11-21 20:36:52.151  3597  3633 I SAPP    : PRISMA_M1 toque x=179 y=250
+11-21 20:36:52.152  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=75 nivel=1
+11-21 20:36:52.902  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:36:54.404  6094  6094 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:54.414  6094  6094 I AndroidRuntime: Using default boot image
+11-21 20:36:54.414  6094  6094 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:54.463  6094  6094 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:54.465  6094  6094 D AndroidRuntime: Shutting down VM
+11-21 20:36:54.476  3597  3633 I SAPP    : PRISMA_M1 toque x=109 y=517
+11-21 20:36:54.477  3597  3633 I SAPP    : PRISMA_M1 dica a=10 b=11
+11-21 20:36:56.145  6111  6111 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:56.147  6111  6111 I AndroidRuntime: Using default boot image
+11-21 20:36:56.147  6111  6111 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:56.215  6111  6111 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:56.220  6111  6111 D AndroidRuntime: Shutting down VM
+11-21 20:36:56.235  3597  3633 I SAPP    : PRISMA_M1 toque x=104 y=250
+11-21 20:36:57.203  6126  6126 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:36:57.215  6126  6126 I AndroidRuntime: Using default boot image
+11-21 20:36:57.215  6126  6126 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:36:57.286  6126  6126 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:36:57.289  6126  6126 D AndroidRuntime: Shutting down VM
+11-21 20:36:57.302  3597  3633 I SAPP    : PRISMA_M1 toque x=141 y=250
+11-21 20:36:57.303  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=255 nivel=1
+11-21 20:36:58.619  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:37:00.436  6147  6147 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:37:00.446  6147  6147 I AndroidRuntime: Using default boot image
+11-21 20:37:00.446  6147  6147 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:37:00.509  6147  6147 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:37:00.512  6147  6147 D AndroidRuntime: Shutting down VM
+11-21 20:37:00.518  3597  3633 I SAPP    : PRISMA_M1 toque x=109 y=517
+11-21 20:37:00.520  3597  3633 I SAPP    : PRISMA_M1 dica a=13 b=14
+11-21 20:37:02.276  6163  6163 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:37:02.282  6163  6163 I AndroidRuntime: Using default boot image
+11-21 20:37:02.282  6163  6163 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:37:02.357  6163  6163 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:37:02.360  6163  6163 D AndroidRuntime: Shutting down VM
+11-21 20:37:02.368  3597  3633 I SAPP    : PRISMA_M1 toque x=216 y=250
+11-21 20:37:03.328  6176  6176 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:37:03.337  6176  6176 I AndroidRuntime: Using default boot image
+11-21 20:37:03.338  6176  6176 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:37:03.410  6176  6176 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:37:03.413  6176  6176 D AndroidRuntime: Shutting down VM
+11-21 20:37:03.420  3597  3633 I SAPP    : PRISMA_M1 toque x=254 y=250
+11-21 20:37:03.421  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=330 nivel=1
+11-21 20:37:04.252  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:37:05.621  6195  6195 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:37:05.630  6195  6195 I AndroidRuntime: Using default boot image
+11-21 20:37:05.630  6195  6195 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:37:05.679  6195  6195 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:37:05.682  6195  6195 D AndroidRuntime: Shutting down VM
+11-21 20:37:05.692  3597  3633 I SAPP    : PRISMA_M1 toque x=109 y=517
+11-21 20:37:05.693  3597  3633 I SAPP    : PRISMA_M1 dica a=12 b=13
+11-21 20:37:07.730  6315  6315 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:37:07.739  6315  6315 I AndroidRuntime: Using default boot image
+11-21 20:37:07.739  6315  6315 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:37:08.338  6315  6315 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:37:08.342  6315  6315 D AndroidRuntime: Shutting down VM
+11-21 20:37:08.353  3597  3633 I SAPP    : PRISMA_M1 toque x=179 y=250
+11-21 20:37:09.321  6422  6422 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+11-21 20:37:09.331  6422  6422 I AndroidRuntime: Using default boot image
+11-21 20:37:09.331  6422  6422 I AndroidRuntime: Leaving lock profiling enabled
+11-21 20:37:09.404  6422  6422 D AndroidRuntime: Calling main entry com.android.commands.input.Input
+11-21 20:37:09.410  6422  6422 D AndroidRuntime: Shutting down VM
+11-21 20:37:09.419  3597  3633 I SAPP    : PRISMA_M1 toque x=216 y=250
+11-21 20:37:09.420  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=405 nivel=1
+11-21 20:37:10.186  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
