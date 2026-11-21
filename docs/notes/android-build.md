@@ -63,11 +63,24 @@ No M2 (salvar partida) entra uma chave fixa guardada como segredo do GitHub.
 
 ## Teste no celular virtual (emulador)
 
-Depois de gerar o APK, o fluxo **Android** tem um segundo trabalho (`emulador`) que abre o app
-num emulador do Android (versões 30 e 34), espera 20 segundos e confere se o app continua
-aberto. Ele guarda o registro de erros (`logcat.txt`) e a foto da tela (`tela.png`) como
-artefato `emulador-android-<versão>`, e imprime um resumo dos erros no próprio registro da
-execução. Script: `tools/teste-emulador.sh`.
+Depois de gerar o APK, o fluxo **Android** tem um segundo trabalho (`emulador`) que roda o
+"teste de vida" do M0b num emulador do Android (versões 30 e 34):
+
+1. abre o app, espera 20 segundos e confere que continua aberto;
+2. confere que o contador gravou em arquivo (`PRISMA_M0B aberturas=1`) e que o som carregou;
+3. toca nos botões "Tocar som" e "Vibrar" (`adb shell input tap`, nas posições que o próprio
+   app escreve no registro) e confere as respostas `som=ok` e `vibracao=ok`. O emulador pode
+   não ter vibrador; o app então responde "este aparelho não tem vibrador", e isso também vale;
+4. fecha o app, abre de novo e confere que o contador subiu para 2 (o arquivo sobreviveu).
+
+O app escreve no registro do Android linhas que começam com `PRISMA_M0B`; o script lê essas
+linhas. Ele guarda o registro de erros (`logcat.txt`) e as fotos da tela como artefato
+`emulador-android-<versão>`, e imprime um resumo no próprio registro da execução (as fotos
+saem em texto, entre `TELA_BASE64_INICIO` e `TELA_BASE64_FIM`). Script: `tools/teste-emulador.sh`.
+
+O APK só vira a release `apk-mais-recente` quando o fluxo roda na branch `main`; numa branch
+de trabalho ele só gera o APK e roda o emulador (dá para disparar à mão:
+`gh workflow run android.yml --ref <branch>`).
 
 Limites: o emulador usa a biblioteca de PC (x86), não a do celular (arm64); um erro que só
 existe no arm64 não aparece nele. Serve para pegar erros de programa e de montagem do APK.

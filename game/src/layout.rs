@@ -22,6 +22,13 @@ pub struct Rect {
 impl Rect {
     /// Um retângulo sem tamanho, no canto da tela: o que devolvemos quando a tela não existe.
     const VAZIO: Rect = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+
+    /// O ponto (`x`, `y`) está dentro do retângulo? As bordas da esquerda e de cima contam
+    /// como dentro; as da direita e de baixo, como fora (assim dois retângulos lado a lado
+    /// nunca "disputam" o mesmo toque). Número inválido (NaN) nunca está dentro.
+    pub fn contem(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
+    }
 }
 
 /// O quadrado do tabuleiro: centrado na tela, com lado igual ao menor lado da tela
@@ -53,6 +60,57 @@ pub fn cell_rect(board: Rect, row: usize, col: usize) -> Rect {
         y: board.y + row as f32 * h,
         w,
         h,
+    }
+}
+
+/// Onde ficam os textos e os dois botões da tela de teste do M0b.
+/// As posições verticais (`y_...`) são a linha de base do texto, como o Macroquad pede.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TelaDiagnostico {
+    /// Margem esquerda do texto.
+    pub x_texto: f32,
+    pub y_titulo: f32,
+    /// As três linhas de resultado, de cima para baixo: contador, som, vibração.
+    pub y_linhas: [f32; 3],
+    pub tamanho_titulo: f32,
+    pub tamanho_texto: f32,
+    pub botao_som: Rect,
+    pub botao_vibrar: Rect,
+}
+
+/// Posição de tudo na tela de teste, a partir do tamanho da tela. Tudo é proporcional ao
+/// tamanho, então serve para celular em pé, tela alta e janela de PC.
+///
+/// Uma tela "impossível" (tamanho zero, negativo, NaN ou infinito) devolve tudo zerado, com
+/// botões sem tamanho, que nunca recebem toque.
+pub fn tela_diagnostico(largura: f32, altura: f32) -> TelaDiagnostico {
+    let tela_valida = largura.is_finite() && altura.is_finite() && largura > 0.0 && altura > 0.0;
+    if !tela_valida {
+        return TelaDiagnostico {
+            x_texto: 0.0,
+            y_titulo: 0.0,
+            y_linhas: [0.0; 3],
+            tamanho_titulo: 0.0,
+            tamanho_texto: 0.0,
+            botao_som: Rect::VAZIO,
+            botao_vibrar: Rect::VAZIO,
+        };
+    }
+    let menor_lado = largura.min(altura);
+    let botao = |topo: f32| Rect {
+        x: 0.06 * largura,
+        y: topo * altura,
+        w: 0.88 * largura,
+        h: 0.09 * altura,
+    };
+    TelaDiagnostico {
+        x_texto: 0.06 * largura,
+        y_titulo: 0.10 * altura,
+        y_linhas: [0.20 * altura, 0.28 * altura, 0.36 * altura],
+        tamanho_titulo: 0.075 * menor_lado,
+        tamanho_texto: 0.045 * menor_lado,
+        botao_som: botao(0.50),
+        botao_vibrar: botao(0.62),
     }
 }
 
@@ -142,6 +200,88 @@ mod tests {
             // As casas de um tabuleiro degenerado também não podem ter NaN.
             let casa = cell_rect(b, SIZE - 1, SIZE - 1);
             assert!([casa.x, casa.y, casa.w, casa.h].iter().all(|n| n.is_finite()));
+        }
+    }
+
+    /// Tamanhos de tela usados nos testes da tela de diagnóstico: celulares em pé, um celular
+    /// bem alto, uma tela deitada (PC) e uma quadrada.
+    const TELAS: [(f32, f32); 5] =
+        [(540.0, 960.0), (360.0, 640.0), (1080.0, 2400.0), (960.0, 540.0), (300.0, 300.0)];
+
+    #[test]
+    fn botoes_ficam_dentro_da_tela() {
+        for (largura, altura) in TELAS {
+            let tela = tela_diagnostico(largura, altura);
+            for botao in [tela.botao_som, tela.botao_vibrar] {
+                assert!(botao.x >= 0.0 && botao.y >= 0.0, "tela {largura}x{altura}: {botao:?}");
+                assert!(botao.x + botao.w <= largura + 0.01, "tela {largura}x{altura}: {botao:?}");
+                assert!(botao.y + botao.h <= altura + 0.01, "tela {largura}x{altura}: {botao:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn botoes_nao_se_sobrepoem() {
+        for (largura, altura) in TELAS {
+            let tela = tela_diagnostico(largura, altura);
+            assert!(
+                tela.botao_som.y + tela.botao_som.h < tela.botao_vibrar.y,
+                "tela {largura}x{altura}: botões se encostam ou se sobrepõem"
+            );
+        }
+    }
+
+    #[test]
+    fn texto_fica_acima_dos_botoes_e_as_linhas_nao_se_sobrepoem() {
+        for (largura, altura) in TELAS {
+            let tela = tela_diagnostico(largura, altura);
+            assert!(tela.y_linhas[2] < tela.botao_som.y, "tela {largura}x{altura}: texto cai nos botões");
+            assert!(tela.y_titulo < tela.y_linhas[0], "tela {largura}x{altura}: título abaixo das linhas");
+            for par in tela.y_linhas.windows(2) {
+                assert!(
+                    par[1] - par[0] >= 1.2 * tela.tamanho_texto,
+                    "tela {largura}x{altura}: linhas muito juntas"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn botoes_em_pe_tem_altura_boa_para_o_dedo() {
+        for (largura, altura) in [(540.0, 960.0), (360.0, 640.0)] {
+            let tela = tela_diagnostico(largura, altura);
+            assert!(tela.botao_som.h >= 0.08 * altura, "tela {largura}x{altura}");
+            assert!(tela.botao_vibrar.h >= 0.08 * altura, "tela {largura}x{altura}");
+        }
+    }
+
+    #[test]
+    fn contem_inclui_esquerda_e_topo_e_exclui_direita_e_baixo() {
+        let r = Rect { x: 10.0, y: 20.0, w: 100.0, h: 50.0 };
+        assert!(r.contem(10.0, 20.0), "canto de cima à esquerda é dentro");
+        assert!(r.contem(60.0, 45.0), "meio é dentro");
+        assert!(r.contem(109.9, 69.9));
+        assert!(!r.contem(110.0, 45.0), "borda direita é fora");
+        assert!(!r.contem(60.0, 70.0), "borda de baixo é fora");
+        assert!(!r.contem(9.9, 45.0));
+        assert!(!r.contem(60.0, 19.9));
+    }
+
+    #[test]
+    fn contem_rejeita_nan() {
+        let r = Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
+        assert!(!r.contem(f32::NAN, 50.0));
+        assert!(!r.contem(50.0, f32::NAN));
+    }
+
+    #[test]
+    fn tela_invalida_da_botoes_vazios() {
+        for (largura, altura) in [(0.0, 0.0), (-1.0, 5.0), (f32::NAN, 10.0), (f32::INFINITY, 10.0)] {
+            let tela = tela_diagnostico(largura, altura);
+            for botao in [tela.botao_som, tela.botao_vibrar] {
+                assert_eq!((botao.w, botao.h), (0.0, 0.0), "tela {largura}x{altura}");
+                assert!(!botao.contem(0.0, 0.0), "tela {largura}x{altura}");
+            }
         }
     }
 }

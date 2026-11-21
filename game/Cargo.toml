@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 # O motor do jogo (as regras), que fica na pasta de cima.
 prisma_engine = { path = ".." }
 # Biblioteca que abre a janela, desenha, lê toque e (mais tarde) toca som.
-macroquad = "0.4"
+macroquad = { version = "0.4", features = ["audio"] }
 
 # Dados para o gerador de APK. Só o essencial por enquanto.
 [package.metadata.android]
@@ -22,6 +22,10 @@ label = "Prisma (Rust)"
 # Ícones do app (gerados por tools/prepare_assets.py em android_res/mipmap-*/).
 res = "android_res"
 icon = "@mipmap/ic_launcher"
+
+# Permissão para vibrar (o botão "Vibrar" do teste do M0b).
+[[package.metadata.android.permission]]
+name = "android.permission.VIBRATE"
 
 [package.metadata.android.activity_attributes]
 # Androids novos exigem declarar isto; sem ele o app não instala.
