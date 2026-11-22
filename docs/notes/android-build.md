@@ -5,6 +5,8 @@
 O GitHub Actions gera o APK a cada envio para a `main` (fluxo **Android**, arquivo
 `.github/workflows/android.yml`). O resultado vai para a release `apk-mais-recente` (endereço
 fixo, sem zip) e também fica como "artefato" da execução, com o nome `prisma-debug-apk`.
+O APK sai **assinado com uma chave fixa** (a mesma em toda execução), então cada APK novo instala
+por cima do anterior e o jogo continua com a partida e os recordes salvos (ver "Assinatura").
 
 ## Gerar na mão (se um dia for preciso)
 
@@ -18,7 +20,8 @@ docker run --rm -v "$PWD":/root/src -w /root/src/game notfl3/cargo-apk sh -c '
 ```
 
 O APK sai em `target/android-artifacts/debug/apk/`. Para a versão "release", acrescentar
-`--release` no fim (ela ainda não é assinada com chave própria; ver "Assinatura").
+`--release` no fim. Feito na mão assim, o APK sai com uma chave de teste do próprio gerador (não a
+chave fixa do app; ver "Assinatura").
 
 ## Por que o projeto é assim
 
@@ -56,10 +59,39 @@ APK novo. Por segurança o fluxo também guarda o APK como artefato da execuçã
 
 ## Assinatura (importante)
 
-No modo debug, **cada execução do GitHub Actions usa uma chave de teste nova**. O Android não
-deixa instalar um APK por cima de outro assinado com chave diferente: é preciso **desinstalar o
-app antes de instalar o seguinte** (e os dados dele se perdem). Isto é aceitável até o M1.
-No M2 (salvar partida) entra uma chave fixa guardada como segredo do GitHub.
+O Android só deixa instalar um APK por cima de outro se os dois foram assinados com a **mesma
+chave**; só assim o app novo herda os dados do antigo (partida e recordes). Por isso o fluxo
+assina todo APK com **uma chave fixa**.
+
+- **Onde fica a chave:** nos segredos do repositório no GitHub (Settings → Secrets and variables →
+  Actions): `PRISMA_RUST_KEYSTORE_BASE64` (o arquivo da chave, em base64) e
+  `PRISMA_RUST_KEYSTORE_PASSWORD` (a senha). O arquivo da chave e a senha **nunca** entram no
+  git; só a impressão digital pública do certificado fica no repositório, em
+  `tools/assinatura-sha256.txt`. O GitHub não deixa ler um segredo de volta: **guarde uma cópia
+  do arquivo da chave e da senha** (por exemplo num gerenciador de senhas), fora do GitHub.
+- **Como o fluxo assina** (trabalho `apk` de `.github/workflows/android.yml`): gera o APK sem
+  assinar (`cargo quad-apk build --nosign`), alinha (`zipalign`), assina (`apksigner`, alias
+  `prisma`) e **confere** se a impressão digital do certificado é a de
+  `tools/assinatura-sha256.txt`; se não for, o fluxo reprova em vez de publicar. Sem os segredos,
+  reprova com uma mensagem apontando esta seção. O arquivo da chave só existe numa pasta
+  temporária do executor e é apagado num passo que roda sempre. O artefato, a release e o
+  celular virtual usam o mesmo APK assinado.
+- **Número da versão:** o `versionCode` do app é o número da execução do fluxo (o fluxo reescreve
+  a linha `version_code` de `game/Cargo.toml` só no executor, sem commitar); o Android não aceita
+  instalar por cima uma versão com número menor.
+- **Como conferir:** no registro do passo "Assinar o APK com a chave fixa" aparecem `Verified
+  using v2 scheme ...: true` e `Signer #1 certificate SHA-256 digest: ...`, que tem de ser igual
+  ao conteúdo de `tools/assinatura-sha256.txt`. Num APK baixado:
+  `apksigner verify --print-certs prisma-rust.apk` (vem nas `build-tools` do Android SDK).
+- **A primeira vez:** o APK de antes desta mudança foi assinado com uma chave de teste que mudava
+  a cada execução; desinstale-o uma vez antes de instalar o primeiro APK com a chave fixa (os
+  dados dele se perdem). Depois disso, é só instalar por cima.
+- **Se a chave se perder:** gere outra (`keytool -genkeypair -v -keystore prisma-rust.keystore
+  -alias prisma -keyalg RSA -keysize 2048 -validity 10000`), converta em base64 (`base64 -w0
+  prisma-rust.keystore`), troque os dois segredos, troque o conteúdo de
+  `tools/assinatura-sha256.txt` (a linha `SHA256:` de `keytool -list -v -keystore
+  prisma-rust.keystore`, em minúsculas e sem os dois-pontos) e **todo mundo desinstala e instala
+  de novo uma vez**, perdendo os dados salvos do app.
 
 ## Teste no celular virtual (emulador)
 
