@@ -86,6 +86,9 @@ assina todo APK com **uma chave fixa**.
 - **A primeira vez:** o APK de antes desta mudança foi assinado com uma chave de teste que mudava
   a cada execução; desinstale-o uma vez antes de instalar o primeiro APK com a chave fixa (os
   dados dele se perdem). Depois disso, é só instalar por cima.
+- **Conferido no celular (22/11/2026):** o Thiago instalou o APK do M2, jogou Zen e Clássico,
+  fechou pelos apps recentes e abriu de novo: voltou no modo, com a partida de cada modo e os
+  recordes (inclusive depois de Novo jogo e com o app fechado no meio da animação).
 - **Se a chave se perder:** gere outra (`keytool -genkeypair -v -keystore prisma-rust.keystore
   -alias prisma -keyalg RSA -keysize 2048 -validity 10000`), converta em base64 (`base64 -w0
   prisma-rust.keystore`), troque os dois segredos, troque o conteúdo de
