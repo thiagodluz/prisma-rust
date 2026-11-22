@@ -103,7 +103,8 @@ jobs:
 
           SAIDA="$("$FERRAMENTAS/apksigner" verify --print-certs -v "$FINAL")"
           echo "$SAIDA"
-          LINHA="$(grep -m 1 'Signer #1 certificate SHA-256 digest:' <<< "$SAIDA" || true)"
+          # O apksigner novo escreve "V3.0 Signer: certificate SHA-256 digest: ..." e o antigo "Signer #1 certificate ...".
+          LINHA="$(grep -m 1 -E 'Signer.*certificate SHA-256 digest:' <<< "$SAIDA" || true)"
           OBTIDO="$(sed 's/.*digest: *//' <<< "$LINHA" | tr -d ' \r' | tr 'A-F' 'a-f')"
           ESPERADO="$(tr -d ' \r\n' < tools/assinatura-sha256.txt | tr 'A-F' 'a-f')"
           echo "Impressão digital esperada: $ESPERADO"
