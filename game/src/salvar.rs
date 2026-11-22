@@ -1,5 +1,5 @@
 //! Ler e gravar os arquivos do jogo na pasta de dados do app: uma partida por modo, os recordes
-//! de cada modo e o modo em que o jogador estava.
+//! de cada modo, o modo em que o jogador estava e as preferências de som.
 //!
 //! Regras de ouro: **nunca dá pânico** e **nunca perde um save bom**.
 //! - Arquivo que não dá para usar (vazio, lixo, cortado, grande demais, de outro modo, recusado
@@ -9,6 +9,7 @@
 //!   a escrita falhar, o arquivo antigo continua intacto.
 
 use crate::formato::{json_para_partida, json_para_recordes, partida_para_json, recordes_para_json, Recordes};
+use crate::preferencias::{json_para_preferencias, preferencias_para_json, Preferencias};
 use prisma_engine::{Game, Mode, SavedMode};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ use std::path::{Path, PathBuf};
 /// Arquivo maior que 1 MiB conta como estragado, sem nem ser lido inteiro.
 const LIMITE_BYTES: u64 = 1024 * 1024;
 const ARQUIVO_MODO_ATIVO: &str = "modo-ativo.txt";
+const ARQUIVO_PREFERENCIAS: &str = "som.json";
 
 /// De onde veio a partida que o jogo abriu.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -181,12 +183,37 @@ impl Salvador {
         };
         gravar_com_seguranca(pasta, ARQUIVO_MODO_ATIVO, nome)
     }
+
+    /// As preferências de som. Sem arquivo (ou sem pasta): os padrões e `Origem::Novo`. Arquivo
+    /// que não serve (vazio, lixo, cortado, grande demais): os padrões, uma cópia `som.json.corrupt`
+    /// e `Origem::Estragado`. Campos ruins dentro de um objeto não estragam o arquivo: viram padrão.
+    // TEMPORÁRIO: o `allow` sai na Task 5, quando o `App` passa a ler as preferências.
+    #[allow(dead_code)]
+    pub fn carregar_preferencias(&self) -> (Preferencias, Origem) {
+        let motivo = match self.ler_texto(ARQUIVO_PREFERENCIAS) {
+            Ok(None) => return (Preferencias::default(), Origem::Novo),
+            Ok(Some(texto)) => match json_para_preferencias(&texto) {
+                Ok(preferencias) => return (preferencias, Origem::Arquivo),
+                Err(motivo) => self.marcar_estragado(ARQUIVO_PREFERENCIAS, motivo),
+            },
+            Err(motivo) => motivo,
+        };
+        (Preferencias::default(), Origem::Estragado(motivo))
+    }
+
+    // TEMPORÁRIO: o `allow` sai na Task 5, quando o `App` passa a gravar as preferências.
+    #[allow(dead_code)]
+    pub fn gravar_preferencias(&self, preferencias: &Preferencias) -> Result<(), String> {
+        let Some(pasta) = &self.pasta else { return Ok(()) };
+        gravar_com_seguranca(pasta, ARQUIVO_PREFERENCIAS, &preferencias_para_json(preferencias))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::formato::{partida_para_json, recordes_para_json};
+    use crate::preferencias::{Ambiente, Musica, Respiracao, Volumes};
     use prisma_engine::lcg_random;
     use serde_json::Value;
     use std::fs;
@@ -439,5 +466,120 @@ mod tests {
         }
         fs::write(pasta.0.join("modo-ativo.txt"), [0xffu8, 0xfe]).unwrap();
         assert_eq!(salvador.carregar_modo_ativo(), Mode::Zen, "bytes que não são texto");
+    }
+
+    // ----- Preferências de som (som.json) -----
+
+    fn preferencias_de_teste() -> Preferencias {
+        Preferencias {
+            sons_do_jogo: false,
+            volumes: Volumes { efeitos: 35, musica: 0, ambiente: 100 },
+            musica_ligada: true,
+            ambiente_ligado: true,
+            musica: Musica::SpaceCity,
+            ambiente: Ambiente::Trovoada,
+            respiracao: Respiracao::Lenta,
+        }
+    }
+
+    #[test]
+    fn salvador_sem_arquivo_devolve_padrao_e_origem_nova() {
+        let pasta = pasta_de_teste();
+        assert_eq!(Salvador::em(pasta.0.clone()).carregar_preferencias(), (Preferencias::default(), Origem::Novo));
+        assert!(!pasta.0.exists(), "ler não cria a pasta nem arquivo");
+        // Pasta que existe mas sem som.json: igual.
+        fs::create_dir_all(&pasta.0).unwrap();
+        assert_eq!(Salvador::em(pasta.0.clone()).carregar_preferencias(), (Preferencias::default(), Origem::Novo));
+        assert!(!pasta.0.join("som.json.corrupt").exists());
+    }
+
+    #[test]
+    fn salvador_grava_e_le() {
+        let pasta = pasta_de_teste();
+        let salvador = Salvador::em(pasta.0.clone());
+        let preferencias = preferencias_de_teste();
+        salvador.gravar_preferencias(&preferencias).unwrap();
+        assert!(pasta.0.join("som.json").is_file());
+        assert_eq!(salvador.carregar_preferencias(), (preferencias.clone(), Origem::Arquivo));
+        // Gravar de novo troca o conteúdo.
+        let outra = Preferencias { sons_do_jogo: true, ..preferencias };
+        salvador.gravar_preferencias(&outra).unwrap();
+        assert_eq!(salvador.carregar_preferencias(), (outra, Origem::Arquivo));
+        // Os outros arquivos não são tocados.
+        assert!(!pasta.0.join("zen.json").exists() && !pasta.0.join("modo-ativo.txt").exists());
+    }
+
+    #[test]
+    fn salvador_com_arquivo_estragado_guarda_copia_corrupt_e_devolve_padrao() {
+        let casos: Vec<(&str, Vec<u8>)> = vec![
+            ("vazio", Vec::new()),
+            ("lixo", b"lixo".to_vec()),
+            ("JSON cortado", br#"{"soundOn":false,"audio":{"effec"#.to_vec()),
+            ("lista", b"[]".to_vec()),
+            ("bytes que não são texto", vec![0xff, 0xfe, 0x00, 0x41]),
+            ("2 MiB de x", "x".repeat(2 * 1024 * 1024).into_bytes()),
+        ];
+        for (nome, conteudo) in casos {
+            let pasta = pasta_de_teste();
+            fs::create_dir_all(&pasta.0).unwrap();
+            fs::write(pasta.0.join("som.json"), &conteudo).unwrap();
+            fs::write(pasta.0.join("recordes-zen.json"), "{}").unwrap();
+
+            match Salvador::em(pasta.0.clone()).carregar_preferencias() {
+                (lidas, Origem::Estragado(motivo)) => {
+                    assert_eq!(lidas, Preferencias::default(), "{nome}");
+                    assert!(!motivo.trim().is_empty(), "{nome}: motivo vazio");
+                }
+                outra => panic!("{nome}: devia ser Estragado, veio {outra:?}"),
+            }
+            assert_eq!(fs::read(pasta.0.join("som.json.corrupt")).unwrap(), conteudo, "{nome}: a cópia tem de ser exata");
+            assert_eq!(fs::read(pasta.0.join("som.json")).unwrap(), conteudo, "{nome}: o original fica intacto");
+            assert!(!pasta.0.join("recordes-zen.json.corrupt").exists(), "{nome}: os outros arquivos não mudam");
+        }
+        // Um objeto com campos ruins não é "estragado": só os campos ruins voltam ao padrão.
+        let pasta = pasta_de_teste();
+        fs::create_dir_all(&pasta.0).unwrap();
+        fs::write(pasta.0.join("som.json"), r#"{"audio":{"effects":"alto","music":10}}"#).unwrap();
+        let (lidas, origem) = Salvador::em(pasta.0.clone()).carregar_preferencias();
+        assert_eq!(origem, Origem::Arquivo);
+        assert_eq!((lidas.volumes.efeitos, lidas.volumes.musica), (80, 10));
+        assert!(!pasta.0.join("som.json.corrupt").exists());
+    }
+
+    #[test]
+    fn salvador_sem_pasta_nao_da_panico() {
+        let nenhum = Salvador::nenhum();
+        // Sem pasta, gravar não faz nada e devolve Ok, como os outros gravadores.
+        assert_eq!(nenhum.gravar_preferencias(&preferencias_de_teste()), Ok(()));
+        assert_eq!(nenhum.gravar_recordes(Mode::Zen, &Recordes::zerados()), Ok(()));
+        assert_eq!(nenhum.carregar_preferencias(), (Preferencias::default(), Origem::Novo));
+
+        // Pasta impossível (dentro de um arquivo): gravar dá erro, sem pânico; ler dá o padrão.
+        let pasta = pasta_de_teste();
+        fs::create_dir_all(&pasta.0).unwrap();
+        let arquivo = pasta.0.join("sou-um-arquivo");
+        fs::write(&arquivo, "x").unwrap();
+        let impossivel = Salvador::em(arquivo.join("dados"));
+        assert!(impossivel.gravar_preferencias(&preferencias_de_teste()).is_err());
+        assert_eq!(impossivel.carregar_preferencias(), (Preferencias::default(), Origem::Novo));
+    }
+
+    #[test]
+    fn gravacao_em_duas_etapas_nao_deixa_tmp() {
+        let pasta = pasta_de_teste();
+        let salvador = Salvador::em(pasta.0.clone());
+        salvador.gravar_preferencias(&preferencias_de_teste()).unwrap();
+        salvador.gravar_preferencias(&Preferencias::default()).unwrap();
+        let nomes: Vec<String> = fs::read_dir(&pasta.0).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(nomes, ["som.json"], "só o arquivo final, sem .tmp");
+
+        // Se a escrita falha (o nome do temporário virou uma pasta), o som.json bom continua lá.
+        let boa = preferencias_de_teste();
+        salvador.gravar_preferencias(&boa).unwrap();
+        let texto_antigo = fs::read(pasta.0.join("som.json")).unwrap();
+        fs::create_dir(pasta.0.join("som.json.tmp")).unwrap();
+        assert!(salvador.gravar_preferencias(&Preferencias::default()).is_err());
+        assert_eq!(fs::read(pasta.0.join("som.json")).unwrap(), texto_antigo);
+        assert_eq!(salvador.carregar_preferencias(), (boa, Origem::Arquivo));
     }
 }

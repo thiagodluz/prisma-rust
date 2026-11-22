@@ -12,6 +12,7 @@ mod input;
 mod layout;
 mod linha;
 mod plataforma;
+mod preferencias;
 mod render;
 mod salvar;
 mod tom;
