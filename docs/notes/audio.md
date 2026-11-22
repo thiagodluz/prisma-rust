@@ -86,9 +86,11 @@ Para o celular virtual (e para quem lê o `logcat`) o app escreve linhas `PRISMA
    passou a levar uns 0,5 s.
 4. **O app fecha ao ligar música e ambiente:** suspeite de memória (veja o `meminfo.txt` e o
    resumo do `logcat` no artefato do celular virtual).
-5. **Segundo plano:** o jogo não faz nada de especial com o áudio quando o app sai da tela; o plano
-   supõe que o Macroquad pausa e retoma o som sozinho. Isso **ainda não foi visto num celular**:
-   está na lista de conferências do M3 (tirar o app da tela: o som para; voltar: continua).
+5. **Segundo plano:** o jogo não faz nada de especial com o áudio quando o app sai da tela. Quem
+   cuida disso é o Macroquad 0.4.16: no Android, ao minimizar a janela ele pausa o áudio
+   (`window_minimized_event`) e ao restaurar ele retoma (`window_restored_event`). Isso foi
+   **conferido no código da biblioteca, mas ainda não visto num celular**: está na lista de
+   conferências do M3 (tirar o app da tela: o som para; voltar: continua).
 
 ## Como jogar com som no PC
 
