@@ -30,13 +30,25 @@ use macroquad::prelude::*;
 use prisma_engine::{lcg_random, Game, Mode, Tile, TileKind};
 use std::path::PathBuf;
 
+/// Lê `--tamanho LARGURAxALTURA` (por exemplo `360x640`), para ver o jogo em outro tamanho de
+/// tela no PC. Valor que não é um tamanho razoável (de 100 a 4000 pixels) é ignorado.
+fn tamanho_pedido(args: &[String]) -> Option<(i32, i32)> {
+    let posicao = args.iter().position(|argumento| argumento == "--tamanho")?;
+    let (largura, altura) = args.get(posicao + 1)?.split_once('x')?;
+    let (largura, altura) = (largura.parse::<i32>().ok()?, altura.parse::<i32>().ok()?);
+    let razoavel = |lado: i32| (100..=4000).contains(&lado);
+    (razoavel(largura) && razoavel(altura)).then_some((largura, altura))
+}
+
 /// Configuração da janela. No Android o sistema escolhe o tamanho; no PC usamos 540×960,
-/// uma tela de celular em pé.
+/// uma tela de celular em pé (ou o `--tamanho` pedido).
 fn window_conf() -> Conf {
+    let argumentos: Vec<String> = std::env::args().collect();
+    let (largura, altura) = tamanho_pedido(&argumentos).unwrap_or((540, 960));
     Conf {
         window_title: "Prisma".to_owned(),
-        window_width: 540,
-        window_height: 960,
+        window_width: largura,
+        window_height: altura,
         high_dpi: true,
         window_resizable: true,
         // `..Default::default()` preenche o resto da configuração com os valores padrão.
@@ -428,6 +440,20 @@ mod tests {
             screenshot_path(&args(&["x", "--screenshot", "b.png"])),
             Some("b.png".to_string())
         );
+    }
+
+    #[test]
+    fn tamanho_pedido_le_largura_x_altura() {
+        assert_eq!(tamanho_pedido(&args(&["--tamanho", "360x640"])), Some((360, 640)));
+        assert_eq!(tamanho_pedido(&args(&["x", "--tamanho", "800x600", "--cena", "som"])), Some((800, 600)));
+        // Sem valor, com valor torto ou fora do razoável: nada (o jogo abre no tamanho de sempre).
+        assert_eq!(tamanho_pedido(&args(&[])), None);
+        assert_eq!(tamanho_pedido(&args(&["--tamanho"])), None);
+        assert_eq!(tamanho_pedido(&args(&["--tamanho", "360"])), None);
+        assert_eq!(tamanho_pedido(&args(&["--tamanho", "axb"])), None);
+        assert_eq!(tamanho_pedido(&args(&["--tamanho", "-5x640"])), None);
+        assert_eq!(tamanho_pedido(&args(&["--tamanho", "0x0"])), None);
+        assert_eq!(tamanho_pedido(&args(&["--tamanho", "99999x99999"])), None);
     }
 
     #[test]

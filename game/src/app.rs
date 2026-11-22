@@ -372,8 +372,6 @@ impl App {
 
     /// O mesmo app com outras preferências de som (nos testes e nas cenas de conferência; o app de
     /// verdade lê do arquivo).
-    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (cenas `som` e `respiracao`).
-    #[allow(dead_code)]
     pub fn com_preferencias(mut self, preferencias: Preferencias) -> App {
         self.preferencias = preferencias;
         self
@@ -998,8 +996,6 @@ impl App {
     }
 
     /// A folha de Som está aberta?
-    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (o desenho da folha).
-    #[allow(dead_code)]
     pub fn folha_aberta(&self) -> bool {
         self.folha
     }
@@ -1024,8 +1020,6 @@ impl App {
     }
 
     /// Onde o guia de respiração está agora; `None` no Clássico e com o guia desligado.
-    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (o desenho do guia).
-    #[allow(dead_code)]
     pub fn guia_respiracao(&self) -> Option<EstadoRespiracao> {
         if self.modo != Mode::Zen {
             return None;
@@ -1034,10 +1028,16 @@ impl App {
     }
 
     /// O aviso "O áudio não começou..." enquanto a Música ou o Ambiente estiver com erro.
-    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (o desenho da folha).
-    #[allow(dead_code)]
-    pub fn aviso_de_audio(&self) -> Option<&'static str> {
+    fn aviso_de_audio(&self) -> Option<&'static str> {
         self.erros_de_audio.iter().any(Option::is_some).then_some(AVISO_DE_AUDIO)
+    }
+
+    /// O que a folha de Som avisa: o "Aumente o volume dos efeitos" do Testar (por um tempo) e,
+    /// quando ele não está na tela, o erro de áudio. Os avisos do tabuleiro ("Supernova",
+    /// "Tabuleiro reorganizado") não entram: o tabuleiro está coberto pela folha.
+    pub fn aviso_da_folha(&self) -> Option<&'static str> {
+        let do_testar = self.aviso.as_ref().map(|aviso| aviso.valor).filter(|&texto| texto == AVISO_SEM_VOLUME);
+        do_testar.or_else(|| self.aviso_de_audio())
     }
 
     /// A camada de áudio conta que a Música ou o Ambiente falhou (`Some(texto)`) ou está bem
@@ -2757,6 +2757,35 @@ mod tests {
         // O aviso some sozinho, como os outros.
         app.avancar(2000.0);
         assert_eq!(app.painel().aviso, None);
+    }
+
+    #[test]
+    fn a_folha_mostra_o_aviso_do_testar_e_depois_o_de_audio() {
+        let texto_de_audio = "O áudio não começou. Toque novamente em Música ou Ambiente para tentar de novo.";
+        let mut app = App::com_sementes(7, 9).com_preferencias(sem_efeitos());
+        let tela = tela();
+        abrir_folha(&mut app);
+        assert_eq!(app.aviso_da_folha(), None);
+        // O erro de áudio fica até alguém tentar de novo.
+        app.erro_de_audio(Canal::Musica, Some("falhou".to_string()));
+        assert_eq!(app.aviso_da_folha(), Some(texto_de_audio));
+        // "Testar" sem volume avisa por cima dele, por um tempo; depois o de áudio volta.
+        tocar_em(&mut app, &tela, tela.som.testar);
+        assert_eq!(app.aviso_da_folha(), Some("Aumente o volume dos efeitos"));
+        app.avancar(2000.0);
+        assert_eq!(app.aviso_da_folha(), Some(texto_de_audio));
+        app.erro_de_audio(Canal::Musica, None);
+        assert_eq!(app.aviso_da_folha(), None);
+    }
+
+    #[test]
+    fn a_folha_nao_mostra_os_avisos_do_tabuleiro() {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Embaralhar);
+        app.avancar(441.0);
+        assert_eq!(app.painel().aviso.as_deref(), Some("Tabuleiro reorganizado"));
+        abrir_folha(&mut app);
+        assert_eq!(app.aviso_da_folha(), None, "o aviso do tabuleiro não é assunto da folha de Som");
     }
 
     #[test]

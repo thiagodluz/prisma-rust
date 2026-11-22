@@ -15,6 +15,7 @@ use crate::linha::{
     deslocamento_troca, embaralhar_alfa, limpeza_da_casa, linhas_de_queda, nivel_faixa, queda_deslocamento,
     queda_ms, resgate_da_casa,
 };
+use crate::preferencias::{orbe, segundos_restantes};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
 const FUNDO: Color = Color::from_hex(0x101229);
@@ -30,6 +31,12 @@ const BARRA_PREENCHIDA: Color = Color::from_hex(0x7f93ff);
 const DESTAQUE: Color = Color::from_hex(0xffd166);
 const CARTAO: Color = Color::from_hex(0x182046);
 const BORDA: Color = Color::from_hex(0x4a63d6);
+/// O fundo da folha de Som: quase opaco, para as pedras de trás não atrapalharem a leitura.
+const FOLHA: Color = Color::new(0.04, 0.06, 0.16, 0.985);
+/// O traço das barras de volume (a parte vazia) e o interruptor desligado: um azul mais claro
+/// que o das linhas, para se verem sobre elas.
+const TRILHO: Color = Color::from_hex(0x2b3a7a);
+const INTERRUPTOR_APAGADO: Color = Color::from_hex(0x464f7a);
 
 /// Todas as imagens já carregadas na placa de vídeo, uma `Texture2D` por `Sprite`.
 pub struct Sprites {
@@ -311,6 +318,16 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
     let zen = app.modo() == prisma_engine::Mode::Zen;
     botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
     botao_da_tela(tela.aba_classico, "Clássico", 1.05 * t, if zen { ABA_INATIVA } else { ABA_ATIVA }, true);
+    // O ♪ vira ✕ com a folha aberta. Os dois são desenhados com formas, não com letras: assim não
+    // dependem de a fonte embutida ter esses símbolos.
+    let folha = app.folha_aberta();
+    botao_da_tela(tela.botao_som, "", t, if folha { ABA_ATIVA } else { ABA_INATIVA }, true);
+    let icone = encolher(tela.botao_som, 0.2 * tela.botao_som.h);
+    if folha {
+        desenhar_xis(icone, WHITE);
+    } else {
+        desenhar_nota(icone, WHITE);
+    }
 
     for (rotulo, valor, area) in [
         ("PONTOS", &painel.pontos, tela.pontos),
@@ -410,6 +427,203 @@ fn desenhar_dialogo(tela: &TelaJogo) {
     botao_da_tela(tela.dialogo_confirmar, "Novo jogo", t, ABA_ATIVA, true);
 }
 
+// ---- Folha de Som e guia de respiração -----------------------------------------------------------
+
+/// `area` com `margem` pixels a menos em cada lado.
+fn encolher(area: Rect, margem: f32) -> Rect {
+    Rect { x: area.x + margem, y: area.y + margem, w: (area.w - 2.0 * margem).max(0.0), h: (area.h - 2.0 * margem).max(0.0) }
+}
+
+/// Uma colcheia (♪) dentro do quadrado `area`: cabeça redonda, haste e bandeirinha.
+fn desenhar_nota(area: Rect, cor: Color) {
+    let lado = area.w.min(area.h);
+    let (cx, cy) = (area.x + 0.36 * lado + (area.w - lado) / 2.0, area.y + 0.76 * lado + (area.h - lado) / 2.0);
+    let raio = 0.17 * lado;
+    let haste_x = cx + raio - 0.04 * lado;
+    let topo = cy - 0.72 * lado;
+    draw_circle(cx, cy, raio, cor);
+    draw_line(haste_x, cy, haste_x, topo, 0.08 * lado, cor);
+    draw_triangle(vec2(haste_x, topo), vec2(haste_x + 0.30 * lado, topo + 0.26 * lado), vec2(haste_x, topo + 0.30 * lado), cor);
+}
+
+/// Um X (✕) dentro do quadrado `area`.
+fn desenhar_xis(area: Rect, cor: Color) {
+    let grossura = 0.12 * area.w.min(area.h);
+    draw_line(area.x, area.y, area.x + area.w, area.y + area.h, grossura, cor);
+    draw_line(area.x + area.w, area.y, area.x, area.y + area.h, grossura, cor);
+}
+
+/// Uma linha da folha: retângulo escuro com borda.
+fn desenhar_cartao(area: Rect) {
+    draw_rectangle(area.x, area.y, area.w, area.h, CARTAO);
+    draw_rectangle_lines(area.x, area.y, area.w, area.h, 1.5, com_alfa(BORDA, 0.6));
+}
+
+/// O interruptor (liga/desliga) encostado na direita de `area`, no meio na vertical.
+fn desenhar_interruptor(area: Rect, ligado: bool) {
+    let altura = 0.46 * area.h;
+    let largura = 1.8 * altura;
+    let x = area.x + area.w - 0.18 * area.h - largura;
+    let y = area.y + (area.h - altura) / 2.0;
+    let raio = altura / 2.0;
+    let fundo = if ligado { BARRA_PREENCHIDA } else { INTERRUPTOR_APAGADO };
+    draw_circle(x + raio, y + raio, raio, fundo);
+    draw_circle(x + largura - raio, y + raio, raio, fundo);
+    draw_rectangle(x + raio, y, largura - 2.0 * raio, altura, fundo);
+    let (bolinha_x, cor) = if ligado { (x + largura - raio, WHITE) } else { (x + raio, TEXTO_SUAVE) };
+    draw_circle(bolinha_x, y + raio, 0.74 * raio, cor);
+}
+
+/// Uma linha "nome ......... [interruptor]".
+fn desenhar_linha_com_interruptor(area: Rect, rotulo: &str, ligado: bool, t: f32) {
+    desenhar_cartao(area);
+    let texto = Rect { x: area.x + 0.18 * area.h, w: area.w - 0.18 * area.h - 0.46 * 1.8 * area.h - 0.5 * area.h, ..area };
+    escrever(rotulo, texto, 0.95 * t, WHITE, Alinhamento::Esquerda);
+    desenhar_interruptor(area, ligado);
+}
+
+/// O botão que passa para a próxima opção: o nome atual e um triângulo "para a frente".
+fn desenhar_botao_de_escolha(area: Rect, nome: &str, t: f32) {
+    botao_da_tela(area, "", t, ABA_INATIVA, true);
+    let texto = Rect { x: area.x + 0.18 * area.h, w: area.w - 0.18 * area.h - 0.72 * area.h, ..area };
+    escrever(nome, texto, 0.95 * t, WHITE, Alinhamento::Esquerda);
+    let (cx, cy, r) = (area.x + area.w - 0.36 * area.h, area.y + area.h / 2.0, 0.13 * area.h);
+    draw_triangle(vec2(cx - 0.7 * r, cy - r), vec2(cx - 0.7 * r, cy + r), vec2(cx + r, cy), TEXTO_SUAVE);
+}
+
+/// A linha de volume. Ela toda é a barra: o começo é 0 e o fim é 100 (é assim que o dedo é
+/// lido). Em cima o nome e o número; embaixo o traço, que vai de ponta a ponta, com a bolinha
+/// na posição do volume.
+fn desenhar_linha_de_volume(area: Rect, rotulo: &str, volume: u8, t: f32) {
+    desenhar_cartao(area);
+    let margem = 0.18 * area.h;
+    let texto = Rect { x: area.x + margem, y: area.y + 0.06 * area.h, w: area.w - 2.0 * margem, h: 0.5 * area.h };
+    let nome = Rect { w: 0.62 * texto.w, ..texto };
+    let numero = Rect { x: texto.x + 0.62 * texto.w, w: 0.38 * texto.w, ..texto };
+    escrever(rotulo, nome, 0.95 * t, WHITE, Alinhamento::Esquerda);
+    escrever(&format!("{volume}%"), numero, 0.95 * t, DESTAQUE, Alinhamento::Direita);
+
+    let espessura = (0.12 * area.h).max(3.0);
+    let y = area.y + 0.76 * area.h;
+    let fracao = f32::from(volume.min(100)) / 100.0;
+    draw_rectangle(area.x, y - espessura / 2.0, area.w, espessura, TRILHO);
+    draw_rectangle(area.x, y - espessura / 2.0, area.w * fracao, espessura, BARRA_PREENCHIDA);
+    draw_circle(area.x + area.w * fracao, y, 0.11 * area.h, WHITE);
+}
+
+/// Quebra `texto` em linhas de no máximo `largura` pixels, nas palavras (uma palavra maior que a
+/// largura fica sozinha na linha).
+fn quebrar_em_linhas(texto: &str, largura: f32, tamanho: f32) -> Vec<String> {
+    let mut linhas = Vec::new();
+    let mut atual = String::new();
+    for palavra in texto.split_whitespace() {
+        let tentativa = if atual.is_empty() { palavra.to_string() } else { format!("{atual} {palavra}") };
+        if atual.is_empty() || measure_text(&tentativa, None, tamanho as u16, 1.0).width <= largura {
+            atual = tentativa;
+        } else {
+            linhas.push(std::mem::replace(&mut atual, palavra.to_string()));
+        }
+    }
+    if !atual.is_empty() {
+        linhas.push(atual);
+    }
+    linhas
+}
+
+/// Escreve `texto` em várias linhas dentro de `area`: a letra começa em `tamanho` e encolhe até o
+/// texto todo caber (na largura e na altura).
+fn escrever_em_linhas(texto: &str, area: Rect, tamanho: f32, cor: Color) {
+    let mut tamanho = tamanho;
+    let mut linhas = quebrar_em_linhas(texto, area.w, tamanho);
+    while tamanho > 6.0 && linhas.len() as f32 * 1.2 * tamanho > area.h {
+        tamanho *= 0.92;
+        linhas = quebrar_em_linhas(texto, area.w, tamanho);
+    }
+    let altura_da_linha = 1.2 * tamanho;
+    let topo = area.y + (area.h - linhas.len() as f32 * altura_da_linha) / 2.0;
+    for (i, linha) in linhas.iter().enumerate() {
+        let faixa = Rect { y: topo + i as f32 * altura_da_linha, h: altura_da_linha, ..area };
+        escrever(linha, faixa, tamanho, cor, Alinhamento::Esquerda);
+    }
+}
+
+/// A folha de Som, por cima do tabuleiro e dos botões. Só desenha o que o `App` já decidiu
+/// (valores, interruptores, avisos); o lugar de cada coisa vem de `tela.som`, o mesmo que serve
+/// para ler o toque.
+fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
+    let som = &tela.som;
+    if som.folha.w <= 0.0 || som.folha.h <= 0.0 {
+        return;
+    }
+    let t = som.texto;
+    let preferencias = app.preferencias();
+    let folha = som.folha;
+    draw_rectangle(folha.x, folha.y, folha.w, folha.h, FOLHA);
+    draw_rectangle_lines(folha.x, folha.y, folha.w, folha.h, 2.0, BORDA);
+
+    // No lugar do título aparece o aviso (o do Testar ou o de áudio), se houver.
+    match app.aviso_da_folha() {
+        Some(aviso) => escrever_em_linhas(aviso, som.titulo, 0.9 * t, DESTAQUE),
+        None => escrever("Som", som.titulo, 1.5 * t, WHITE, Alinhamento::Esquerda),
+    }
+    botao_da_tela(som.fechar, "", t, ABA_INATIVA, true);
+    desenhar_xis(encolher(som.fechar, 0.3 * som.fechar.h), WHITE);
+
+    desenhar_linha_com_interruptor(som.sons_do_jogo, "Sons do jogo", preferencias.sons_do_jogo, t);
+    botao_da_tela(som.testar, "Testar som", t, ABA_ATIVA, true);
+
+    desenhar_linha_de_volume(som.barra_efeitos, "Volume dos efeitos", preferencias.volumes.efeitos, t);
+
+    if let (Some(liga), Some(escolhe)) = (som.liga_musica, som.escolhe_musica) {
+        desenhar_linha_com_interruptor(liga, "Música", preferencias.musica_ligada, t);
+        desenhar_botao_de_escolha(escolhe, preferencias.musica.texto(), t);
+    }
+    desenhar_linha_de_volume(som.barra_musica, "Volume da música", preferencias.volumes.musica, t);
+
+    if let (Some(liga), Some(escolhe)) = (som.liga_ambiente, som.escolhe_ambiente) {
+        desenhar_linha_com_interruptor(liga, "Ambiente", preferencias.ambiente_ligado, t);
+        desenhar_botao_de_escolha(escolhe, preferencias.ambiente.texto(), t);
+    }
+    desenhar_linha_de_volume(som.barra_ambiente, "Volume do ambiente", preferencias.volumes.ambiente, t);
+
+    if let Some(area) = som.respiracao {
+        desenhar_cartao(area);
+        let margem = 0.18 * area.h;
+        let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area };
+        let valor = preferencias.respiracao.texto();
+        let ligada = valor != crate::preferencias::Respiracao::Desligada.texto();
+        escrever("Respiração", Rect { w: 0.36 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
+        let cor = if ligada { DESTAQUE } else { TEXTO_SUAVE };
+        escrever(valor, Rect { x: dentro.x + 0.38 * dentro.w, w: 0.62 * dentro.w, ..dentro }, 0.95 * t, cor, Alinhamento::Direita);
+    }
+}
+
+/// O guia de respiração, na linha abaixo dos botões: a bolinha que cresce e encolhe, a palavra
+/// ("Inspire" ou "Expire") e os segundos que faltam. Desligado (ou no Clássico), não desenha nada.
+fn desenhar_guia_de_respiracao(app: &App, tela: &TelaJogo) {
+    let area = tela.guia_respiracao;
+    let Some(estado) = app.guia_respiracao() else { return };
+    if area.w <= 0.0 || area.h <= 0.0 {
+        return;
+    }
+    let t = tela.texto;
+    let (escala, opacidade) = orbe(&estado);
+    let lado = area.h;
+    let largura_do_texto = 0.34 * area.w;
+    let grupo = lado + 0.4 * lado + largura_do_texto;
+    let x0 = area.x + (area.w - grupo) / 2.0;
+    let (cx, cy) = (x0 + lado / 2.0, area.y + area.h / 2.0);
+    let raio = 0.34 * lado * escala;
+    draw_circle(cx, cy, 1.25 * raio, com_alfa(BARRA_PREENCHIDA, 0.2 * opacidade));
+    draw_circle(cx, cy, raio, com_alfa(BARRA_PREENCHIDA, opacidade));
+
+    let texto_x = x0 + lado + 0.4 * lado;
+    let em_cima = Rect { x: texto_x, y: area.y, w: largura_do_texto, h: 0.55 * area.h };
+    let embaixo = Rect { y: area.y + 0.55 * area.h, h: 0.40 * area.h, ..em_cima };
+    escrever(estado.fase.texto(), em_cima, 1.1 * t, WHITE, Alinhamento::Esquerda);
+    escrever(&segundos_restantes(estado.restante_s), embaixo, 0.8 * t, TEXTO_SUAVE, Alinhamento::Esquerda);
+}
+
 /// Desenha a tela de jogo inteira: abas, painel, tabuleiro, botões e, por cima, avisos, o
 /// cartão de fim de partida e a pergunta de novo jogo. Tudo vem do `App` (e do `Painel` que ele
 /// monta); aqui só se escolhe cor e posição.
@@ -438,8 +652,13 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     botao_da_tela(tela.botao_dica, "Dica", t, ABA_INATIVA, painel.dica_ativa);
     botao_da_tela(tela.botao_novo_jogo, "Novo jogo", t, ABA_INATIVA, true);
 
+    desenhar_guia_de_respiracao(app, tela);
+
     if let Some((nivel, pontos)) = &painel.fim {
         desenhar_fim(nivel, pontos, tela);
+    }
+    if app.folha_aberta() {
+        desenhar_folha_de_som(app, tela);
     }
     if painel.dialogo {
         desenhar_dialogo(tela);

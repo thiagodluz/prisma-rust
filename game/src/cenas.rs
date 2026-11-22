@@ -8,6 +8,7 @@ use crate::app::{App, Botao};
 use crate::input::Evento;
 use crate::layout::{cell_rect, tela_jogo, TelaJogo};
 use crate::linha::{duracao_ms, Passo};
+use crate::preferencias::{Canal, Preferencias, Respiracao};
 use prisma_engine::SIZE;
 
 /// A tela de referência das cenas. Os toques são montados a partir dela; como o resultado
@@ -61,8 +62,15 @@ fn avancar_ate_a_fracao(app: &mut App, fracao: f32) {
     app.avancar((fracao * duracao - decorrido).max(0.0));
 }
 
+/// As escolhas de som das cenas de som: volumes de fábrica, música ligada, ambiente desligado
+/// (assim a foto mostra os dois estados) e respiração no ritmo "4 s inspirar · 4 s expirar".
+fn preferencias_da_cena() -> Preferencias {
+    Preferencias { musica_ligada: true, respiracao: Respiracao::Equilibrada, ..Preferencias::default() }
+}
+
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
-/// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo` e `classico`.
+/// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
+/// `som-classico`, `som-aviso` e `respiracao`.
 pub fn cena(nome: &str) -> Option<App> {
     let mut app = App::com_sementes(7, 9);
     match nome {
@@ -108,6 +116,28 @@ pub fn cena(nome: &str) -> Option<App> {
         "dialogo" => app.apertar(Botao::NovoJogo),
         // A aba do Clássico.
         "classico" => app.apertar(Botao::Classico),
+        // A folha de Som no Zen: música ligada, ambiente desligado, respiração no ritmo 4-4.
+        "som" => {
+            app = app.com_preferencias(preferencias_da_cena());
+            app.apertar(Botao::Som);
+        }
+        // A folha de Som no Clássico: só os efeitos.
+        "som-classico" => {
+            app = app.com_preferencias(preferencias_da_cena());
+            app.apertar(Botao::Classico);
+            app.apertar(Botao::Som);
+        }
+        // A folha de Som com o aviso de que a música não começou (um erro de áudio de mentira).
+        "som-aviso" => {
+            app = app.com_preferencias(preferencias_da_cena());
+            app.apertar(Botao::Som);
+            app.erro_de_audio(Canal::Musica, Some("arquivo não encontrado".to_string()));
+        }
+        // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).
+        "respiracao" => {
+            app = app.com_preferencias(preferencias_da_cena());
+            app.avancar(2000.0);
+        }
         _ => return None,
     }
     Some(app)
@@ -117,10 +147,25 @@ pub fn cena(nome: &str) -> Option<App> {
 mod tests {
     use super::*;
     use crate::linha::Passo;
+    use crate::preferencias::Fase;
     use prisma_engine::Mode;
 
-    const NOMES: [&str; 10] =
-        ["inicio", "selecionada", "dica", "troca", "limpando", "queda", "nivel", "fim", "dialogo", "classico"];
+    const NOMES: [&str; 14] = [
+        "inicio",
+        "selecionada",
+        "dica",
+        "troca",
+        "limpando",
+        "queda",
+        "nivel",
+        "fim",
+        "dialogo",
+        "classico",
+        "som",
+        "som-classico",
+        "respiracao",
+        "som-aviso",
+    ];
 
     fn passo_da_cena(nome: &str) -> &'static str {
         let app = cena(nome).expect("a cena existe");
@@ -164,6 +209,40 @@ mod tests {
         assert_eq!(cena("fim").unwrap().painel().fim, Some(("3".to_string(), "4.321".to_string())));
         assert!(cena("dialogo").unwrap().painel().dialogo);
         assert_eq!(cena("classico").unwrap().modo(), Mode::Classic);
+    }
+
+    #[test]
+    fn as_cenas_de_som_existem_e_montam() {
+        use crate::preferencias::Respiracao;
+
+        // A folha de Som no Zen: aberta, com a música ligada e o ambiente desligado.
+        let som = cena("som").expect("a cena som existe");
+        assert_eq!(som.modo(), Mode::Zen);
+        assert!(som.folha_aberta());
+        let preferencias = som.preferencias();
+        assert!(preferencias.musica_ligada && !preferencias.ambiente_ligado);
+        assert_eq!(preferencias.respiracao, Respiracao::Equilibrada);
+        assert!(som.guia_respiracao().is_some());
+
+        // No Clássico a folha só tem os efeitos, e nada de música ou ambiente.
+        let classico = cena("som-classico").expect("a cena som-classico existe");
+        assert_eq!(classico.modo(), Mode::Classic);
+        assert!(classico.folha_aberta());
+        assert!(classico.guia_respiracao().is_none());
+        assert_eq!(classico.som_desejado(), Default::default());
+
+        // A folha com o aviso de que a música não começou.
+        let aviso = cena("som-aviso").expect("a cena som-aviso existe");
+        assert!(aviso.folha_aberta());
+        assert!(aviso.aviso_da_folha().is_some());
+
+        // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).
+        let respiracao = cena("respiracao").expect("a cena respiracao existe");
+        assert_eq!(respiracao.modo(), Mode::Zen);
+        assert!(!respiracao.folha_aberta());
+        let guia = respiracao.guia_respiracao().expect("o guia está ligado");
+        assert_eq!(guia.fase, Fase::Inspire);
+        assert_eq!(guia.restante_s, 2);
     }
 
     #[test]

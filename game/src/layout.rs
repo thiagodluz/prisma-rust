@@ -425,8 +425,7 @@ fn folha_de_som(folha: Rect, unidade: f32, zen: bool) -> TelaSom {
 
 /// A folha de Som para uma tela e um modo (`zen` falso é o Clássico). É a mesma que
 /// `tela_jogo` guarda em `som`. Tela "impossível" devolve tudo vazio.
-// TEMPORÁRIO: só os testes (e talvez as cenas da Task 7) usam; o desenho lê `tela.som` direto.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn tela_som(largura: f32, altura: f32, zen: bool) -> TelaSom {
     tela_jogo(largura, altura, zen).som
 }
