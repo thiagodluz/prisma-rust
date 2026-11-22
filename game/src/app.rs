@@ -6,12 +6,14 @@
 //! roda, o painel mostra os pontos "de antes" e só sobe quando cada limpeza acaba, por isso
 //! existe o [`Estagio`].
 
+use crate::efeitos::{elevacao_da_cadeia, sinal_da_limpeza, Efeito, Sinal};
 use crate::formato::Recordes;
 use crate::input::{Acao, Evento, Gestos};
 use crate::layout::{Rect, TelaJogo};
 use crate::linha::{montar, Passo, Reprodutor};
+use crate::preferencias::Preferencias;
 use crate::salvar::{Origem, Salvador};
-use prisma_engine::{lcg_random, level_goal, Game, Mode};
+use prisma_engine::{lcg_random, level_goal, Game, Mode, TileKind, SIZE};
 
 /// Quanto tempo a Dica fica destacada.
 const DICA_MS: f32 = 2600.0;
@@ -126,6 +128,43 @@ impl EmAndamento {
     }
 }
 
+/// Se um único `avancar` deixa passar mais do que isto (o app voltando do segundo plano, um quadro
+/// que travou), os passos que ele pula não tocam som: senão viria uma rajada de efeitos atrasados.
+const SALTO_SEM_SOM_MS: f32 = 2000.0;
+
+/// O efeito que toca quando um passo COMEÇA (porte do `animateResult` do JS): a jogada inválida
+/// no começo da troca, cada limpeza (pelo tipo da pedra especial que disparou, ou combinação e
+/// cascata), o resgate e a subida de nível. Embaralhar, queda e troca válida são mudos.
+fn efeito_ao_comecar(passo: &Passo) -> Option<Efeito> {
+    let sem_elevacao = |sinal| Some(Efeito { sinal, elevacao: 0 });
+    match passo {
+        Passo::Troca { valida: false, .. } => sem_elevacao(Sinal::Invalida),
+        Passo::Limpeza { tabuleiro, ativadas, supernova, cadeia, .. } => {
+            let tipos: Vec<TileKind> = ativadas
+                .iter()
+                .filter_map(|&casa| tabuleiro.get(casa / SIZE).and_then(|linha| linha.get(casa % SIZE)))
+                .map(|pedra| pedra.kind)
+                .collect();
+            let sinal = sinal_da_limpeza(*supernova, &tipos, *cadeia);
+            // Só a combinação e a cascata sobem de tom a cada limpeza da cadeia.
+            let elevacao = if matches!(sinal, Sinal::Combinacao | Sinal::Cascata) { elevacao_da_cadeia(*cadeia) } else { 0 };
+            Some(Efeito { sinal, elevacao })
+        }
+        Passo::Resgate { .. } => sem_elevacao(Sinal::Resgate),
+        Passo::Nivel { .. } => sem_elevacao(Sinal::Nivel),
+        Passo::Troca { valida: true, .. } | Passo::Queda { .. } | Passo::Embaralhar { .. } => None,
+    }
+}
+
+/// O efeito que toca quando um passo ACABA: a criação de uma pedra especial, no fim da limpeza
+/// que a fez nascer.
+fn efeito_ao_acabar(passo: &Passo) -> Option<Efeito> {
+    match passo {
+        Passo::Limpeza { criou: true, .. } => Some(Efeito { sinal: Sinal::Criacao, elevacao: 0 }),
+        _ => None,
+    }
+}
+
 /// O nome do modo nas linhas de registro.
 fn nome_do_modo(modo: Mode) -> &'static str {
     match modo {
@@ -169,9 +208,13 @@ pub struct App {
     salvador: Salvador,
     /// Os erros de gravação da última vez que gravei, para não repetir a mesma linha no registro.
     ultimos_erros: Vec<String>,
-    /// Linhas "PRISMA_M1 ..." e "PRISMA_M2 ..." que ainda não foram entregues (o teste do
-    /// celular virtual lê).
+    /// Linhas "PRISMA_M1 ...", "PRISMA_M2 ..." e "PRISMA_M3 ..." que ainda não foram entregues (o
+    /// teste do celular virtual lê).
     registros: Vec<String>,
+    /// As escolhas da folha de Som (só os efeitos importam aqui; a música é com a camada de áudio).
+    preferencias: Preferencias,
+    /// Os efeitos sonoros que já "chegaram a hora" e ainda não foram entregues ao áudio.
+    sons: Vec<Efeito>,
 }
 
 impl App {
@@ -240,7 +283,17 @@ impl App {
             salvador,
             ultimos_erros: Vec::new(),
             registros: vec![format!("PRISMA_M1 pronto modo={}", nome_do_modo(modo))],
+            preferencias: Preferencias::default(),
+            sons: Vec::new(),
         }
+    }
+
+    /// O mesmo app com outras preferências de som (nos testes; o app de verdade lê do arquivo).
+    // Ainda sem uso fora dos testes: o `main.rs` passa a ler as preferências na Task 5.
+    #[allow(dead_code)]
+    pub fn com_preferencias(mut self, preferencias: Preferencias) -> App {
+        self.preferencias = preferencias;
+        self
     }
 
     pub fn modo(&self) -> Mode {
@@ -395,7 +448,7 @@ impl App {
         let melhor_antes = self.melhor_parado();
         self.animacao = Some(EmAndamento::nova(reprodutor, base, Some("Tabuleiro reorganizado"), melhor_antes));
         self.gravar_tudo([false; 2]);
-        self.observar();
+        self.observar(true);
         self.encerrar_se_terminou();
     }
 
@@ -535,7 +588,7 @@ impl App {
                 self.recordes[posicao_do_modo(self.modo)].registrar(pontos, nivel, resultado.earned, terminou);
             self.gravar_tudo(mudaram);
         }
-        self.observar();
+        self.observar(true);
         self.encerrar_se_terminou();
     }
 
@@ -549,13 +602,16 @@ impl App {
         if let Some(andamento) = self.animacao.as_mut() {
             andamento.reprodutor.avancar(dt);
         }
-        self.observar();
+        // Um salto grande pula os passos sem tocar os sons deles (ver `SALTO_SEM_SOM_MS`).
+        self.observar(dt <= SALTO_SEM_SOM_MS);
         self.encerrar_se_terminou();
     }
 
     /// Reage aos passos que começaram ou acabaram desde a última vez: a limpeza de Supernova
-    /// mostra o aviso quando COMEÇA; qualquer limpeza mostra o "+ganho" quando ACABA.
-    fn observar(&mut self) {
+    /// mostra o aviso quando COMEÇA; qualquer limpeza mostra o "+ganho" quando ACABA; e cada passo
+    /// pede o seu efeito sonoro uma vez só (`com_som` falso pula os sons, mas os passos contam
+    /// como vistos).
+    fn observar(&mut self, com_som: bool) {
         let Some(andamento) = self.animacao.as_mut() else { return };
         let reprodutor = &andamento.reprodutor;
         let concluidos = reprodutor.concluidos();
@@ -563,10 +619,20 @@ impl App {
         let iniciados_agora = concluidos.len() + usize::from(atual.is_some());
 
         let mut novo_aviso = None;
-        for indice in andamento.iniciados..iniciados_agora {
-            let passo = concluidos.get(indice).or(atual);
-            if let Some(Passo::Limpeza { supernova: true, .. }) = passo {
-                novo_aviso = Some("Supernova");
+        let mut efeitos = Vec::new();
+        // Do passo mais antigo ainda não visto ao mais novo, em ordem: assim os sons saem na ordem
+        // do tempo (começo de um passo, fim dele, começo do seguinte...), qualquer que seja o
+        // tamanho do quadro.
+        for indice in andamento.concluidos_vistos.min(andamento.iniciados)..iniciados_agora {
+            let Some(passo) = concluidos.get(indice).or(atual) else { continue };
+            if indice >= andamento.iniciados {
+                if let Passo::Limpeza { supernova: true, .. } = passo {
+                    novo_aviso = Some("Supernova");
+                }
+                efeitos.extend(efeito_ao_comecar(passo));
+            }
+            if indice >= andamento.concluidos_vistos && indice < concluidos.len() {
+                efeitos.extend(efeito_ao_acabar(passo));
             }
         }
         let mut novo_ganho = None;
@@ -584,6 +650,28 @@ impl App {
         if let Some(ganho) = novo_ganho {
             self.ganho = Temporizado::por(ganho, GANHO_MS);
         }
+        if com_som {
+            for efeito in efeitos {
+                self.enfileirar_efeito(efeito);
+            }
+        }
+    }
+
+    /// Põe um efeito na fila do áudio e anota no registro. Com "Sons do jogo" desligado ou o
+    /// volume dos efeitos em 0, nada entra na fila (e a animação é a mesma).
+    fn enfileirar_efeito(&mut self, efeito: Efeito) {
+        if !self.preferencias.sons_do_jogo || self.preferencias.volumes.efeitos == 0 {
+            return;
+        }
+        self.sons.push(efeito);
+        self.registros.push(format!("PRISMA_M3 efeito sinal={} elevacao={}", efeito.sinal.nome(), efeito.elevacao));
+    }
+
+    /// Entrega (e esvazia) os efeitos sonoros que chegaram a hora de tocar.
+    // Ainda sem uso fora dos testes: o laço do `main.rs` passa a chamar na Task 6.
+    #[allow(dead_code)]
+    pub fn sons(&mut self) -> Vec<Efeito> {
+        std::mem::take(&mut self.sons)
     }
 
     /// Se a animação acabou: libera a entrada, esquece o gesto e avisa no registro.
@@ -674,7 +762,7 @@ mod tests {
     use crate::input::Evento;
     use crate::layout::{cell_rect, tela_jogo, Rect, TelaJogo};
     use crate::linha::{Passo, Reprodutor};
-    use prisma_engine::{adjacent, lcg_random, level_goal, Board, Game, Mode, SIZE};
+    use prisma_engine::{adjacent, lcg_random, level_goal, Board, Game, Mode, TileKind, SIZE};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -933,6 +1021,9 @@ mod tests {
         let esperado = vec![
             "PRISMA_M1 pronto modo=zen".to_string(),
             format!("PRISMA_M1 jogada valida=true pontos={} nivel={}", jogo.score, jogo.level),
+            // A semente 7 faz uma combinação e uma cascata; cada efeito sonoro ganha uma linha.
+            "PRISMA_M3 efeito sinal=combinacao elevacao=0".to_string(),
+            "PRISMA_M3 efeito sinal=cascata elevacao=1".to_string(),
             "PRISMA_M1 animacao_terminou".to_string(),
         ];
         assert_eq!(app.registro(), esperado);
@@ -1392,7 +1483,7 @@ mod tests {
         // Montada à mão: só uma limpeza de 250 pontos; o "+250" some em 1 s.
         let mut app = App::com_sementes(7, 9);
         let tabuleiro = app.jogo().board;
-        injetar(&mut app, vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![], supernova: false, ganho: 250 }]);
+        injetar(&mut app, vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![], supernova: false, ganho: 250, cadeia: 1, criou: false }]);
         assert_eq!(app.painel().ganho, None, "só depois que a limpeza acaba");
         assert_eq!(app.painel().aviso, None, "limpeza comum não tem aviso");
         app.avancar(300.0);
@@ -1410,7 +1501,7 @@ mod tests {
         let tabuleiro = app.jogo().board;
         injetar(
             &mut app,
-            vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![0], supernova: true, ganho: 250 }],
+            vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![0], supernova: true, ganho: 250, cadeia: 1, criou: false }],
         );
         assert!(app.ocupado());
         assert_eq!(app.painel().aviso.as_deref(), Some("Supernova"), "o aviso aparece no começo da limpeza");
@@ -1814,5 +1905,309 @@ mod tests {
         assert_eq!(app.recordes(Mode::Classic).pontuacao, 777, "o placar do modo que saiu virou recorde");
         let gravado = Salvador::em(pasta.0.clone()).carregar_recordes(Mode::Classic);
         assert_eq!(gravado, app.recordes(Mode::Classic), "e foi para o arquivo");
+    }
+
+    // ----- Efeitos sonoros: quando cada um toca -----
+
+    fn efeito(sinal: Sinal, elevacao: u8) -> Efeito {
+        Efeito { sinal, elevacao }
+    }
+
+    /// Anda a animação até o fim em quadros de `quadro_ms` e junta os sons que saíram (mais os
+    /// que já estavam na fila).
+    fn sons_ate_o_fim(app: &mut App, quadro_ms: f32) -> Vec<Efeito> {
+        let mut sons = app.sons();
+        for _ in 0..100_000 {
+            if !app.ocupado() {
+                break;
+            }
+            app.avancar(quadro_ms);
+            sons.extend(app.sons());
+        }
+        assert!(!app.ocupado(), "a animação não terminou");
+        sons
+    }
+
+    /// A jogada da Dica, do dedo até o fim da animação: devolve os sons que ela fez tocar.
+    fn sons_de_uma_jogada(app: &mut App) -> Vec<Efeito> {
+        let (a, b) = boa_jogada(app);
+        arrastar(app, a, b);
+        sons_ate_o_fim(app, 16.0)
+    }
+
+    /// Os sons da jogada de número `n` (1 = a primeira) da Dica, num jogo Zen da `semente`.
+    fn sons_da_jogada_numero(semente: u32, n: usize) -> Vec<Efeito> {
+        let mut app = App::com_sementes(semente, 9);
+        for _ in 1..n {
+            jogar_inteira(&mut app);
+        }
+        app.sons(); // esvazia o que as jogadas de antes deixaram
+        sons_de_uma_jogada(&mut app)
+    }
+
+    fn linhas_de_efeito(registro: &[String]) -> Vec<String> {
+        registro.iter().filter(|linha| linha.starts_with("PRISMA_M3 efeito")).cloned().collect()
+    }
+
+    #[test]
+    fn jogada_invalida_toca_so_invalida() {
+        let mut app = App::com_sementes(7, 9);
+        let (a, b) = par_invalido(7);
+        arrastar(&mut app, a, b);
+        // Toca no começo da troca, antes de passar qualquer tempo.
+        assert_eq!(app.sons(), vec![efeito(Sinal::Invalida, 0)]);
+        assert_eq!(sons_ate_o_fim(&mut app, 16.0), vec![]);
+    }
+
+    #[test]
+    fn limpeza_simples_toca_combinacao_elevacao_0() {
+        let mut app = App::com_sementes(2, 9);
+        assert_eq!(sons_de_uma_jogada(&mut app), vec![efeito(Sinal::Combinacao, 0)]);
+    }
+
+    #[test]
+    fn cascata_toca_cascata_com_elevacao_subindo() {
+        // Semente 9: a 1ª jogada da Dica faz 4 limpezas seguidas, nenhuma cria pedra especial.
+        assert_eq!(
+            sons_da_jogada_numero(9, 1),
+            vec![
+                efeito(Sinal::Combinacao, 0),
+                efeito(Sinal::Cascata, 1),
+                efeito(Sinal::Cascata, 2),
+                efeito(Sinal::Cascata, 3),
+            ]
+        );
+        // Semente 7: duas limpezas.
+        assert_eq!(sons_da_jogada_numero(7, 1), vec![efeito(Sinal::Combinacao, 0), efeito(Sinal::Cascata, 1)]);
+    }
+
+    #[test]
+    fn limpeza_que_cria_especial_toca_criacao_depois_da_combinacao() {
+        // Semente 1: uma limpeza que cria uma pedra especial. A criação toca no FIM da limpeza.
+        assert_eq!(sons_da_jogada_numero(1, 1), vec![efeito(Sinal::Combinacao, 0), efeito(Sinal::Criacao, 0)]);
+        // Semente 4: a criação toca antes de a cascata começar.
+        assert_eq!(
+            sons_da_jogada_numero(4, 1),
+            vec![efeito(Sinal::Combinacao, 0), efeito(Sinal::Criacao, 0), efeito(Sinal::Cascata, 1)]
+        );
+        // Semente 33: três limpezas, a 1ª e a 3ª criam.
+        assert_eq!(
+            sons_da_jogada_numero(33, 1),
+            vec![
+                efeito(Sinal::Combinacao, 0),
+                efeito(Sinal::Criacao, 0),
+                efeito(Sinal::Cascata, 1),
+                efeito(Sinal::Cascata, 2),
+                efeito(Sinal::Criacao, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn especial_ativado_toca_pulso() {
+        // Semente 13, 4ª jogada da Dica: ativa um Pulso (sem cascata, sem criação).
+        assert_eq!(sons_da_jogada_numero(13, 4), vec![efeito(Sinal::Pulso, 0)]);
+    }
+
+    #[test]
+    fn especial_ativado_toca_raio() {
+        // Semente 3, 14ª jogada: ativa um Raio e a mesma limpeza cria uma pedra especial.
+        assert_eq!(sons_da_jogada_numero(3, 14), vec![efeito(Sinal::Raio, 0), efeito(Sinal::Criacao, 0)]);
+    }
+
+    #[test]
+    fn especial_ativado_toca_espectro() {
+        // Semente 14, 2ª jogada: ativa um Espectro e depois vem uma cascata.
+        assert_eq!(sons_da_jogada_numero(14, 2), vec![efeito(Sinal::Espectro, 0), efeito(Sinal::Cascata, 1)]);
+    }
+
+    /// Uma limpeza montada à mão, com pedras especiais nas casas `ativadas`.
+    fn sons_de_limpeza_a_mao(especiais: &[(usize, TileKind)], supernova: bool, cadeia: u32) -> Vec<Efeito> {
+        let mut app = App::com_sementes(7, 9);
+        let mut tabuleiro = app.jogo().board;
+        for &(casa, tipo) in especiais {
+            tabuleiro[casa / SIZE][casa % SIZE].kind = tipo;
+        }
+        let ativadas = especiais.iter().map(|&(casa, _)| casa).collect();
+        injetar(&mut app, vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas, supernova, ganho: 250, cadeia, criou: false }]);
+        sons_ate_o_fim(&mut app, 16.0)
+    }
+
+    #[test]
+    fn especial_ativado_toca_supernova() {
+        assert_eq!(sons_de_limpeza_a_mao(&[(10, TileKind::Burst)], true, 1), vec![efeito(Sinal::Supernova, 0)]);
+        assert_eq!(sons_de_limpeza_a_mao(&[(10, TileKind::Spectrum)], true, 4), vec![efeito(Sinal::Supernova, 0)]);
+    }
+
+    #[test]
+    fn varios_especiais_ativados_tocam_o_de_maior_prioridade() {
+        let burst = (10, TileKind::Burst);
+        let cross = (20, TileKind::Cross);
+        let espectro = (30, TileKind::Spectrum);
+        assert_eq!(sons_de_limpeza_a_mao(&[burst, cross], false, 1), vec![efeito(Sinal::Raio, 0)]);
+        assert_eq!(sons_de_limpeza_a_mao(&[burst, cross, espectro], false, 1), vec![efeito(Sinal::Espectro, 0)]);
+        assert_eq!(sons_de_limpeza_a_mao(&[burst], false, 5), vec![efeito(Sinal::Pulso, 0)], "a elevação só vale na combinação e na cascata");
+        // Sem especial: a cadeia decide entre combinação e cascata, e a elevação sobe até 5.
+        assert_eq!(sons_de_limpeza_a_mao(&[], false, 1), vec![efeito(Sinal::Combinacao, 0)]);
+        assert_eq!(sons_de_limpeza_a_mao(&[], false, 3), vec![efeito(Sinal::Cascata, 2)]);
+        assert_eq!(sons_de_limpeza_a_mao(&[], false, 40), vec![efeito(Sinal::Cascata, 5)]);
+    }
+
+    #[test]
+    fn subir_de_nivel_toca_nivel_depois_das_limpezas() {
+        // Faltando 1 ponto para o nível 2, qualquer limpeza sobe de nível.
+        let mut app = App::com_sementes(2, 9);
+        app.jogo_mut().score = level_goal(1) - 1;
+        assert_eq!(sons_de_uma_jogada(&mut app), vec![efeito(Sinal::Combinacao, 0), efeito(Sinal::Nivel, 0)]);
+        // Semente 15, 13ª jogada: um Pulso, um embaralhar automático (mudo) e a subida de nível.
+        assert_eq!(sons_da_jogada_numero(15, 13), vec![efeito(Sinal::Pulso, 0), efeito(Sinal::Nivel, 0)]);
+    }
+
+    #[test]
+    fn resgate_toca_resgate() {
+        // Semente 1, 26ª jogada: uma limpeza que cria pedra, a queda e o Resgate do Zen.
+        assert_eq!(
+            sons_da_jogada_numero(1, 26),
+            vec![efeito(Sinal::Combinacao, 0), efeito(Sinal::Criacao, 0), efeito(Sinal::Resgate, 0)]
+        );
+        // Montado à mão, o Resgate toca já no começo do passo.
+        let mut app = App::com_sementes(7, 9);
+        let tabuleiro = app.jogo().board;
+        injetar(&mut app, vec![Passo::Resgate { tabuleiro, indice: 3 }]);
+        assert_eq!(app.sons(), vec![efeito(Sinal::Resgate, 0)]);
+        assert_eq!(sons_ate_o_fim(&mut app, 16.0), vec![]);
+    }
+
+    #[test]
+    fn embaralhar_nao_toca() {
+        let mut app = App::com_sementes(7, 9);
+        app.registro();
+        app.apertar(Botao::Embaralhar);
+        assert!(app.ocupado(), "o embaralhar do botão anima");
+        assert_eq!(sons_ate_o_fim(&mut app, 16.0), vec![]);
+        assert_eq!(linhas_de_efeito(&app.registro()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn sons_do_jogo_desligado_ou_efeitos_zero_nao_enfileira_nada_e_a_animacao_e_a_mesma() {
+        let ligado = App::com_sementes(9, 9);
+        let sem_sons = App::com_sementes(9, 9).com_preferencias(Preferencias { sons_do_jogo: false, ..Preferencias::default() });
+        let mut sem_efeitos = Preferencias::default();
+        sem_efeitos.volumes.efeitos = 0;
+        let sem_efeitos = App::com_sementes(9, 9).com_preferencias(sem_efeitos);
+
+        let mut apps = [ligado, sem_sons, sem_efeitos];
+        for app in &mut apps {
+            let (a, b) = boa_jogada(app);
+            arrastar(app, a, b);
+        }
+        let mut sons: [Vec<Efeito>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        for _ in 0..10_000 {
+            for (app, juntos) in apps.iter_mut().zip(sons.iter_mut()) {
+                juntos.extend(app.sons());
+                app.avancar(16.0);
+            }
+            // Os três andam passo a passo iguais: o mesmo passo, o mesmo tempo e o mesmo placar.
+            let [primeiro, segundo, terceiro] = &apps;
+            for outro in [segundo, terceiro] {
+                assert_eq!(primeiro.passo_atual(), outro.passo_atual());
+                assert_eq!(primeiro.estagio(), outro.estagio());
+                assert_eq!(primeiro.painel().pontos, outro.painel().pontos);
+            }
+            if !primeiro.ocupado() {
+                break;
+            }
+        }
+        for app in &mut apps {
+            sons_ate_o_fim(app, 16.0);
+        }
+        assert!(!sons[0].is_empty(), "com os sons ligados, a jogada toca");
+        assert_eq!(sons[1], vec![], "Sons do jogo desligado");
+        assert_eq!(sons[2], vec![], "volume de efeitos em 0");
+        assert_eq!(apps[0].jogo().score, apps[1].jogo().score);
+        assert_eq!(apps[0].jogo().score, apps[2].jogo().score);
+        for app in &mut apps[1..] {
+            assert_eq!(linhas_de_efeito(&app.registro()), Vec::<String>::new(), "sem som, sem linha de registro");
+        }
+    }
+
+    #[test]
+    fn salto_de_tempo_maior_que_2s_nao_enfileira_rajada() {
+        let mut app = App::com_sementes(9, 9);
+        let (a, b) = boa_jogada(&mut app);
+        arrastar(&mut app, a, b);
+        app.avancar(300.0); // a 1ª limpeza já começou
+        assert_eq!(app.sons(), vec![efeito(Sinal::Combinacao, 0)]);
+        // O app voltou do segundo plano: 5 s de uma vez pulam o resto da animação, sem tocar nada.
+        app.avancar(5000.0);
+        assert!(!app.ocupado());
+        assert_eq!(app.sons(), vec![]);
+        assert_eq!(linhas_de_efeito(&app.registro()).len(), 1, "só a combinação que tocou antes do salto");
+        // Já com o salto antes de qualquer limpeza: nada toca.
+        let mut outro = App::com_sementes(9, 9);
+        let (a, b) = boa_jogada(&mut outro);
+        arrastar(&mut outro, a, b);
+        outro.avancar(2001.0);
+        assert_eq!(outro.sons(), vec![]);
+    }
+
+    #[test]
+    fn um_salto_de_ate_2s_ainda_toca_tudo() {
+        let mut app = App::com_sementes(9, 9);
+        let (a, b) = boa_jogada(&mut app);
+        arrastar(&mut app, a, b);
+        app.avancar(2000.0);
+        let sons = app.sons();
+        // Os passos que começaram nesses 2 s tocam, na ordem; o último pode ainda estar em curso.
+        assert!(sons.len() >= 3 && sons[0] == efeito(Sinal::Combinacao, 0) && sons[1] == efeito(Sinal::Cascata, 1), "{sons:?}");
+    }
+
+    #[test]
+    fn cada_efeito_sai_uma_vez_so() {
+        let esperado = vec![
+            efeito(Sinal::Combinacao, 0),
+            efeito(Sinal::Criacao, 0),
+            efeito(Sinal::Cascata, 1),
+            efeito(Sinal::Cascata, 2),
+            efeito(Sinal::Criacao, 0),
+        ];
+        // Qualquer tamanho de quadro (até 2 s) dá a mesma lista, na mesma ordem, sem repetir.
+        for quadro in [1.0, 16.0, 50.0, 333.0, 700.0, 1999.0] {
+            let mut app = App::com_sementes(33, 9);
+            let (a, b) = boa_jogada(&mut app);
+            arrastar(&mut app, a, b);
+            assert_eq!(sons_ate_o_fim(&mut app, quadro), esperado, "quadros de {quadro} ms");
+        }
+    }
+
+    #[test]
+    fn sons_esvazia_a_fila() {
+        let mut app = App::com_sementes(7, 9);
+        let (a, b) = par_invalido(7);
+        arrastar(&mut app, a, b);
+        assert_eq!(app.sons().len(), 1);
+        assert_eq!(app.sons(), vec![]);
+        app.avancar(16.0);
+        assert_eq!(app.sons(), vec![]);
+    }
+
+    #[test]
+    fn o_registro_ganha_uma_linha_por_efeito() {
+        let mut app = App::com_sementes(4, 9);
+        jogar_inteira(&mut app);
+        assert_eq!(
+            linhas_de_efeito(&app.registro()),
+            vec![
+                "PRISMA_M3 efeito sinal=combinacao elevacao=0".to_string(),
+                "PRISMA_M3 efeito sinal=criacao elevacao=0".to_string(),
+                "PRISMA_M3 efeito sinal=cascata elevacao=1".to_string(),
+            ]
+        );
+        // Jogada inválida: uma linha, sinal `invalida`.
+        let mut outro = App::com_sementes(7, 9);
+        let (a, b) = par_invalido(7);
+        arrastar(&mut outro, a, b);
+        terminar(&mut outro);
+        assert_eq!(linhas_de_efeito(&outro.registro()), vec!["PRISMA_M3 efeito sinal=invalida elevacao=0".to_string()]);
     }
 }
