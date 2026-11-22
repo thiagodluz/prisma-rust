@@ -124,10 +124,59 @@ const ROTULO_ALTURA: f32 = 0.05;
 const BOTOES_ALTURA: f32 = 0.10;
 /// Espaço entre uma peça e a seguinte (e margem em cima e embaixo do conjunto).
 const ESPACO: f32 = 0.02;
+/// A linha do guia de respiração, logo abaixo dos botões (só aparece no Zen, mas o espaço dela
+/// é reservado nos dois modos, para o tabuleiro não mudar de lugar ao trocar de modo).
+const GUIA_ALTURA: f32 = 0.07;
+/// Altura máxima de uma linha da folha de Som, para os controles não ficarem enormes em tela alta.
+const FILA_MAXIMA: f32 = 0.15;
 /// O tabuleiro (e tudo que fica alinhado com ele) ocupa no máximo 94% da largura.
 const LARGURA_MAXIMA: f32 = 0.94;
 /// Tamanho base da letra: 4,5% do menor lado.
 const TEXTO: f32 = 0.045;
+
+/// Onde fica cada controle da folha de Som, a janela que cobre da barra de progresso até os
+/// botões. Os controles do Zen (ligar e escolher Música e Ambiente, Respiração) só existem no
+/// modo Zen: no Clássico são `None`, e as linhas que sobram ficam maiores.
+///
+/// As "barras" são a linha inteira: o valor sai da posição `x` do dedo dentro dela.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TelaSom {
+    pub folha: Rect,
+    pub titulo: Rect,
+    pub sons_do_jogo: Rect,
+    pub testar: Rect,
+    pub barra_efeitos: Rect,
+    pub liga_musica: Option<Rect>,
+    pub escolhe_musica: Option<Rect>,
+    pub barra_musica: Rect,
+    pub liga_ambiente: Option<Rect>,
+    pub escolhe_ambiente: Option<Rect>,
+    pub barra_ambiente: Rect,
+    pub respiracao: Option<Rect>,
+    pub fechar: Rect,
+    /// Tamanho base da letra.
+    pub texto: f32,
+}
+
+impl TelaSom {
+    /// Tudo vazio: o que devolvemos quando a tela não existe.
+    pub const VAZIA: TelaSom = TelaSom {
+        folha: Rect::VAZIO,
+        titulo: Rect::VAZIO,
+        sons_do_jogo: Rect::VAZIO,
+        testar: Rect::VAZIO,
+        barra_efeitos: Rect::VAZIO,
+        liga_musica: None,
+        escolhe_musica: None,
+        barra_musica: Rect::VAZIO,
+        liga_ambiente: None,
+        escolhe_ambiente: None,
+        barra_ambiente: Rect::VAZIO,
+        respiracao: None,
+        fechar: Rect::VAZIO,
+        texto: 0.0,
+    };
+}
 
 /// Onde fica cada peça da tela de jogo (abas, painel, tabuleiro, botões, cartão de fim e
 /// diálogo). Tudo em pixels, calculado a partir do tamanho da tela.
@@ -136,6 +185,8 @@ pub struct TelaJogo {
     /// As duas abas de modo, lado a lado.
     pub aba_zen: Rect,
     pub aba_classico: Rect,
+    /// O botão ♪ (Som): quadrado, na linha das abas, à direita delas.
+    pub botao_som: Rect,
     /// As três colunas do painel: PONTOS, NÍVEL, MELHOR.
     pub pontos: Rect,
     pub nivel: Rect,
@@ -149,6 +200,11 @@ pub struct TelaJogo {
     pub botao_embaralhar: Option<Rect>,
     pub botao_dica: Rect,
     pub botao_novo_jogo: Rect,
+    /// A linha do guia de respiração, logo abaixo dos botões. Só existe no Zen (no Clássico é
+    /// vazia), mas o espaço dela é reservado nos dois modos.
+    pub guia_respiracao: Rect,
+    /// A folha de Som, que abre por cima do tabuleiro e dos botões.
+    pub som: TelaSom,
     /// O cartão de "Fim de partida", por cima do tabuleiro, e o botão dele.
     pub cartao_fim: Rect,
     pub botao_jogar_novamente: Rect,
@@ -165,6 +221,7 @@ impl TelaJogo {
     const VAZIA: TelaJogo = TelaJogo {
         aba_zen: Rect::VAZIO,
         aba_classico: Rect::VAZIO,
+        botao_som: Rect::VAZIO,
         pontos: Rect::VAZIO,
         nivel: Rect::VAZIO,
         melhor: Rect::VAZIO,
@@ -174,6 +231,8 @@ impl TelaJogo {
         botao_embaralhar: None,
         botao_dica: Rect::VAZIO,
         botao_novo_jogo: Rect::VAZIO,
+        guia_respiracao: Rect::VAZIO,
+        som: TelaSom::VAZIA,
         cartao_fim: Rect::VAZIO,
         botao_jogar_novamente: Rect::VAZIO,
         dialogo: Rect::VAZIO,
@@ -185,10 +244,12 @@ impl TelaJogo {
 
 /// Posição de tudo na tela de jogo.
 ///
-/// De cima para baixo: abas, painel, barra, rótulo, tabuleiro, botões. O conjunto fica
-/// centrado na vertical. O tabuleiro é o maior quadrado que cabe: no máximo 94% da largura
-/// e no máximo a altura que sobra depois de reservar o resto. As outras peças têm a mesma
-/// largura do tabuleiro, para ficarem alinhadas com ele.
+/// De cima para baixo: abas (com o botão ♪ ao lado), painel, barra, rótulo, tabuleiro, botões
+/// e a linha do guia de respiração. O conjunto fica centrado na vertical. O tabuleiro é o maior
+/// quadrado que cabe: no máximo 94% da largura e no máximo a altura que sobra depois de
+/// reservar o resto (inclusive a linha do guia, que no Clássico fica vazia, para o tabuleiro
+/// não mudar de lugar entre os modos). As outras peças têm a mesma largura do tabuleiro, para
+/// ficarem alinhadas com ele.
 ///
 /// `com_embaralhar` falso (modo Clássico) tira o botão Embaralhar; os dois que sobram ficam
 /// centrados e do mesmo tamanho que ficariam entre três.
@@ -206,12 +267,13 @@ pub fn tela_jogo(largura: f32, altura: f32, com_embaralhar: bool) -> TelaJogo {
     let barra_h = BARRA_ALTURA * unidade;
     let rotulo_h = ROTULO_ALTURA * unidade;
     let botoes_h = BOTOES_ALTURA * unidade;
+    let guia_h = GUIA_ALTURA * unidade;
 
-    // Tudo menos o tabuleiro: cinco peças e cinco espaços entre as seis peças.
-    let fixo = abas_h + painel_h + barra_h + rotulo_h + botoes_h + 5.0 * espaco;
+    // Tudo menos o tabuleiro: seis peças e seis espaços entre as sete peças.
+    let fixo = abas_h + painel_h + barra_h + rotulo_h + botoes_h + guia_h + 6.0 * espaco;
     // O tabuleiro nunca passa da largura máxima nem da altura livre (reservando também uma
     // margem de um espaço em cima e outra embaixo). A altura livre é sempre positiva, porque
-    // `fixo` mais as margens é 0,507 do menor lado, que nunca passa da altura.
+    // `fixo` mais as margens é 0,597 do menor lado, que nunca passa da altura.
     let lado = (LARGURA_MAXIMA * largura).min(altura - fixo - 2.0 * espaco);
 
     let conjunto = fixo + lado;
@@ -231,9 +293,11 @@ pub fn tela_jogo(largura: f32, altura: f32, com_embaralhar: bool) -> TelaJogo {
     let tabuleiro_y = y;
     y += lado + espaco;
     let botoes_y = y;
+    y += botoes_h + espaco;
+    let guia_y = y;
 
-    // Abas: duas metades com um espaço no meio.
-    let aba_w = (lado - espaco) / 2.0;
+    // Abas: duas metades com um espaço no meio, e o botão ♪ (quadrado) no fim da linha.
+    let aba_w = (lado - abas_h - 2.0 * espaco) / 2.0;
     // Painel: três colunas, a dos pontos mais larga (os números crescem).
     let util = lado - 2.0 * espaco;
     let (pontos_w, nivel_w, melhor_w) = (0.40 * util, 0.24 * util, 0.36 * util);
@@ -251,6 +315,9 @@ pub fn tela_jogo(largura: f32, altura: f32, com_embaralhar: bool) -> TelaJogo {
     };
 
     let tabuleiro = faixa(esquerda, tabuleiro_y, lado, lado);
+    let guia_respiracao = if com_embaralhar { faixa(esquerda, guia_y, lado, guia_h) } else { Rect::VAZIO };
+    // A folha de Som cobre da barra de progresso até o fim dos botões.
+    let folha = faixa(esquerda, barra_y, lado, botoes_y + botoes_h - barra_y);
 
     // Cartão de "Fim de partida": centrado no tabuleiro, com o botão perto da borda de baixo.
     let cartao_w = 0.84 * lado;
@@ -277,6 +344,7 @@ pub fn tela_jogo(largura: f32, altura: f32, com_embaralhar: bool) -> TelaJogo {
     TelaJogo {
         aba_zen: faixa(esquerda, abas_y, aba_w, abas_h),
         aba_classico: faixa(esquerda + aba_w + espaco, abas_y, aba_w, abas_h),
+        botao_som: faixa(esquerda + lado - abas_h, abas_y, abas_h, abas_h),
         pontos: faixa(esquerda, painel_y, pontos_w, painel_h),
         nivel: faixa(nivel_x, painel_y, nivel_w, painel_h),
         melhor: faixa(melhor_x, painel_y, melhor_w, painel_h),
@@ -286,6 +354,8 @@ pub fn tela_jogo(largura: f32, altura: f32, com_embaralhar: bool) -> TelaJogo {
         botao_embaralhar,
         botao_dica: faixa(botao_dica_x, botoes_y, botao_w, botoes_h),
         botao_novo_jogo: faixa(botao_dica_x + passo, botoes_y, botao_w, botoes_h),
+        guia_respiracao,
+        som: folha_de_som(folha, unidade, com_embaralhar),
         cartao_fim,
         botao_jogar_novamente,
         dialogo,
@@ -293,6 +363,72 @@ pub fn tela_jogo(largura: f32, altura: f32, com_embaralhar: bool) -> TelaJogo {
         dialogo_confirmar: faixa(dialogo.x + 2.0 * margem_d + escolha_w, escolha_y, escolha_w, escolha_h),
         texto: TEXTO * unidade,
     }
+}
+
+/// Divide uma linha em duas partes lado a lado: a da esquerda com `esquerda_w` de largura e a
+/// da direita com o que sobra, separadas por `vao`.
+fn dividir(linha: Rect, esquerda_w: f32, vao: f32) -> (Rect, Rect) {
+    let esquerda = Rect { w: esquerda_w, ..linha };
+    let direita = Rect { x: linha.x + esquerda_w + vao, w: linha.w - esquerda_w - vao, ..linha };
+    (esquerda, direita)
+}
+
+/// Posição dos controles da folha de Som dentro de `folha`. As linhas têm todas a mesma altura
+/// (no máximo `FILA_MAXIMA`) e o bloco fica centrado na vertical. No Zen são oito linhas:
+/// título e Fechar; Sons do jogo e Testar; Efeitos; ligar e escolher a Música; volume da Música;
+/// ligar e escolher o Ambiente; volume do Ambiente; Respiração. No Clássico, cinco: as
+/// três primeiras e os volumes da Música e do Ambiente.
+fn folha_de_som(folha: Rect, unidade: f32, zen: bool) -> TelaSom {
+    let espaco = ESPACO * unidade;
+    let vao = espaco / 2.0;
+    let borda = 1.5 * espaco;
+    let linhas = if zen { 8.0 } else { 5.0 };
+    let altura_livre = folha.h - 2.0 * borda;
+    let altura = ((altura_livre - (linhas - 1.0) * vao) / linhas).min(FILA_MAXIMA * unidade);
+    let bloco = linhas * altura + (linhas - 1.0) * vao;
+    let topo = folha.y + (folha.h - bloco) / 2.0;
+    let largura = folha.w - 2.0 * borda;
+    let linha = |i: usize| Rect { x: folha.x + borda, y: topo + i as f32 * (altura + vao), w: largura, h: altura };
+
+    let (titulo, fechar) = dividir(linha(0), largura - altura - vao, vao);
+    let (sons_do_jogo, testar) = dividir(linha(1), 0.62 * largura, vao);
+    let barra_efeitos = linha(2);
+    let (liga_musica, escolhe_musica, barra_musica, liga_ambiente, escolhe_ambiente, barra_ambiente, respiracao);
+    if zen {
+        let (liga, escolhe) = dividir(linha(3), 0.40 * largura, vao);
+        (liga_musica, escolhe_musica, barra_musica) = (Some(liga), Some(escolhe), linha(4));
+        let (liga, escolhe) = dividir(linha(5), 0.40 * largura, vao);
+        (liga_ambiente, escolhe_ambiente, barra_ambiente) = (Some(liga), Some(escolhe), linha(6));
+        respiracao = Some(linha(7));
+    } else {
+        (liga_musica, escolhe_musica, barra_musica) = (None, None, linha(3));
+        (liga_ambiente, escolhe_ambiente, barra_ambiente) = (None, None, linha(4));
+        respiracao = None;
+    }
+    TelaSom {
+        folha,
+        titulo,
+        sons_do_jogo,
+        testar,
+        barra_efeitos,
+        liga_musica,
+        escolhe_musica,
+        barra_musica,
+        liga_ambiente,
+        escolhe_ambiente,
+        barra_ambiente,
+        respiracao,
+        fechar,
+        texto: TEXTO * unidade,
+    }
+}
+
+/// A folha de Som para uma tela e um modo (`zen` falso é o Clássico). É a mesma que
+/// `tela_jogo` guarda em `som`. Tela "impossível" devolve tudo vazio.
+// TEMPORÁRIO: só os testes (e talvez as cenas da Task 7) usam; o desenho lê `tela.som` direto.
+#[allow(dead_code)]
+pub fn tela_som(largura: f32, altura: f32, zen: bool) -> TelaSom {
+    tela_jogo(largura, altura, zen).som
 }
 
 #[cfg(test)]
@@ -498,6 +634,7 @@ mod tests_tela_jogo {
             ("tabuleiro", tela.tabuleiro),
             ("botao_dica", tela.botao_dica),
             ("botao_novo_jogo", tela.botao_novo_jogo),
+            ("botao_som", tela.botao_som),
         ];
         if let Some(embaralhar) = tela.botao_embaralhar {
             pecas.push(("botao_embaralhar", embaralhar));
@@ -593,7 +730,9 @@ mod tests_tela_jogo {
         for (largura, altura) in TELAS {
             let tela = tela_jogo(largura, altura, true);
             let em_cima = tela.aba_zen.y;
-            let embaixo = altura - (tela.botao_dica.y + tela.botao_dica.h);
+            // O conjunto vai das abas até o fim da linha da respiração, que fica reservada logo
+            // abaixo dos botões (e continua reservada, vazia, no Clássico).
+            let embaixo = altura - (tela.guia_respiracao.y + tela.guia_respiracao.h);
             assert!((em_cima - embaixo).abs() < 1e-2, "{largura}x{altura}: {em_cima} em cima, {embaixo} embaixo");
         }
     }
@@ -633,6 +772,173 @@ mod tests_tela_jogo {
                 assert_eq!(tela.texto, 0.0);
                 // Nenhum toque cai em lugar nenhum.
                 assert!(!tela.tabuleiro.contem(0.0, 0.0));
+            }
+        }
+    }
+
+    // ---- Botão ♪, linha da respiração e folha de Som ----
+
+    /// Os tamanhos de celular que a folha de Som precisa atender com folga.
+    const CELULARES: [(f32, f32); 4] = [(360.0, 640.0), (720.0, 1280.0), (1080.0, 1920.0), (1080.0, 2400.0)];
+
+    /// Todos os retângulos da folha (menos ela mesma) que existem naquele modo.
+    fn controles(som: &TelaSom) -> Vec<(&'static str, Rect)> {
+        let mut todos = vec![
+            ("titulo", som.titulo),
+            ("sons_do_jogo", som.sons_do_jogo),
+            ("testar", som.testar),
+            ("barra_efeitos", som.barra_efeitos),
+            ("barra_musica", som.barra_musica),
+            ("barra_ambiente", som.barra_ambiente),
+            ("fechar", som.fechar),
+        ];
+        for (nome, retangulo) in [
+            ("liga_musica", som.liga_musica),
+            ("escolhe_musica", som.escolhe_musica),
+            ("liga_ambiente", som.liga_ambiente),
+            ("escolhe_ambiente", som.escolhe_ambiente),
+            ("respiracao", som.respiracao),
+        ] {
+            if let Some(retangulo) = retangulo {
+                todos.push((nome, retangulo));
+            }
+        }
+        todos
+    }
+
+    #[test]
+    fn tela_som_cabe_e_nao_se_sobrepoe() {
+        for (largura, altura) in CELULARES {
+            for zen in [true, false] {
+                let tela = tela_jogo(largura, altura, zen);
+                let som = tela_som(largura, altura, zen);
+                assert_eq!(som, tela.som, "tela_som é a mesma folha de tela_jogo");
+                let unidade = largura.min(altura);
+                let janela = Rect { x: 0.0, y: 0.0, w: largura, h: altura };
+                assert!(dentro(som.folha, janela), "folha fora da tela {largura}x{altura}");
+                // A folha cobre o tabuleiro e os botões, sem tapar as abas nem o botão ♪.
+                assert!(dentro(tela.tabuleiro, som.folha), "{largura}x{altura}: a folha tem de cobrir o tabuleiro");
+                assert!(dentro(tela.botao_dica, som.folha) && dentro(tela.botao_novo_jogo, som.folha));
+                assert!(som.folha.y >= tela.botao_som.y + tela.botao_som.h - 1e-3, "{largura}x{altura}: folha tapa o ♪");
+                let todos = controles(&som);
+                for (nome, retangulo) in &todos {
+                    assert!(retangulo.w > 0.0 && retangulo.h > 0.0, "{nome} sem tamanho em {largura}x{altura} zen={zen}");
+                    assert!(dentro(*retangulo, som.folha), "{nome} fora da folha em {largura}x{altura} zen={zen}: {retangulo:?}");
+                    if *nome != "titulo" {
+                        assert!(
+                            retangulo.h >= 0.07 * unidade,
+                            "{nome} baixo demais para o dedo em {largura}x{altura} zen={zen}: {} < {}",
+                            retangulo.h,
+                            0.07 * unidade
+                        );
+                    }
+                }
+                for (i, (nome_a, a)) in todos.iter().enumerate() {
+                    for (nome_b, b) in &todos[i + 1..] {
+                        assert!(!se_cruzam(*a, *b), "{nome_a} e {nome_b} se cruzam em {largura}x{altura} zen={zen}");
+                    }
+                }
+                assert!(som.texto > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn tela_som_existe_e_cabe_em_qualquer_tela_possivel() {
+        for (largura, altura) in TELAS {
+            for zen in [true, false] {
+                let som = tela_som(largura, altura, zen);
+                let janela = Rect { x: 0.0, y: 0.0, w: largura, h: altura };
+                for (nome, retangulo) in controles(&som) {
+                    assert!(retangulo.w > 0.0 && retangulo.h > 0.0, "{nome} sem tamanho em {largura}x{altura}");
+                    assert!(dentro(retangulo, janela) && dentro(retangulo, som.folha), "{nome} fora em {largura}x{altura}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_classico_os_controles_do_zen_nao_existem() {
+        for (largura, altura) in CELULARES {
+            let classico = tela_som(largura, altura, false);
+            assert_eq!(
+                (classico.liga_musica, classico.escolhe_musica, classico.liga_ambiente, classico.escolhe_ambiente, classico.respiracao),
+                (None, None, None, None, None),
+                "{largura}x{altura}"
+            );
+            let zen = tela_som(largura, altura, true);
+            assert!(zen.liga_musica.is_some() && zen.escolhe_musica.is_some());
+            assert!(zen.liga_ambiente.is_some() && zen.escolhe_ambiente.is_some());
+            assert!(zen.respiracao.is_some());
+            // Os controles que existem nos dois modos ficam no mesmo lugar? Não precisam; mas a folha, sim.
+            assert_eq!(zen.folha, classico.folha);
+        }
+    }
+
+    #[test]
+    fn tela_impossivel_devolve_tudo_vazio() {
+        for (largura, altura) in [(0.0, 0.0), (-1.0, 10.0), (10.0, -1.0), (f32::NAN, 10.0), (10.0, f32::NAN), (f32::INFINITY, 10.0)] {
+            for zen in [true, false] {
+                let som = tela_som(largura, altura, zen);
+                assert_eq!(som, TelaSom::VAZIA, "{largura}x{altura}");
+                assert_eq!(som.folha, Rect::VAZIO);
+                assert_eq!(som.respiracao, None);
+                assert_eq!(som.texto, 0.0);
+                for (nome, retangulo) in controles(&som) {
+                    assert_eq!(retangulo, Rect::VAZIO, "{nome}");
+                }
+                let tela = tela_jogo(largura, altura, zen);
+                assert_eq!(tela.botao_som, Rect::VAZIO);
+                assert_eq!(tela.guia_respiracao, Rect::VAZIO);
+            }
+        }
+    }
+
+    #[test]
+    fn botao_som_fica_ao_lado_das_abas_e_nao_as_cobre() {
+        for (largura, altura) in TELAS {
+            for zen in [true, false] {
+                let tela = tela_jogo(largura, altura, zen);
+                let som = tela.botao_som;
+                // Na mesma linha das abas e quadrado.
+                assert!((som.y - tela.aba_zen.y).abs() < 1e-3 && (som.h - tela.aba_zen.h).abs() < 1e-3, "{largura}x{altura}");
+                assert!((som.w - som.h).abs() < 1e-3, "{largura}x{altura}: o botão ♪ é quadrado");
+                // À direita das duas abas, sem cobri-las, e no fim da largura do tabuleiro.
+                assert!(som.x >= tela.aba_classico.x + tela.aba_classico.w, "{largura}x{altura}: ♪ cobre a aba do Clássico");
+                assert!(!se_cruzam(som, tela.aba_zen) && !se_cruzam(som, tela.aba_classico));
+                assert!((som.x + som.w - (tela.tabuleiro.x + tela.tabuleiro.w)).abs() < 1e-2, "{largura}x{altura}");
+                // As abas continuam do mesmo tamanho uma da outra, com largura de verdade.
+                assert!((tela.aba_zen.w - tela.aba_classico.w).abs() < 1e-3 && tela.aba_zen.w > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_linha_da_respiracao_nao_encolhe_o_tabuleiro() {
+        for (largura, altura) in CELULARES {
+            let zen = tela_jogo(largura, altura, true);
+            let classico = tela_jogo(largura, altura, false);
+            assert_eq!(zen.tabuleiro, classico.tabuleiro, "{largura}x{altura}: o tabuleiro não muda de um modo para o outro");
+            // E continua do tamanho máximo (94% da largura): a linha nova coube na sobra de altura.
+            assert!((zen.tabuleiro.w - 0.94 * largura).abs() < 1e-2, "{largura}x{altura}: tabuleiro encolheu: {}", zen.tabuleiro.w);
+        }
+    }
+
+    #[test]
+    fn guia_respiracao_so_existe_no_zen() {
+        for (largura, altura) in TELAS {
+            let classico = tela_jogo(largura, altura, false);
+            assert_eq!(classico.guia_respiracao, Rect::VAZIO, "{largura}x{altura}: no Clássico não há guia");
+            let zen = tela_jogo(largura, altura, true);
+            let guia = zen.guia_respiracao;
+            let janela = Rect { x: 0.0, y: 0.0, w: largura, h: altura };
+            assert!(guia.w > 0.0 && guia.h > 0.0, "{largura}x{altura}");
+            assert!(dentro(guia, janela), "{largura}x{altura}: guia fora da tela");
+            // Logo abaixo dos botões, alinhada com o tabuleiro e sem cruzar nada.
+            assert!(guia.y >= zen.botao_dica.y + zen.botao_dica.h, "{largura}x{altura}: guia acima dos botões");
+            assert!((guia.x - zen.tabuleiro.x).abs() < 1e-2 && (guia.w - zen.tabuleiro.w).abs() < 1e-2);
+            for (nome, retangulo) in pecas(&zen) {
+                assert!(!se_cruzam(guia, retangulo), "guia cruza {nome} em {largura}x{altura}");
             }
         }
     }

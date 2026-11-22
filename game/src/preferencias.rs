@@ -4,9 +4,6 @@
 //! os volumes, o que está ligado e as escolhas do Zen. A leitura é por campo, como as funções
 //! `normalizeAudioSettings` e `normalizeZenSettings` do JS: o que está certo vale, o que está
 //! errado ou falta vira o padrão, sem derrubar o resto.
-//!
-//! TEMPORÁRIO: o `allow` abaixo sai quando a folha de Som (Task 5) passar a usar o módulo.
-#![allow(dead_code)]
 
 use serde_json::{json, Map, Value};
 
@@ -34,6 +31,8 @@ impl Default for Volumes {
 }
 
 impl Volumes {
+    // TEMPORÁRIO: sem uso até a Task 6 (a camada de áudio lê os volumes); o `allow` sai então.
+    #[allow(dead_code)]
     pub fn de(&self, canal: Canal) -> u8 {
         match canal {
             Canal::Efeitos => self.efeitos,
@@ -71,6 +70,8 @@ impl Musica {
     }
 
     /// O nome na tela.
+    // TEMPORÁRIO: sem uso até a Task 7 (o desenho da folha escreve os nomes); o `allow` sai então.
+    #[allow(dead_code)]
     pub fn texto(self) -> &'static str {
         match self {
             Musica::MagicPuzzle => "Magic Puzzle",
@@ -113,6 +114,8 @@ impl Ambiente {
         Ambiente::TODOS[(posicao + 1) % Ambiente::TODOS.len()]
     }
 
+    // TEMPORÁRIO: sem uso até a Task 7 (o desenho da folha escreve os nomes); o `allow` sai então.
+    #[allow(dead_code)]
     pub fn texto(self) -> &'static str {
         match self {
             Ambiente::Riacho => "Riacho",
@@ -156,6 +159,8 @@ impl Respiracao {
         Respiracao::TODAS[(posicao + 1) % Respiracao::TODAS.len()]
     }
 
+    // TEMPORÁRIO: sem uso até a Task 7 (o desenho da folha escreve os nomes); o `allow` sai então.
+    #[allow(dead_code)]
     pub fn texto(self) -> &'static str {
         match self {
             Respiracao::Desligada => "Desligada",
@@ -316,6 +321,8 @@ pub fn estado_da_respiracao(respiracao: Respiracao, decorrido_ms: f32) -> Option
 /// A bolinha do guia: `(escala, opacidade)`. Inspirando vai de 0,72 / 0,64 a 1,15 / 1,0 e
 /// expirando faz o caminho de volta, sempre com suavização nas duas pontas (como o
 /// `ease-in-out` do CSS do JS; aqui usa a curva "smoothstep", quase igual).
+// TEMPORÁRIO: sem uso até a Task 7 (o desenho do guia); o `allow` sai então.
+#[allow(dead_code)]
 pub fn orbe(estado: &EstadoRespiracao) -> (f32, f32) {
     const ESCALA: (f32, f32) = (0.72, 1.15);
     const OPACIDADE: (f32, f32) = (0.64, 1.0);

@@ -9,9 +9,9 @@
 use crate::efeitos::{elevacao_da_cadeia, sinal_da_limpeza, Efeito, Sinal};
 use crate::formato::Recordes;
 use crate::input::{Acao, Evento, Gestos};
-use crate::layout::{Rect, TelaJogo};
+use crate::layout::{Rect, TelaJogo, TelaSom};
 use crate::linha::{montar, Passo, Reprodutor};
-use crate::preferencias::Preferencias;
+use crate::preferencias::{estado_da_respiracao, Canal, EstadoRespiracao, Preferencias};
 use crate::salvar::{Origem, Salvador};
 use prisma_engine::{lcg_random, level_goal, Game, Mode, TileKind, SIZE};
 
@@ -21,6 +21,16 @@ const DICA_MS: f32 = 2600.0;
 const GANHO_MS: f32 = 1000.0;
 /// Quanto tempo ficam os avisos ("Supernova", "Tabuleiro reorganizado").
 const AVISO_MS: f32 = 1600.0;
+/// O relógio do guia de respiração volta a zero a cada 40 s, que é múltiplo dos dois ciclos
+/// (8 s e 10 s): a fase não muda e o número nunca cresce sem limite (um salto enorme de tempo
+/// não congela o guia).
+const CICLO_DA_RESPIRACAO_MS: f32 = 40_000.0;
+/// O volume que "Sons do jogo" devolve quando o jogador liga os sons com o volume dos efeitos em 0.
+const VOLUME_RESTAURADO: u8 = 80;
+/// O que a folha diz quando o áudio de fundo não começou (o texto do JS).
+const AVISO_DE_AUDIO: &str = "O áudio não começou. Toque novamente em Música ou Ambiente para tentar de novo.";
+/// O que o "Testar som" diz com o volume dos efeitos em 0.
+const AVISO_SEM_VOLUME: &str = "Aumente o volume dos efeitos";
 
 /// Os números que o painel mostra AGORA (que podem estar atrás do motor durante a animação).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +52,63 @@ pub enum Botao {
     JogarNovamente,
     Cancelar,
     Confirmar,
+    /// O ♪ ao lado das abas: abre e fecha a folha de Som.
+    Som,
+    // Daqui para baixo, só valem com a folha de Som aberta.
+    FecharSom,
+    SonsDoJogo,
+    Testar,
+    // Estes cinco só existem no Zen.
+    LigaMusica,
+    EscolheMusica,
+    LigaAmbiente,
+    EscolheAmbiente,
+    Respiracao,
+}
+
+impl Botao {
+    /// É um botão de dentro da folha de Som (o ♪ que abre e fecha a folha não conta)?
+    fn da_folha(self) -> bool {
+        !matches!(
+            self,
+            Botao::Zen
+                | Botao::Classico
+                | Botao::Embaralhar
+                | Botao::Dica
+                | Botao::NovoJogo
+                | Botao::JogarNovamente
+                | Botao::Cancelar
+                | Botao::Confirmar
+                | Botao::Som
+        )
+    }
+
+    /// É um dos botões que só existem no modo Zen?
+    fn so_do_zen(self) -> bool {
+        matches!(
+            self,
+            Botao::LigaMusica | Botao::EscolheMusica | Botao::LigaAmbiente | Botao::EscolheAmbiente | Botao::Respiracao
+        )
+    }
+}
+
+/// O volume (de 0 a 100, de 5 em 5) que o dedo na posição `x` escolhe numa barra: o começo da
+/// barra é 0 e o fim é 100; fora dela vale o extremo mais perto. Posição inválida: nada.
+fn volume_do_dedo(barra: Rect, x: f32) -> Option<u8> {
+    if !x.is_finite() || barra.w.is_nan() || barra.w <= 0.0 {
+        return None;
+    }
+    let fracao = ((x - barra.x) / barra.w).clamp(0.0, 1.0);
+    Some((fracao * 20.0).round() as u8 * 5)
+}
+
+/// A barra de volume de um canal.
+fn barra_do_canal(som: &TelaSom, canal: Canal) -> Rect {
+    match canal {
+        Canal::Efeitos => som.barra_efeitos,
+        Canal::Musica => som.barra_musica,
+        Canal::Ambiente => som.barra_ambiente,
+    }
 }
 
 /// O texto de um número com ponto de milhar, como no Brasil: `1234567` vira `"1.234.567"`.
@@ -215,6 +282,15 @@ pub struct App {
     preferencias: Preferencias,
     /// Os efeitos sonoros que já "chegaram a hora" e ainda não foram entregues ao áudio.
     sons: Vec<Efeito>,
+    /// A folha de Som está aberta: ela cobre o tabuleiro e os botões, e só os controles dela reagem.
+    folha: bool,
+    /// O canal cuja barra o dedo está arrastando agora (a gravação vem quando o dedo solta).
+    arrasto: Option<Canal>,
+    /// Há quanto tempo o guia de respiração começou (volta a zero ao entrar no Zen, ao trocar o
+    /// ritmo e ao confirmar Novo jogo).
+    respiracao_ms: f32,
+    /// O erro de áudio mais recente da Música e do Ambiente (`None` = está bem).
+    erros_de_audio: [Option<String>; 2],
 }
 
 impl App {
@@ -240,10 +316,10 @@ impl App {
 
     /// Abre o app com o que está gravado: o modo em que o jogador estava, a partida de cada modo
     /// e os recordes. O que faltar ou estiver estragado recomeça do zero (só aquele item).
-    // Ainda sem uso fora dos testes: o `main.rs` passa a chamar na Task 5.
-    #[allow(dead_code)]
     pub fn abrir(salvador: Salvador) -> App {
         let modo = salvador.carregar_modo_ativo();
+        // Preferências de som estragadas ou ausentes viram os padrões (o arquivo ruim vai para `.corrupt`).
+        let (preferencias, _origem) = salvador.carregar_preferencias();
         let mut zen = Game::new();
         let mut classico = Game::new();
         let origem_zen = salvador.carregar_partida(Mode::Zen, &mut zen);
@@ -252,6 +328,7 @@ impl App {
         let descricao_zen = descrever_origem(&origem_zen, &zen);
         let descricao_classico = descrever_origem(&origem_classico, &classico);
         let mut app = App::de_jogos(zen, classico, modo, salvador, recordes);
+        app.preferencias = preferencias;
 
         // A partida carregada pode ter passado dos recordes (como o `hud()` do JS, que confere
         // sempre que desenha): se sim, o recorde sobe e é gravado.
@@ -285,11 +362,16 @@ impl App {
             registros: vec![format!("PRISMA_M1 pronto modo={}", nome_do_modo(modo))],
             preferencias: Preferencias::default(),
             sons: Vec::new(),
+            folha: false,
+            arrasto: None,
+            respiracao_ms: 0.0,
+            erros_de_audio: [None, None],
         }
     }
 
-    /// O mesmo app com outras preferências de som (nos testes; o app de verdade lê do arquivo).
-    // Ainda sem uso fora dos testes: o `main.rs` passa a ler as preferências na Task 5.
+    /// O mesmo app com outras preferências de som (nos testes e nas cenas de conferência; o app de
+    /// verdade lê do arquivo).
+    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (cenas `som` e `respiracao`).
     #[allow(dead_code)]
     pub fn com_preferencias(mut self, preferencias: Preferencias) -> App {
         self.preferencias = preferencias;
@@ -352,6 +434,11 @@ impl App {
     /// Um evento do dedo (ou do mouse). O botão responde assim que o dedo encosta; o
     /// tabuleiro, quando o dedo solta (ver `input`).
     pub fn tocar(&mut self, evento: Evento, tela: &TelaJogo) {
+        // Com a folha de Som aberta, só ela reage: o tabuleiro, as abas e os botões ficam "tampados".
+        if self.folha {
+            self.tocar_na_folha(evento, tela);
+            return;
+        }
         if let Evento::Baixo { x, y } = evento {
             if let Some(botao) = self.botao_em(tela, x, y) {
                 self.apertar(botao);
@@ -368,13 +455,82 @@ impl App {
         }
     }
 
+    /// Um evento do dedo com a folha de Som aberta: botões respondem ao encostar; a barra de
+    /// volume escolhe o valor ao encostar e a cada movimento, e grava quando o dedo solta.
+    fn tocar_na_folha(&mut self, evento: Evento, tela: &TelaJogo) {
+        match evento {
+            Evento::Baixo { x, y } => {
+                // Segundo dedo durante um arrasto não conta.
+                if self.arrasto.is_some() {
+                    return;
+                }
+                if let Some(botao) = self.botao_em(tela, x, y) {
+                    self.apertar(botao);
+                    return;
+                }
+                let som = &tela.som;
+                let barras = [Canal::Efeitos, Canal::Musica, Canal::Ambiente];
+                if let Some(canal) = barras.into_iter().find(|&canal| barra_do_canal(som, canal).contem(x, y)) {
+                    self.arrasto = Some(canal);
+                    self.escolher_volume(canal, barra_do_canal(som, canal), x);
+                }
+            }
+            Evento::Mover { x, .. } => {
+                if let Some(canal) = self.arrasto {
+                    self.escolher_volume(canal, barra_do_canal(&tela.som, canal), x);
+                }
+            }
+            Evento::Cima { x, .. } => {
+                if let Some(canal) = self.arrasto {
+                    self.escolher_volume(canal, barra_do_canal(&tela.som, canal), x);
+                    self.terminar_arrasto();
+                }
+            }
+            Evento::Cancelar => self.terminar_arrasto(),
+        }
+    }
+
+    fn escolher_volume(&mut self, canal: Canal, barra: Rect, x: f32) {
+        if let Some(valor) = volume_do_dedo(barra, x) {
+            self.preferencias.volumes.definir(canal, valor);
+        }
+    }
+
+    /// O dedo largou a barra (ou o gesto foi cancelado): o valor de agora vale e é gravado, uma vez.
+    fn terminar_arrasto(&mut self) {
+        if self.arrasto.take().is_some() {
+            self.gravar_preferencias();
+        }
+    }
+
     /// Os botões que existem agora, com o lugar de cada um na tela.
     fn botoes_visiveis(&self, tela: &TelaJogo) -> Vec<(Botao, Rect)> {
         // Com a pergunta aberta, só existem os dois botões dela.
         if self.dialogo {
             return vec![(Botao::Cancelar, tela.dialogo_cancelar), (Botao::Confirmar, tela.dialogo_confirmar)];
         }
-        let mut botoes = vec![(Botao::Zen, tela.aba_zen), (Botao::Classico, tela.aba_classico)];
+        // Com a folha de Som aberta, só existem o ♪ (que fecha) e os controles dela.
+        if self.folha {
+            let som = &tela.som;
+            let mut botoes = vec![
+                (Botao::Som, tela.botao_som),
+                (Botao::FecharSom, som.fechar),
+                (Botao::SonsDoJogo, som.sons_do_jogo),
+                (Botao::Testar, som.testar),
+            ];
+            if self.modo == Mode::Zen {
+                let do_zen = [
+                    (Botao::LigaMusica, som.liga_musica),
+                    (Botao::EscolheMusica, som.escolhe_musica),
+                    (Botao::LigaAmbiente, som.liga_ambiente),
+                    (Botao::EscolheAmbiente, som.escolhe_ambiente),
+                    (Botao::Respiracao, som.respiracao),
+                ];
+                botoes.extend(do_zen.into_iter().filter_map(|(botao, retangulo)| retangulo.map(|r| (botao, r))));
+            }
+            return botoes;
+        }
+        let mut botoes = vec![(Botao::Zen, tela.aba_zen), (Botao::Classico, tela.aba_classico), (Botao::Som, tela.botao_som)];
         if self.jogo().ended {
             // Com a partida acabada: o cartão tem "Jogar novamente"; Dica e Embaralhar somem.
             botoes.push((Botao::JogarNovamente, tela.botao_jogar_novamente));
@@ -404,6 +560,13 @@ impl App {
         if self.dialogo && !matches!(botao, Botao::Cancelar | Botao::Confirmar) {
             return;
         }
+        // Os botões da folha só valem com ela aberta; com ela aberta, só valem eles (e o ♪).
+        if botao != Botao::Som && botao.da_folha() != self.folha {
+            return;
+        }
+        if botao.so_do_zen() && self.modo != Mode::Zen {
+            return;
+        }
         match botao {
             Botao::Zen => self.trocar_de_modo(Mode::Zen),
             Botao::Classico => self.trocar_de_modo(Mode::Classic),
@@ -417,7 +580,80 @@ impl App {
             }
             Botao::Cancelar => self.dialogo = false,
             Botao::Confirmar => self.confirmar_novo_jogo(),
+            Botao::Som => {
+                if self.folha {
+                    self.fechar_folha();
+                } else {
+                    self.gestos.limpar();
+                    self.folha = true;
+                }
+            }
+            Botao::FecharSom => self.fechar_folha(),
+            Botao::SonsDoJogo => self.alternar_sons_do_jogo(),
+            Botao::Testar => self.testar_som(),
+            Botao::LigaMusica => {
+                self.preferencias.musica_ligada = !self.preferencias.musica_ligada;
+                self.tentar_de_novo(Canal::Musica);
+            }
+            Botao::EscolheMusica => {
+                self.preferencias.musica = self.preferencias.musica.proximo();
+                self.tentar_de_novo(Canal::Musica);
+            }
+            Botao::LigaAmbiente => {
+                self.preferencias.ambiente_ligado = !self.preferencias.ambiente_ligado;
+                self.tentar_de_novo(Canal::Ambiente);
+            }
+            Botao::EscolheAmbiente => {
+                self.preferencias.ambiente = self.preferencias.ambiente.proximo();
+                self.tentar_de_novo(Canal::Ambiente);
+            }
+            Botao::Respiracao => {
+                self.preferencias.respiracao = self.preferencias.respiracao.proximo();
+                self.respiracao_ms = 0.0;
+                self.gravar_preferencias();
+            }
         }
+    }
+
+    fn fechar_folha(&mut self) {
+        // Fechar no meio de um arrasto vale o último valor e grava.
+        self.terminar_arrasto();
+        self.folha = false;
+    }
+
+    /// "Sons do jogo": liga e desliga os efeitos. Se estiver ligado mas com o volume em 0 (não toca
+    /// nada), o toque devolve o volume a 80 em vez de desligar.
+    fn alternar_sons_do_jogo(&mut self) {
+        if self.preferencias.sons_do_jogo && self.preferencias.volumes.efeitos == 0 {
+            self.preferencias.volumes.efeitos = VOLUME_RESTAURADO;
+        } else {
+            self.preferencias.sons_do_jogo = !self.preferencias.sons_do_jogo;
+        }
+        self.gravar_preferencias();
+    }
+
+    /// "Testar som": toca uma combinação, mesmo com "Sons do jogo" desligado; com o volume dos
+    /// efeitos em 0, avisa em vez de tocar.
+    fn testar_som(&mut self) {
+        if self.preferencias.volumes.efeitos == 0 {
+            self.aviso = Temporizado::por(AVISO_SEM_VOLUME, AVISO_MS);
+            return;
+        }
+        self.emitir_efeito(Efeito { sinal: Sinal::Combinacao, elevacao: 0 });
+    }
+
+    /// O jogador mexeu em Música ou Ambiente: grava, e o erro de áudio daquele canal (se havia) sai
+    /// da tela, porque a camada de áudio vai tentar de novo.
+    fn tentar_de_novo(&mut self, canal: Canal) {
+        self.erro_de_audio(canal, None);
+        self.gravar_preferencias();
+    }
+
+    /// Grava as preferências de som. Falha de gravação nunca interrompe o jogo: a escolha vale
+    /// até fechar o app e o erro vai para o registro (uma vez, como os outros).
+    fn gravar_preferencias(&mut self) {
+        let erros = self.salvador.gravar_preferencias(&self.preferencias).err().into_iter().collect();
+        self.avisar_erros(erros);
     }
 
     fn pedir_dica(&mut self) {
@@ -462,6 +698,9 @@ impl App {
         mudaram[posicao_do_modo(self.modo)] = self.alcancar_recordes_de(self.modo);
         self.limpar_tela();
         self.modo = modo;
+        if modo == Mode::Zen {
+            self.respiracao_ms = 0.0;
+        }
         mudaram[posicao_do_modo(modo)] = self.alcancar_recordes_de(modo);
         self.registros.push(format!("PRISMA_M1 modo={} pontos={}", nome_do_modo(modo), self.jogo().score));
         self.gravar_tudo(mudaram);
@@ -485,6 +724,7 @@ impl App {
         mudaram[posicao_do_modo(self.modo)] = self.alcancar_recordes_de(self.modo);
         self.jogo_mut().restart();
         self.limpar_tela();
+        self.respiracao_ms = 0.0;
         self.registros.push(format!("PRISMA_M1 novo_jogo modo={} pontos=0", nome_do_modo(self.modo)));
         self.gravar_tudo(mudaram);
     }
@@ -599,6 +839,10 @@ impl App {
         passar_tempo(&mut self.dica, dt);
         passar_tempo(&mut self.ganho, dt);
         passar_tempo(&mut self.aviso, dt);
+        // O guia de respiração só anda no Zen. Tempo infinito não conta (nem congela o relógio).
+        if self.modo == Mode::Zen && dt.is_finite() {
+            self.respiracao_ms = (self.respiracao_ms + dt) % CICLO_DA_RESPIRACAO_MS;
+        }
         if let Some(andamento) = self.animacao.as_mut() {
             andamento.reprodutor.avancar(dt);
         }
@@ -663,6 +907,11 @@ impl App {
         if !self.preferencias.sons_do_jogo || self.preferencias.volumes.efeitos == 0 {
             return;
         }
+        self.emitir_efeito(efeito);
+    }
+
+    /// Põe o efeito na fila do áudio e anota no registro, sem olhar "Sons do jogo".
+    fn emitir_efeito(&mut self, efeito: Efeito) {
         self.sons.push(efeito);
         self.registros.push(format!("PRISMA_M3 efeito sinal={} elevacao={}", efeito.sinal.nome(), efeito.elevacao));
     }
@@ -749,6 +998,49 @@ impl App {
         }
     }
 
+    /// A folha de Som está aberta?
+    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (o desenho da folha).
+    #[allow(dead_code)]
+    pub fn folha_aberta(&self) -> bool {
+        self.folha
+    }
+
+    /// As escolhas de som de agora (volumes, interruptores, faixas, respiração).
+    // TEMPORÁRIO: sem uso fora dos testes até a Task 6 (o laço do `main.rs` e a camada de áudio).
+    #[allow(dead_code)]
+    pub fn preferencias(&self) -> Preferencias {
+        self.preferencias.clone()
+    }
+
+    /// Onde o guia de respiração está agora; `None` no Clássico e com o guia desligado.
+    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (o desenho do guia).
+    #[allow(dead_code)]
+    pub fn guia_respiracao(&self) -> Option<EstadoRespiracao> {
+        if self.modo != Mode::Zen {
+            return None;
+        }
+        estado_da_respiracao(self.preferencias.respiracao, self.respiracao_ms)
+    }
+
+    /// O aviso "O áudio não começou..." enquanto a Música ou o Ambiente estiver com erro.
+    // TEMPORÁRIO: sem uso fora dos testes até a Task 7 (o desenho da folha).
+    #[allow(dead_code)]
+    pub fn aviso_de_audio(&self) -> Option<&'static str> {
+        self.erros_de_audio.iter().any(Option::is_some).then_some(AVISO_DE_AUDIO)
+    }
+
+    /// A camada de áudio conta que a Música ou o Ambiente falhou (`Some(texto)`) ou está bem
+    /// (`None`). Os efeitos não têm aviso próprio.
+    // TEMPORÁRIO: sem uso fora dos testes até a Task 6 (a camada de áudio).
+    #[allow(dead_code)]
+    pub fn erro_de_audio(&mut self, canal: Canal, texto: Option<String>) {
+        match canal {
+            Canal::Musica => self.erros_de_audio[0] = texto,
+            Canal::Ambiente => self.erros_de_audio[1] = texto,
+            Canal::Efeitos => {}
+        }
+    }
+
     /// Entrega (e esvazia) as linhas de registro acumuladas.
     pub fn registro(&mut self) -> Vec<String> {
         std::mem::take(&mut self.registros)
@@ -762,6 +1054,7 @@ mod tests {
     use crate::input::Evento;
     use crate::layout::{cell_rect, tela_jogo, Rect, TelaJogo};
     use crate::linha::{Passo, Reprodutor};
+    use crate::preferencias::{Ambiente, Canal, Fase, Musica, Respiracao, Volumes};
     use prisma_engine::{adjacent, lcg_random, level_goal, Board, Game, Mode, TileKind, SIZE};
     use std::fs;
     use std::path::PathBuf;
@@ -2209,5 +2502,556 @@ mod tests {
         arrastar(&mut outro, a, b);
         terminar(&mut outro);
         assert_eq!(linhas_de_efeito(&outro.registro()), vec!["PRISMA_M3 efeito sinal=invalida elevacao=0".to_string()]);
+    }
+
+    // ----- Folha de Som, preferências e respiração -----
+
+    fn tela_classico() -> TelaJogo {
+        tela_jogo(540.0, 960.0, false)
+    }
+
+    /// Um toque rápido no meio de um retângulo.
+    fn tocar_em(app: &mut App, tela: &TelaJogo, retangulo: Rect) {
+        let (x, y) = meio(retangulo);
+        app.tocar(Evento::Baixo { x, y }, tela);
+        app.tocar(Evento::Cima { x, y }, tela);
+    }
+
+    fn abrir_folha(app: &mut App) {
+        let tela = if app.modo() == Mode::Zen { tela() } else { tela_classico() };
+        tocar_em(app, &tela, tela.botao_som);
+        assert!(app.folha_aberta(), "o toque no ♪ devia abrir a folha");
+    }
+
+    /// O x que fica a `fracao` (0 a 1) da largura da barra.
+    fn x_da_barra(barra: Rect, fracao: f32) -> f32 {
+        barra.x + fracao * barra.w
+    }
+
+    /// O `som.json` gravado, já lido.
+    fn som_json(pasta: &Pasta) -> serde_json::Value {
+        serde_json::from_str(&ler(pasta, "som.json")).expect("som.json é um JSON válido")
+    }
+
+    fn sem_efeitos() -> Preferencias {
+        let mut preferencias = Preferencias::default();
+        preferencias.volumes.efeitos = 0;
+        preferencias
+    }
+
+    #[test]
+    fn tocar_no_botao_som_abre_e_fecha() {
+        let mut app = App::com_sementes(7, 9);
+        let tela = tela();
+        assert!(!app.folha_aberta());
+        tocar_em(&mut app, &tela, tela.botao_som);
+        assert!(app.folha_aberta());
+        tocar_em(&mut app, &tela, tela.botao_som);
+        assert!(!app.folha_aberta());
+        // Pelo botão Fechar da folha.
+        tocar_em(&mut app, &tela, tela.botao_som);
+        assert!(app.folha_aberta());
+        tocar_em(&mut app, &tela, tela.som.fechar);
+        assert!(!app.folha_aberta());
+        // Pelo `Botao`, e também no Clássico.
+        app.apertar(Botao::Som);
+        assert!(app.folha_aberta());
+        app.apertar(Botao::FecharSom);
+        assert!(!app.folha_aberta());
+        app.apertar(Botao::Classico);
+        abrir_folha(&mut app);
+        let classico = tela_classico();
+        tocar_em(&mut app, &classico, classico.som.fechar);
+        assert!(!app.folha_aberta());
+        // Os botões da folha não fazem nada com a folha fechada.
+        app.apertar(Botao::FecharSom);
+        app.apertar(Botao::SonsDoJogo);
+        assert_eq!(app.preferencias(), Preferencias::default());
+    }
+
+    #[test]
+    fn folha_aberta_bloqueia_tabuleiro_abas_e_botoes() {
+        let mut app = App::com_sementes(7, 9);
+        let tela = tela();
+        abrir_folha(&mut app);
+        let (a, b) = boa_jogada(&mut app);
+        arrastar(&mut app, a, b);
+        assert!(!app.ocupado(), "o tabuleiro não reage com a folha aberta");
+        assert_eq!(app.jogo().score, 0);
+        tocar_casa(&mut app, a);
+        assert_eq!(app.gestos().selecionada(), None);
+        tocar_em(&mut app, &tela, tela.aba_classico);
+        assert_eq!(app.modo(), Mode::Zen, "as abas não reagem");
+        tocar_em(&mut app, &tela, tela.botao_dica);
+        assert_eq!(app.dica(), None);
+        tocar_em(&mut app, &tela, tela.botao_novo_jogo);
+        assert!(!app.painel().dialogo, "o Novo jogo não abre");
+        if let Some(embaralhar) = tela.botao_embaralhar {
+            tocar_em(&mut app, &tela, embaralhar);
+        }
+        assert!(!app.ocupado());
+        // Pelo `Botao`, nada além da folha vale.
+        for botao in [Botao::Classico, Botao::Dica, Botao::Embaralhar, Botao::NovoJogo, Botao::JogarNovamente] {
+            app.apertar(botao);
+        }
+        assert_eq!((app.modo(), app.dica(), app.ocupado(), app.painel().dialogo), (Mode::Zen, None, false, false));
+        // Fechada a folha, tudo volta a funcionar.
+        app.apertar(Botao::FecharSom);
+        arrastar(&mut app, a, b);
+        assert!(app.ocupado());
+    }
+
+    #[test]
+    fn arrastar_a_barra_muda_o_valor_de_5_em_5_e_grava_uma_vez() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        let tela = tela();
+        abrir_folha(&mut app);
+        let barra = tela.som.barra_efeitos;
+        let y = meio(barra).1;
+        app.tocar(Evento::Baixo { x: x_da_barra(barra, 0.5), y }, &tela);
+        assert_eq!(app.preferencias().volumes.efeitos, 50, "o toque já escolhe o valor");
+        assert!(!pasta.0.join("som.json").exists(), "nada é gravado antes de soltar o dedo");
+        // Arrastando por toda a barra, o valor anda de 5 em 5 e acompanha o dedo.
+        for passo in 0..=40 {
+            let fracao = passo as f32 / 40.0;
+            app.tocar(Evento::Mover { x: x_da_barra(barra, fracao), y }, &tela);
+            let valor = app.preferencias().volumes.efeitos;
+            assert_eq!(valor % 5, 0, "valor {valor} não é de 5 em 5");
+            assert!((f32::from(valor) - fracao * 100.0).abs() <= 2.6, "valor {valor} longe do dedo ({fracao})");
+        }
+        app.tocar(Evento::Mover { x: x_da_barra(barra, 0.77), y }, &tela);
+        assert_eq!(app.preferencias().volumes.efeitos, 75);
+        assert!(!pasta.0.join("som.json").exists(), "nada é gravado durante o arrasto");
+        app.tocar(Evento::Cima { x: x_da_barra(barra, 0.77), y }, &tela);
+        assert_eq!(som_json(&pasta)["audio"]["effects"], 75);
+        // Gravou uma vez: soltar de novo (ou cancelar) sem arrasto não grava mais nada.
+        fs::remove_file(pasta.0.join("som.json")).unwrap();
+        app.tocar(Evento::Cima { x: 0.0, y: 0.0 }, &tela);
+        app.tocar(Evento::Cancelar, &tela);
+        assert!(!pasta.0.join("som.json").exists());
+        // Os outros dois volumes seguem iguais.
+        assert_eq!((app.preferencias().volumes.musica, app.preferencias().volumes.ambiente), (70, 65));
+    }
+
+    #[test]
+    fn cada_barra_muda_o_seu_canal() {
+        let mut app = App::com_sementes(7, 9);
+        let tela = tela();
+        abrir_folha(&mut app);
+        for (barra, canal) in [
+            (tela.som.barra_efeitos, Canal::Efeitos),
+            (tela.som.barra_musica, Canal::Musica),
+            (tela.som.barra_ambiente, Canal::Ambiente),
+        ] {
+            let (x, y) = (x_da_barra(barra, 0.25), meio(barra).1);
+            app.tocar(Evento::Baixo { x, y }, &tela);
+            app.tocar(Evento::Cima { x, y }, &tela);
+            assert_eq!(app.preferencias().volumes.de(canal), 25, "{canal:?}");
+        }
+        assert_eq!(app.preferencias().volumes, Volumes { efeitos: 25, musica: 25, ambiente: 25 });
+    }
+
+    #[test]
+    fn arrasto_que_sai_da_barra_prende_em_0_e_100() {
+        let mut app = App::com_sementes(7, 9);
+        let tela = tela();
+        abrir_folha(&mut app);
+        let barra = tela.som.barra_musica;
+        let y = meio(barra).1;
+        app.tocar(Evento::Baixo { x: x_da_barra(barra, 0.5), y }, &tela);
+        app.tocar(Evento::Mover { x: barra.x - 500.0, y }, &tela);
+        assert_eq!(app.preferencias().volumes.musica, 0);
+        app.tocar(Evento::Mover { x: barra.x + barra.w + 500.0, y }, &tela);
+        assert_eq!(app.preferencias().volumes.musica, 100);
+        // O dedo pode sair da barra para cima ou para baixo: só o x conta.
+        app.tocar(Evento::Mover { x: x_da_barra(barra, 0.3), y: y + 400.0 }, &tela);
+        assert_eq!(app.preferencias().volumes.musica, 30);
+        // Posição inválida é ignorada.
+        app.tocar(Evento::Mover { x: f32::NAN, y }, &tela);
+        assert_eq!(app.preferencias().volumes.musica, 30);
+        app.tocar(Evento::Cima { x: barra.x - 9999.0, y }, &tela);
+        assert_eq!(app.preferencias().volumes.musica, 0, "soltar longe prende em 0");
+        // Os outros dois canais não mexeram.
+        assert_eq!((app.preferencias().volumes.efeitos, app.preferencias().volumes.ambiente), (80, 65));
+    }
+
+    #[test]
+    fn cancelar_no_meio_do_arrasto_deixa_o_ultimo_valor_e_grava() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        let tela = tela();
+        abrir_folha(&mut app);
+        let barra = tela.som.barra_ambiente;
+        let y = meio(barra).1;
+        app.tocar(Evento::Baixo { x: x_da_barra(barra, 0.5), y }, &tela);
+        app.tocar(Evento::Mover { x: x_da_barra(barra, 0.8), y }, &tela);
+        assert!(!pasta.0.join("som.json").exists());
+        app.tocar(Evento::Cancelar, &tela);
+        assert_eq!(app.preferencias().volumes.ambiente, 80);
+        assert_eq!(som_json(&pasta)["audio"]["ambience"], 80);
+        // O arrasto acabou: mover o dedo agora não muda mais nada.
+        app.tocar(Evento::Mover { x: x_da_barra(barra, 0.1), y }, &tela);
+        assert_eq!(app.preferencias().volumes.ambiente, 80);
+    }
+
+    #[test]
+    fn fechar_a_folha_no_meio_do_arrasto_grava() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        let tela = tela();
+        abrir_folha(&mut app);
+        let barra = tela.som.barra_efeitos;
+        let y = meio(barra).1;
+        app.tocar(Evento::Baixo { x: x_da_barra(barra, 0.6), y }, &tela);
+        app.apertar(Botao::FecharSom);
+        assert!(!app.folha_aberta());
+        assert_eq!(som_json(&pasta)["audio"]["effects"], 60);
+        app.tocar(Evento::Mover { x: x_da_barra(barra, 0.1), y }, &tela);
+        assert_eq!(app.preferencias().volumes.efeitos, 60, "sem folha, não há arrasto");
+    }
+
+    #[test]
+    fn sons_do_jogo_com_efeitos_zero_restaura_80_em_vez_de_desligar() {
+        let mut app = App::com_sementes(7, 9).com_preferencias(sem_efeitos());
+        let tela = tela();
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        assert!(app.preferencias().sons_do_jogo, "continua ligado");
+        assert_eq!(app.preferencias().volumes.efeitos, 80);
+        // Com volume normal, o botão liga e desliga.
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        assert!(!app.preferencias().sons_do_jogo);
+        assert_eq!(app.preferencias().volumes.efeitos, 80);
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        assert!(app.preferencias().sons_do_jogo);
+        // Desligado e com efeitos em 0: só liga (o volume fica em 0).
+        let mut desligado = sem_efeitos();
+        desligado.sons_do_jogo = false;
+        let mut app = App::com_sementes(7, 9).com_preferencias(desligado);
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        assert!(app.preferencias().sons_do_jogo);
+        assert_eq!(app.preferencias().volumes.efeitos, 0);
+    }
+
+    #[test]
+    fn testar_com_efeitos_zero_avisa() {
+        let mut app = App::com_sementes(7, 9).com_preferencias(sem_efeitos());
+        let tela = tela();
+        abrir_folha(&mut app);
+        assert_eq!(app.painel().aviso, None);
+        tocar_em(&mut app, &tela, tela.som.testar);
+        assert_eq!(app.painel().aviso.as_deref(), Some("Aumente o volume dos efeitos"));
+        assert_eq!(app.sons(), vec![]);
+        // O aviso some sozinho, como os outros.
+        app.avancar(2000.0);
+        assert_eq!(app.painel().aviso, None);
+    }
+
+    #[test]
+    fn testar_toca_mesmo_com_sons_do_jogo_desligado() {
+        let desligado = Preferencias { sons_do_jogo: false, ..Preferencias::default() };
+        let mut app = App::com_sementes(7, 9).com_preferencias(desligado);
+        let tela = tela();
+        abrir_folha(&mut app);
+        app.registro();
+        tocar_em(&mut app, &tela, tela.som.testar);
+        assert_eq!(app.sons(), vec![efeito(Sinal::Combinacao, 0)]);
+        assert_eq!(linhas_de_efeito(&app.registro()), vec!["PRISMA_M3 efeito sinal=combinacao elevacao=0".to_string()]);
+        assert_eq!(app.painel().aviso, None);
+        // Com os sons ligados também toca, e cada toque toca uma vez.
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        assert!(app.preferencias().sons_do_jogo);
+        tocar_em(&mut app, &tela, tela.som.testar);
+        tocar_em(&mut app, &tela, tela.som.testar);
+        assert_eq!(app.sons().len(), 2);
+    }
+
+    #[test]
+    fn liga_e_escolhe_da_musica_e_do_ambiente_gravam() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        let tela = tela();
+        abrir_folha(&mut app);
+        let (liga_musica, escolhe_musica) = (tela.som.liga_musica.unwrap(), tela.som.escolhe_musica.unwrap());
+        let (liga_ambiente, escolhe_ambiente) = (tela.som.liga_ambiente.unwrap(), tela.som.escolhe_ambiente.unwrap());
+
+        tocar_em(&mut app, &tela, liga_musica);
+        assert!(app.preferencias().musica_ligada);
+        assert_eq!(som_json(&pasta)["zen"]["music"], true);
+        tocar_em(&mut app, &tela, escolhe_musica);
+        assert_eq!(app.preferencias().musica, Musica::SpaceCity);
+        assert_eq!(som_json(&pasta)["zen"]["musicTrack"], "spaceCity");
+        tocar_em(&mut app, &tela, escolhe_musica);
+        assert_eq!(app.preferencias().musica, Musica::MagicPuzzle, "depois da última, volta à primeira");
+        tocar_em(&mut app, &tela, liga_musica);
+        assert!(!app.preferencias().musica_ligada);
+        assert_eq!(som_json(&pasta)["zen"]["music"], false);
+
+        tocar_em(&mut app, &tela, liga_ambiente);
+        assert!(app.preferencias().ambiente_ligado);
+        assert_eq!(som_json(&pasta)["zen"]["ambience"], true);
+        tocar_em(&mut app, &tela, escolhe_ambiente);
+        assert_eq!(app.preferencias().ambiente, Ambiente::Floresta);
+        assert_eq!(som_json(&pasta)["zen"]["ambienceSound"], "forest");
+        for _ in 0..5 {
+            tocar_em(&mut app, &tela, escolhe_ambiente);
+        }
+        assert_eq!(app.preferencias().ambiente, Ambiente::Chuva, "seis toques dão a volta completa");
+        // Escolher a faixa não liga nem desliga nada.
+        assert!(app.preferencias().ambiente_ligado && !app.preferencias().musica_ligada);
+    }
+
+    #[test]
+    fn no_classico_os_controles_do_zen_nao_reagem() {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Classico);
+        abrir_folha(&mut app);
+        let zen_so = [Botao::LigaMusica, Botao::EscolheMusica, Botao::LigaAmbiente, Botao::EscolheAmbiente, Botao::Respiracao];
+        for botao in zen_so {
+            app.apertar(botao);
+        }
+        assert_eq!(app.preferencias(), Preferencias::default());
+        // E em lugar nenhum da folha do Clássico há um desses botões para tocar.
+        let classico = tela_classico();
+        let folha = classico.som.folha;
+        for linha in 0..40 {
+            for coluna in 0..40 {
+                let (x, y) = (folha.x + folha.w * (coluna as f32 + 0.5) / 40.0, folha.y + folha.h * (linha as f32 + 0.5) / 40.0);
+                let achado = app.botao_em(&classico, x, y);
+                assert!(!achado.is_some_and(|botao| zen_so.contains(&botao)), "{achado:?} em ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn reabrir_mantem_as_preferencias() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        let tela = tela();
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        let barra = tela.som.barra_musica;
+        app.tocar(Evento::Baixo { x: x_da_barra(barra, 0.35), y: meio(barra).1 }, &tela);
+        app.tocar(Evento::Cima { x: x_da_barra(barra, 0.35), y: meio(barra).1 }, &tela);
+        tocar_em(&mut app, &tela, tela.som.liga_musica.unwrap());
+        tocar_em(&mut app, &tela, tela.som.escolhe_musica.unwrap());
+        tocar_em(&mut app, &tela, tela.som.liga_ambiente.unwrap());
+        for _ in 0..3 {
+            tocar_em(&mut app, &tela, tela.som.escolhe_ambiente.unwrap());
+        }
+        tocar_em(&mut app, &tela, tela.som.respiracao.unwrap());
+        tocar_em(&mut app, &tela, tela.som.respiracao.unwrap());
+        let esperado = app.preferencias();
+        assert!(!esperado.sons_do_jogo);
+        assert_eq!(esperado.volumes.musica, 35);
+        assert_eq!((esperado.musica, esperado.ambiente, esperado.respiracao), (Musica::SpaceCity, Ambiente::Trovoada, Respiracao::Lenta));
+        drop(app);
+
+        let reaberto = abrir(&pasta);
+        assert_eq!(reaberto.preferencias(), esperado);
+        assert_eq!(reaberto.guia_respiracao().map(|estado| estado.fase), Some(Fase::Inspire), "a respiração volta ligada");
+    }
+
+    #[test]
+    fn falha_ao_gravar_preferencias_vai_para_o_registro_uma_vez_e_o_jogo_segue() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        app.registro();
+        // O temporário do som.json vira uma pasta: gravar as preferências falha.
+        fs::create_dir_all(pasta.0.join("som.json.tmp")).unwrap();
+        let tela = tela();
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.liga_musica.unwrap());
+        tocar_em(&mut app, &tela, tela.som.liga_ambiente.unwrap());
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        let registro = app.registro();
+        assert_eq!(linhas_m2(&registro, "erro_ao_gravar").len(), 1, "o erro é avisado uma vez só: {registro:?}");
+        // A escolha vale mesmo sem gravar, e o jogo continua jogável.
+        assert!(app.preferencias().musica_ligada && app.preferencias().ambiente_ligado && !app.preferencias().sons_do_jogo);
+        app.apertar(Botao::FecharSom);
+        jogar_inteira(&mut app);
+        assert!(app.jogo().score > 0);
+    }
+
+    #[test]
+    fn arquivo_de_preferencias_estragado_abre_com_padroes_e_o_jogo_funciona() {
+        for conteudo in ["lixo", "", "[]", "{\"audio\":"] {
+            let pasta = pasta_de_teste();
+            fs::create_dir_all(&pasta.0).unwrap();
+            fs::write(pasta.0.join("som.json"), conteudo).unwrap();
+            let mut app = abrir(&pasta);
+            assert_eq!(app.preferencias(), Preferencias::default(), "{conteudo:?}");
+            assert_eq!(ler(&pasta, "som.json.corrupt"), conteudo, "a cópia do arquivo ruim");
+            jogar_inteira(&mut app);
+            assert!(app.jogo().score > 0, "o jogo funciona");
+            abrir_folha(&mut app);
+            let tela = tela();
+            tocar_em(&mut app, &tela, tela.som.liga_musica.unwrap());
+            assert!(app.preferencias().musica_ligada);
+            assert_eq!(som_json(&pasta)["zen"]["music"], true, "e a próxima gravação conserta o arquivo");
+        }
+    }
+
+    #[test]
+    fn abrir_a_folha_no_meio_da_animacao_nao_muda_o_resultado() {
+        let mut sem_folha = App::com_sementes(9, 9);
+        let mut com_folha = App::com_sementes(9, 9);
+        let (a, b) = boa_jogada(&mut sem_folha);
+        arrastar(&mut sem_folha, a, b);
+        arrastar(&mut com_folha, a, b);
+        sem_folha.avancar(100.0);
+        com_folha.avancar(100.0);
+        abrir_folha(&mut com_folha);
+        assert!(com_folha.ocupado(), "a animação continua por baixo da folha");
+        for _ in 0..10_000 {
+            if !sem_folha.ocupado() && !com_folha.ocupado() {
+                break;
+            }
+            sem_folha.avancar(16.0);
+            com_folha.avancar(16.0);
+            assert_eq!(sem_folha.ocupado(), com_folha.ocupado(), "a folha não muda a duração");
+            assert_eq!(sem_folha.painel().pontos, com_folha.painel().pontos);
+        }
+        assert!(com_folha.folha_aberta() && !com_folha.ocupado());
+        assert_eq!(sem_folha.jogo().score, com_folha.jogo().score);
+        assert_eq!(sem_folha.jogo().board, com_folha.jogo().board);
+        // Os sons continuam: os mesmos efeitos, na mesma ordem.
+        assert_eq!(sem_folha.sons(), com_folha.sons());
+    }
+
+    #[test]
+    fn abrir_a_folha_com_fim_de_partida_ou_dialogo_aberto_nao_quebra() {
+        let tela = tela();
+        // Partida acabada: a folha abre, os controles funcionam e o cartão de fim continua lá.
+        let mut app = App::com_sementes(7, 9);
+        app.jogo_mut().ended = true;
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.sons_do_jogo);
+        tocar_em(&mut app, &tela, tela.som.testar);
+        tocar_em(&mut app, &tela, tela.botao_jogar_novamente);
+        assert!(!app.painel().dialogo, "o cartão de fim fica coberto pela folha");
+        app.apertar(Botao::FecharSom);
+        assert!(app.painel().fim.is_some());
+
+        // Com a pergunta "Começar novo jogo?" aberta, o ♪ não abre a folha.
+        let mut outro = App::com_sementes(7, 9);
+        outro.apertar(Botao::NovoJogo);
+        assert!(outro.painel().dialogo);
+        outro.apertar(Botao::Som);
+        tocar_em(&mut outro, &tela, tela.botao_som);
+        assert!(!outro.folha_aberta());
+        assert!(outro.painel().dialogo);
+        outro.apertar(Botao::Cancelar);
+        // E com a folha aberta, o Novo jogo não abre a pergunta.
+        abrir_folha(&mut outro);
+        outro.apertar(Botao::NovoJogo);
+        assert!(!outro.painel().dialogo);
+    }
+
+    #[test]
+    fn respiracao_anda_so_no_zen_e_recomeca_ao_voltar_ao_zen() {
+        let preferencias = Preferencias { respiracao: Respiracao::Equilibrada, ..Preferencias::default() };
+        let mut app = App::com_sementes(7, 9).com_preferencias(preferencias);
+        let ponto = |app: &App| app.guia_respiracao().map(|estado| (estado.fase, estado.restante_s));
+        assert_eq!(ponto(&app), Some((Fase::Inspire, 4)));
+        app.avancar(1500.0);
+        assert_eq!(ponto(&app), Some((Fase::Inspire, 3)));
+        app.avancar(2600.0);
+        assert_eq!(ponto(&app), Some((Fase::Expire, 4)), "4,1 s depois: acabou de começar a expirar");
+
+        app.apertar(Botao::Classico);
+        assert_eq!(app.guia_respiracao(), None, "no Clássico não há guia");
+        app.avancar(3000.0);
+        app.apertar(Botao::Zen);
+        let estado = app.guia_respiracao().expect("de volta ao Zen o guia existe");
+        assert_eq!((estado.fase, estado.restante_s, estado.progresso), (Fase::Inspire, 4, 0.0), "recomeça do Inspire");
+
+        // Desligada, não há guia no Zen.
+        let desligada = App::com_sementes(7, 9);
+        assert_eq!(desligada.guia_respiracao(), None);
+    }
+
+    #[test]
+    fn respiracao_recomeca_ao_mudar_a_opcao_e_no_novo_jogo() {
+        let preferencias = Preferencias { respiracao: Respiracao::Equilibrada, ..Preferencias::default() };
+        let mut app = App::com_sementes(7, 9).com_preferencias(preferencias);
+        let tela = tela();
+        let ponto = |app: &App| app.guia_respiracao().map(|estado| (estado.fase, estado.restante_s));
+        app.avancar(2500.0);
+        assert_eq!(ponto(&app), Some((Fase::Inspire, 2)));
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.respiracao.unwrap());
+        assert_eq!(app.preferencias().respiracao, Respiracao::Lenta);
+        let estado = app.guia_respiracao().unwrap();
+        assert_eq!((estado.fase, estado.restante_s, estado.progresso), (Fase::Inspire, 4, 0.0), "mudar a opção recomeça");
+        app.apertar(Botao::FecharSom);
+        // 5 s no ritmo lento: 1 s dentro da expiração de 6 s.
+        app.avancar(5000.0);
+        assert_eq!(ponto(&app), Some((Fase::Expire, 5)));
+        // Novo jogo confirmado recomeça.
+        app.apertar(Botao::NovoJogo);
+        assert_eq!(ponto(&app), Some((Fase::Expire, 5)), "só a pergunta aberta ainda não recomeça");
+        app.apertar(Botao::Confirmar);
+        let estado = app.guia_respiracao().unwrap();
+        assert_eq!((estado.fase, estado.restante_s, estado.progresso), (Fase::Inspire, 4, 0.0));
+        // Cancelar a pergunta não recomeça.
+        app.avancar(1000.0);
+        app.apertar(Botao::NovoJogo);
+        app.apertar(Botao::Cancelar);
+        assert_eq!(ponto(&app), Some((Fase::Inspire, 3)));
+        // Passando para "Desligada" e voltando, o guia some e reaparece do começo.
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.respiracao.unwrap());
+        assert_eq!(app.preferencias().respiracao, Respiracao::Desligada);
+        assert_eq!(app.guia_respiracao(), None);
+        tocar_em(&mut app, &tela, tela.som.respiracao.unwrap());
+        assert_eq!(app.preferencias().respiracao, Respiracao::Equilibrada);
+        assert_eq!(app.guia_respiracao().unwrap().restante_s, 4);
+    }
+
+    #[test]
+    fn salto_de_tempo_na_respiracao_nao_da_panico() {
+        let preferencias = Preferencias { respiracao: Respiracao::Lenta, ..Preferencias::default() };
+        let mut app = App::com_sementes(7, 9).com_preferencias(preferencias);
+        for dt in [1e30, f32::MAX, f32::INFINITY, f32::NAN, -5.0, 0.0, 123_456_789.0, 1e30] {
+            app.avancar(dt);
+            let estado = app.guia_respiracao().expect("o guia continua existindo");
+            assert!((0.0..=1.0).contains(&estado.progresso), "dt {dt}: progresso {}", estado.progresso);
+            assert!((1..=6).contains(&estado.restante_s), "dt {dt}: restante {}", estado.restante_s);
+        }
+        // Depois de tudo isso o tempo ainda anda normalmente.
+        let antes = app.guia_respiracao().unwrap();
+        app.avancar(16.0);
+        let depois = app.guia_respiracao().unwrap();
+        assert!(depois.fase != antes.fase || depois.progresso != antes.progresso || depois.restante_s != antes.restante_s || antes.progresso == 0.0);
+    }
+
+    #[test]
+    fn erro_de_audio_aparece_e_some() {
+        let texto = "O áudio não começou. Toque novamente em Música ou Ambiente para tentar de novo.";
+        let mut app = App::com_sementes(7, 9);
+        assert_eq!(app.aviso_de_audio(), None);
+        app.erro_de_audio(Canal::Musica, Some("arquivo não encontrado".to_string()));
+        assert_eq!(app.aviso_de_audio(), Some(texto));
+        // Os dois canais falhando juntos: o aviso fica até os dois ficarem bem.
+        app.erro_de_audio(Canal::Ambiente, Some("sem placa de som".to_string()));
+        app.erro_de_audio(Canal::Musica, None);
+        assert_eq!(app.aviso_de_audio(), Some(texto));
+        app.erro_de_audio(Canal::Ambiente, None);
+        assert_eq!(app.aviso_de_audio(), None);
+        // Efeitos não têm aviso de áudio de fundo.
+        app.erro_de_audio(Canal::Efeitos, Some("x".to_string()));
+        assert_eq!(app.aviso_de_audio(), None);
+        // Tocar em Música (ou Ambiente) de novo limpa o aviso daquele canal: é a nova tentativa.
+        app.erro_de_audio(Canal::Musica, Some("falhou".to_string()));
+        app.erro_de_audio(Canal::Ambiente, Some("falhou".to_string()));
+        let tela = tela();
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.liga_musica.unwrap());
+        assert_eq!(app.aviso_de_audio(), Some(texto), "o Ambiente ainda falhou");
+        tocar_em(&mut app, &tela, tela.som.liga_ambiente.unwrap());
+        assert_eq!(app.aviso_de_audio(), None);
     }
 }

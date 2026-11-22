@@ -187,8 +187,6 @@ impl Salvador {
     /// As preferências de som. Sem arquivo (ou sem pasta): os padrões e `Origem::Novo`. Arquivo
     /// que não serve (vazio, lixo, cortado, grande demais): os padrões, uma cópia `som.json.corrupt`
     /// e `Origem::Estragado`. Campos ruins dentro de um objeto não estragam o arquivo: viram padrão.
-    // TEMPORÁRIO: o `allow` sai na Task 5, quando o `App` passa a ler as preferências.
-    #[allow(dead_code)]
     pub fn carregar_preferencias(&self) -> (Preferencias, Origem) {
         let motivo = match self.ler_texto(ARQUIVO_PREFERENCIAS) {
             Ok(None) => return (Preferencias::default(), Origem::Novo),
@@ -201,8 +199,6 @@ impl Salvador {
         (Preferencias::default(), Origem::Estragado(motivo))
     }
 
-    // TEMPORÁRIO: o `allow` sai na Task 5, quando o `App` passa a gravar as preferências.
-    #[allow(dead_code)]
     pub fn gravar_preferencias(&self, preferencias: &Preferencias) -> Result<(), String> {
         let Some(pasta) = &self.pasta else { return Ok(()) };
         gravar_com_seguranca(pasta, ARQUIVO_PREFERENCIAS, &preferencias_para_json(preferencias))
