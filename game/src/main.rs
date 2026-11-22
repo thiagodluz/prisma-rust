@@ -6,27 +6,25 @@ mod app;
 mod assets;
 mod cenas;
 mod contador;
-// Ainda sem uso até o `main` chamar `App::abrir` (Task 5); o `allow` sai na Task 5.
-#[allow(dead_code)]
 mod formato;
 mod input;
 mod layout;
 mod linha;
 mod plataforma;
 mod render;
-// Ainda sem uso até o `main` chamar `App::abrir` (Task 5); o `allow` sai na Task 5.
-#[allow(dead_code)]
 mod salvar;
 mod tom;
 
 use crate::app::App;
 use crate::input::Evento;
+use crate::salvar::Salvador;
 use macroquad::audio::{load_sound_from_bytes, play_sound_once, Sound};
 // Atenção: o `info!` do miniquad não aceita `{nome}` dentro do texto; os valores vão como
 // argumentos (`info!("x={}", x)`), senão a chave aparece escrita no registro.
 use macroquad::logging::info;
 use macroquad::prelude::*;
 use prisma_engine::{lcg_random, Game, Mode, Tile, TileKind};
+use std::path::PathBuf;
 
 /// Configuração da janela. No Android o sistema escolhe o tamanho; no PC usamos 540×960,
 /// uma tela de celular em pé.
@@ -98,6 +96,37 @@ fn cena_pedida(args: &[String]) -> Option<String> {
     args.get(posicao + 1).cloned()
 }
 
+/// Lê `--dados pasta` nos argumentos: no PC, usa essa pasta de dados em vez da padrão (para
+/// testar sem mexer nos dados de verdade). Sem valor (ou com outro argumento no lugar dele),
+/// o pedido é ignorado.
+fn dados_pedidos(args: &[String]) -> Option<String> {
+    let posicao = args.iter().position(|argumento| argumento == "--dados")?;
+    args.get(posicao + 1).filter(|valor| !valor.is_empty() && !valor.starts_with("--")).cloned()
+}
+
+/// O jogo lê e grava arquivos? Sim no jogo de verdade; não numa cena (momento fixo); e a foto
+/// só abre a pasta de dados se `--dados` pediu uma (assim a foto não depende dos dados de quem a
+/// tira nem mexe neles).
+fn usa_arquivos(cena: &Option<String>, foto: &Option<String>, dados: &Option<String>) -> bool {
+    cena.is_none() && (foto.is_none() || dados.is_some())
+}
+
+/// Abre o jogo com os arquivos da pasta pedida (ou da pasta de dados do app). Se a pasta não
+/// puder ser achada, o jogo abre assim mesmo, só que sem salvar.
+fn abrir_com_arquivos(dados: Option<String>) -> App {
+    let pasta = match dados {
+        Some(pasta) => Ok(PathBuf::from(pasta)),
+        None => plataforma::pasta_de_dados(),
+    };
+    match pasta {
+        Ok(pasta) => App::abrir(Salvador::em(pasta)),
+        Err(erro) => {
+            info!("PRISMA_M2 sem_pasta: {}", erro);
+            App::abrir(Salvador::nenhum())
+        }
+    }
+}
+
 /// No modo "foto": no segundo quadro (o primeiro "aquece" a tela) grava a imagem da tela
 /// num PNG e fecha o programa.
 fn foto_do_quadro(foto: &Option<String>, quadro: u32) {
@@ -125,7 +154,7 @@ async fn main() {
     match tela_pedida(&argumentos) {
         Tela::Vitrine => rodar_vitrine(foto).await,
         Tela::Diagnostico => rodar_diagnostico(foto).await,
-        Tela::Jogo => rodar_jogo(foto, cena_pedida(&argumentos)).await,
+        Tela::Jogo => rodar_jogo(foto, cena_pedida(&argumentos), dados_pedidos(&argumentos)).await,
     }
 }
 
@@ -188,12 +217,16 @@ fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32) -> Vec<String> {
 /// O jogo: lê o dedo (ou o mouse), anda com a animação, desenha e escreve no registro do
 /// Android as linhas `PRISMA_M1 ...` que o teste do celular virtual lê.
 /// Com `cena`, mostra um momento fixo do jogo (para foto) em vez de uma partida nova.
-async fn rodar_jogo(foto: Option<String>, cena: Option<String>) {
+/// Fora isso o jogo abre com o que está gravado na pasta de dados (ou na de `--dados`); a foto
+/// sem `--dados` não lê nem grava nada (ver `usa_arquivos`).
+async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<String>) {
+    let com_arquivos = usa_arquivos(&cena, &foto, &dados);
     let mut app = match cena {
         Some(nome) => cenas::cena(&nome).unwrap_or_else(|| {
             eprintln!("cena desconhecida: {nome}");
             std::process::exit(2);
         }),
+        None if com_arquivos => abrir_com_arquivos(dados),
         None => App::novo(),
     };
     let sprites = render::Sprites::load();
@@ -391,6 +424,35 @@ mod tests {
         assert_eq!(cena_pedida(&args(&["x", "--cena", "queda", "y"])), Some("queda".to_string()));
         assert_eq!(cena_pedida(&args(&["--cena"])), None);
         assert_eq!(cena_pedida(&args(&[])), None);
+    }
+
+    #[test]
+    fn dados_pedidos_le_o_argumento_dados() {
+        assert_eq!(dados_pedidos(&args(&["--dados", "/tmp/x"])), Some("/tmp/x".to_string()));
+        assert_eq!(dados_pedidos(&args(&["a", "--dados", "pasta", "--screenshot", "f.png"])), Some("pasta".to_string()));
+        assert_eq!(dados_pedidos(&args(&["--dados"])), None, "sem valor");
+        assert_eq!(dados_pedidos(&args(&[])), None);
+        assert_eq!(dados_pedidos(&args(&["--screenshot", "f.png"])), None);
+        // Outro argumento no lugar do valor não vira o nome de uma pasta.
+        assert_eq!(dados_pedidos(&args(&["--dados", "--screenshot", "f.png"])), None);
+        assert_eq!(dados_pedidos(&args(&["--dados", ""])), None, "texto vazio não é pasta");
+    }
+
+    #[test]
+    fn so_o_jogo_de_verdade_ou_a_foto_com_dados_usam_arquivos() {
+        let algo = || Some("x".to_string());
+        // Jogo de verdade (sem foto, sem cena): usa a pasta de dados, a padrão ou a pedida.
+        assert!(usa_arquivos(&None, &None, &None));
+        assert!(usa_arquivos(&None, &None, &algo()));
+        // Foto sem `--dados`: nunca lê nem grava (a foto não depende dos dados de quem tira).
+        assert!(!usa_arquivos(&None, &algo(), &None));
+        // Foto com `--dados`: abre essa pasta (para fotografar um save restaurado).
+        assert!(usa_arquivos(&None, &algo(), &algo()));
+        // Cena: sempre a cena fixa, com ou sem foto, com ou sem `--dados`.
+        assert!(!usa_arquivos(&algo(), &None, &None));
+        assert!(!usa_arquivos(&algo(), &None, &algo()));
+        assert!(!usa_arquivos(&algo(), &algo(), &None));
+        assert!(!usa_arquivos(&algo(), &algo(), &algo()));
     }
 
     #[test]
