@@ -100,6 +100,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # O teste do celular virtual é um programa em Rust (pasta tools/, fora do workspace do jogo).
+      # Compila só a parte do emulador (--no-default-features), que não tem nenhuma dependência.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compilar o teste do celular virtual
+        run: cargo build --release --manifest-path tools/Cargo.toml --no-default-features
+
       - name: Baixar o APK gerado
         uses: actions/download-artifact@v4
         with:
@@ -113,7 +119,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Para reduzir a foto da tela antes de imprimi-la no registro (tools/teste-emulador.sh).
+      # Para reduzir a foto da tela antes de imprimi-la no registro (prisma_tools emulador).
       - name: Instalar o ImageMagick
         run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
 
@@ -124,7 +130,7 @@ jobs:
           arch: ${{ matrix.arch }}
           target: google_apis
           disable-animations: true
-          script: bash tools/teste-emulador.sh apk resultado
+          script: tools/target/release/prisma_tools emulador apk resultado
 
       - name: Guardar o registro e a foto da tela
         if: always()

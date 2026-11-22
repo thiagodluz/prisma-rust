@@ -10,3 +10,6 @@ license = "GPL-3.0-only"
 # A raiz continua sendo o motor (`prisma_engine`); `game/` é o jogo com tela (`prisma_game`).
 [workspace]
 members = ["game"]
+# `tools/` é um pacote à parte (tem o próprio [workspace] e Cargo.lock): o gerador de APK
+# carrega um Cargo antigo e não pode enxergar as dependências das ferramentas.
+exclude = ["tools"]

@@ -17,7 +17,7 @@ As imagens desta pasta são **adaptações** das imagens do Prisma em JS
 - redimensionada e centralizada numa tela transparente de 160×160 pixels;
 - convertida de WebP para PNG.
 
-Nada de cor, forma ou desenho foi alterado. O script que faz isso é `tools/prepare_assets.py`.
+Nada de cor, forma ou desenho foi alterado. O programa que faz isso é o `prisma_tools imagens` (pasta `tools/`, escrito em Rust).
 
 ## O que a licença não cobre
 

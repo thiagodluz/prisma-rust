@@ -1,0 +1,20 @@
+[package]
+name = "prisma_tools"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Ferramentas do Prisma: teste do celular virtual e gerador de imagens"
+
+# "Features" são peças opcionais do programa. A `imagens` liga a biblioteca `image`
+# (só o gerador de imagens usa). O CI do celular virtual compila sem ela
+# (`--no-default-features`), então não baixa nem compila nada além da biblioteca padrão.
+[features]
+default = ["imagens"]
+imagens = ["dep:image"]
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "webp"], optional = true }
+
+# Esta tabela vazia faz de `tools/` um workspace só dele: o gerador de APK do jogo
+# (cargo-quad-apk, que carrega um Cargo antigo) nunca enxerga estas dependências.
+[workspace]
