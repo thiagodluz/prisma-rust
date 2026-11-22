@@ -5,7 +5,13 @@
 //!      animação terminar e confere que a jogada valeu e os pontos subiram;
 //!   3. Clássico: troca de aba e faz 5 jogadas tocando numa pedra e depois na vizinha;
 //!   4. Novo jogo (com a confirmação) no Clássico zera os pontos;
-//!   5. volta ao Zen e confere que os pontos do Zen continuam lá.
+//!   5. volta ao Zen e confere que os pontos do Zen continuam lá;
+//!   6. FECHA o app de verdade e abre de novo: volta no Zen, com a partida de cada modo e os recordes;
+//!   7. Clássico em separado: joga uma vez, espera o app avisar que gravou, fecha e abre de novo:
+//!      agora volta no Clássico (o modo ativo foi guardado), com a jogada, e o Zen continua intacto;
+//!   8. instala o mesmo APK por cima (`adb install -r`, como numa atualização) e confere que a
+//!      partida, o modo e os recordes continuam lá;
+//!   9. confere que os recordes nunca diminuíram.
 //!
 //! Guarda o registro de erros (logcat) e uma foto da tela de cada etapa numa pasta. Foi escrito
 //! primeiro em shell (o antigo `tools/teste-emulador.sh`, que ficou no histórico do git); aqui faz
@@ -14,10 +20,11 @@
 //!
 //! O app escreve no registro do Android linhas que começam com `PRISMA_M1` (veja `App::registro`
 //! em `game/src/app.rs`): a posição do tabuleiro e dos botões, cada toque que recebe e o que
-//! acontece no jogo. O módulo `registro` lê essas linhas.
+//! acontece no jogo; e, desde o M2, linhas `PRISMA_M2`: o que ele leu ao abrir (`aberto`) e o que
+//! gravou (`gravado`, `erro_ao_gravar`). O módulo `registro` lê essas linhas.
 
 use crate::base64;
-use crate::registro::{centro_da_casa, deslocamento, Registro};
+use crate::registro::{centro_da_casa, deslocamento, Aberto, Origem, Registro};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -177,8 +184,9 @@ fn achar_apk(pasta: &Path) -> Result<PathBuf, String> {
 
 /// As linhas do registro que mais ajudam a achar um erro (sem ligar para maiúsculas), no máximo 200.
 pub fn resumo(logcat: &str) -> String {
-    const PADROES: [&str; 12] = [
+    const PADROES: [&str; 13] = [
         "prisma_m1",
+        "prisma_m2",
         "fatal",
         "androidruntime",
         "panicked",
@@ -259,6 +267,38 @@ struct Teste<'a> {
     /// A diferença entre a tela e a janela do app (achada na calibração).
     deslocamento: (i32, i32),
     pontos_zen: u64,
+    /// Os pontos do Clássico no fim das 5 jogadas (antes do Novo jogo): o recorde tem de cobri-los.
+    pontos_classico: u64,
+    /// O que o app disse ao abrir pela primeira vez depois da partida, e da última vez: os
+    /// recordes da última não podem ser menores que os da primeira.
+    primeira_abertura: Option<Aberto>,
+    ultima_abertura: Option<Aberto>,
+    /// Quantas vezes o registro foi guardado antes de ser apagado por uma reabertura.
+    sessoes: usize,
+}
+
+/// Confere a linha `aberto` de uma reabertura: o modo em que o jogador deixou o app e, de cada
+/// modo, a partida que voltou DO ARQUIVO com os pontos de antes. Junta tudo o que está errado numa
+/// mensagem só (com a linha do app), para um erro mostrar o quadro inteiro.
+fn conferir_aberto(quando: &str, aberto: &Aberto, modo: &str, zen: u64, classico: u64) -> Result<(), String> {
+    let mut problemas = Vec::new();
+    if aberto.modo != modo {
+        problemas.push(format!("o app devia voltar no modo {modo}, mas abriu no modo {}", aberto.modo));
+    }
+    for (nome, chave, esperados, visto) in [("Zen", "zen", zen, aberto.zen), ("Clássico", "classico", classico, aberto.classico)] {
+        if visto != (Origem::Arquivo, esperados) {
+            problemas.push(format!(
+                "o {nome} devia voltar do arquivo com {esperados} pontos ('{chave}=arquivo:{esperados}'), mas o app escreveu '{chave}={}:{}'",
+                visto.0.nome(),
+                visto.1
+            ));
+        }
+    }
+    if problemas.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{quando}: {}. A linha do app: {aberto}", problemas.join("; ")))
+    }
 }
 
 impl Teste<'_> {
@@ -494,22 +534,29 @@ impl Teste<'_> {
         self.ler_tabuleiro()?; // o tabuleiro muda de lugar quando some o botão Embaralhar
         let mut pontos = 0;
         for rodada in 1..=5 {
-            let (a, b) = self.pedir_dica()?;
-            println!("Rodada {rodada} (Clássico): a dica pede trocar a casa {a} com a {b}");
-            let animacoes = self.registro.contar_animacoes();
-            let (primeiro, segundo) = (self.centro_da_casa(a), self.centro_da_casa(b));
-            println!("Tocando em ({},{}) e depois em ({},{})", primeiro.0, primeiro.1, segundo.0, segundo.1);
-            self.tocar_na_tela(primeiro.0, primeiro.1)?;
-            self.celular.dormir(500);
-            self.tocar_na_tela(segundo.0, segundo.1)?;
-            self.esperar_animacao(animacoes)?;
-            self.continua_aberto(&format!("durante a jogada {rodada} do Clássico"))?;
-            pontos = self.conferir_jogada("Clássico", rodada, pontos)?;
+            pontos = self.jogada_tocando(rodada, pontos)?;
             self.celular.dormir(1000);
         }
         println!("OK: 5 jogadas no Clássico, pontos em {pontos}.");
+        self.pontos_classico = pontos;
         self.foto("5-classico");
         Ok(())
+    }
+
+    /// Uma jogada no Clássico: toca em "Dica", numa pedra da dica e depois na outra. Devolve os
+    /// pontos novos (que têm de ser mais que `anteriores`).
+    fn jogada_tocando(&mut self, rodada: usize, anteriores: u64) -> Result<u64, String> {
+        let (a, b) = self.pedir_dica()?;
+        println!("Rodada {rodada} (Clássico): a dica pede trocar a casa {a} com a {b}");
+        let animacoes = self.registro.contar_animacoes();
+        let (primeiro, segundo) = (self.centro_da_casa(a), self.centro_da_casa(b));
+        println!("Tocando em ({},{}) e depois em ({},{})", primeiro.0, primeiro.1, segundo.0, segundo.1);
+        self.tocar_na_tela(primeiro.0, primeiro.1)?;
+        self.celular.dormir(500);
+        self.tocar_na_tela(segundo.0, segundo.1)?;
+        self.esperar_animacao(animacoes)?;
+        self.continua_aberto(&format!("durante a jogada {rodada} do Clássico"))?;
+        self.conferir_jogada("Clássico", rodada, anteriores)
     }
 
     /// 4. Novo jogo no Clássico (com a confirmação).
@@ -542,6 +589,129 @@ impl Teste<'_> {
         self.foto("7-zen-de-volta");
         Ok(())
     }
+
+    /// Falha se o app avisou no registro que não conseguiu gravar (o motivo vem no texto dele).
+    fn sem_erro_ao_gravar(&self) -> Result<(), String> {
+        match self.registro.primeiro_erro_ao_gravar() {
+            Some(texto) => Err(format!("o app não conseguiu gravar: {texto}")),
+            None => Ok(()),
+        }
+    }
+
+    /// Espera (até 5 s) o app avisar que gravou a partida desse modo com esses pontos. Só depois
+    /// disso é seguro fechar o app: o jogador fecha de verdade, e o que não foi gravado se perde.
+    fn esperar_gravado(&mut self, modo: &str, pontos: u64) -> Result<(), String> {
+        for _ in 0..10 {
+            self.ler_registro()?;
+            self.sem_erro_ao_gravar()?;
+            if self.registro.tem_gravado(modo, pontos) {
+                println!("PRISMA_M2 gravado modo={modo} pontos={pontos}");
+                return Ok(());
+            }
+            self.celular.dormir(500);
+        }
+        Err(format!("o app não escreveu 'PRISMA_M2 gravado modo={modo} pontos={pontos}' em 5 s: a partida não foi gravada"))
+    }
+
+    /// Fecha o app de verdade (como o jogador, que o tira dos apps recentes), apaga o registro e
+    /// abre de novo. Devolve a linha `aberto`: o que o app leu do armazenamento.
+    fn reabrir(&mut self) -> Result<Aberto, String> {
+        // O registro da sessão que está acabando: guardado à parte, porque o `logcat -c` o apaga.
+        self.ler_registro()?;
+        self.sem_erro_ao_gravar()?;
+        let arquivo = self.saida.join(format!("logcat-sessao-{}.txt", self.sessoes));
+        if let Err(e) = fs::write(&arquivo, &self.logcat) {
+            println!("AVISO: não consegui guardar {}: {e}", arquivo.display());
+        }
+        self.sessoes += 1;
+        println!("Fechando o app de verdade (force-stop) e abrindo de novo...");
+        self.celular.adb(&["shell", "am", "force-stop", self.pacote])?;
+        self.celular.dormir(1000);
+        self.celular.adb(&["logcat", "-c"])?;
+        let resposta =
+            self.celular.adb(&["shell", "monkey", "-p", self.pacote, "-c", "android.intent.category.LAUNCHER", "1"])?;
+        println!("{}{}", resposta.texto_lossy().trim_end(), resposta.erro.trim_end());
+        self.celular.dormir(10_000);
+        self.ler_registro()?;
+        self.continua_aberto("depois de reabrir")?;
+        let aberto = self.registro.ultimo_aberto().ok_or_else(|| {
+            "faltou a linha 'PRISMA_M2 aberto' depois de reabrir o app (ele foi fechado e aberto de verdade?)".to_string()
+        })?;
+        println!("{aberto}");
+        // O tabuleiro e os botões mudam de lugar conforme o modo em que o app abriu.
+        self.ler_tabuleiro()?;
+        self.calibrar_toque()?;
+        Ok(aberto)
+    }
+
+    /// Fase 6: fecha e reabre o app. Ele volta no Zen, com a partida do Zen, a do Clássico (zerada
+    /// pelo Novo jogo) e recordes que cobrem tudo o que foi jogado.
+    fn reabrir_no_zen(&mut self) -> Result<(), String> {
+        let aberto = self.reabrir()?;
+        conferir_aberto("ao reabrir o app", &aberto, "zen", self.pontos_zen, 0)?;
+        for (nome, melhor, jogou) in [("Zen", aberto.melhor_zen, self.pontos_zen), ("Clássico", aberto.melhor_classico, self.pontos_classico)] {
+            if melhor < jogou {
+                return Err(format!("o recorde do {nome} ({melhor}) está abaixo dos {jogou} pontos que o {nome} já fez: {aberto}"));
+            }
+        }
+        println!("OK: reabriu no Zen com {} pontos; o Clássico voltou zerado e os recordes cobrem o que foi jogado.", self.pontos_zen);
+        self.primeira_abertura = Some(aberto.clone());
+        self.ultima_abertura = Some(aberto);
+        self.foto("8-reaberto-zen");
+        Ok(())
+    }
+
+    /// Fase 7: o Clássico em separado. Uma jogada, espera gravar, fecha e reabre; o app tem de voltar
+    /// NO CLÁSSICO (o modo ativo foi guardado), com a jogada, e o Zen intacto. Devolve os pontos do Clássico.
+    fn classico_em_separado(&mut self) -> Result<u64, String> {
+        self.tocar_botao("classico")?;
+        match self.registro.ultimo_modo() {
+            Some((modo, 0)) if modo == "classico" => {}
+            outra => {
+                let linha = outra.map(|(modo, p)| format!("PRISMA_M1 modo={modo} pontos={p}")).unwrap_or_default();
+                return Err(format!("ao tocar na aba Clássico depois de reabrir, a partida devia estar zerada (do Novo jogo): '{linha}'"));
+            }
+        }
+        self.ler_tabuleiro()?; // o tabuleiro muda de lugar quando some o botão Embaralhar
+        let pontos = self.jogada_tocando(1, 0)?;
+        self.esperar_gravado("classico", pontos)?;
+        println!("OK: uma jogada no Clássico ({pontos} pontos), gravada. Agora fecha e abre de novo.");
+        let aberto = self.reabrir()?;
+        conferir_aberto("ao reabrir o app", &aberto, "classico", self.pontos_zen, pontos)?;
+        println!("OK: reabriu no Clássico com {pontos} pontos e o Zen continua com {}.", self.pontos_zen);
+        self.ultima_abertura = Some(aberto);
+        Ok(pontos)
+    }
+
+    /// Fase 8: instala o mesmo APK por cima, como numa atualização (`adb install -r` guarda os
+    /// dados). O modo, as duas partidas e os recordes têm de continuar lá.
+    fn atualizar_por_cima(&mut self, apk: &Path, pontos_classico: u64) -> Result<(), String> {
+        println!("Instalando o APK por cima (adb install -r): os dados do jogo têm de ficar.");
+        self.instalar(apk)?;
+        let aberto = self.reabrir()?;
+        conferir_aberto("depois de atualizar por cima", &aberto, "classico", self.pontos_zen, pontos_classico)?;
+        println!("OK: depois de atualizar por cima o app abriu no Clássico com {pontos_classico} pontos e o Zen com {}.", self.pontos_zen);
+        self.ultima_abertura = Some(aberto);
+        self.foto("9-atualizado");
+        Ok(())
+    }
+
+    /// Fase 9: os recordes de depois de tudo não podem ser menores que os da primeira reabertura.
+    fn conferir_recordes(&self) -> Result<(), String> {
+        let (Some(primeira), Some(ultima)) = (&self.primeira_abertura, &self.ultima_abertura) else {
+            return Err("o teste não guardou as aberturas para comparar os recordes".to_string());
+        };
+        for (nome, antes, agora) in [
+            ("Zen", primeira.melhor_zen, ultima.melhor_zen),
+            ("Clássico", primeira.melhor_classico, ultima.melhor_classico),
+        ] {
+            if agora < antes {
+                return Err(format!("o recorde do {nome} diminuiu: era {antes} e agora é {agora}"));
+            }
+        }
+        println!("OK: os recordes não diminuíram (Zen {}, Clássico {}).", ultima.melhor_zen, ultima.melhor_classico);
+        Ok(())
+    }
 }
 
 fn executar(celular: &mut dyn Celular, pacote: &str, pasta_apk: &Path, saida: &Path) -> Result<(), String> {
@@ -558,6 +728,10 @@ fn executar(celular: &mut dyn Celular, pacote: &str, pasta_apk: &Path, saida: &P
         tabuleiro: (0, 0, 0),
         deslocamento: (0, 0),
         pontos_zen: 0,
+        pontos_classico: 0,
+        primeira_abertura: None,
+        ultima_abertura: None,
+        sessoes: 0,
     };
     teste.mostrar_versao()?;
     teste.instalar(&apk)?;
@@ -566,8 +740,12 @@ fn executar(celular: &mut dyn Celular, pacote: &str, pasta_apk: &Path, saida: &P
     teste.classico()?;
     teste.novo_jogo()?;
     teste.volta_ao_zen()?;
+    teste.reabrir_no_zen()?;
+    let pontos_classico = teste.classico_em_separado()?;
+    teste.atualizar_por_cima(&apk, pontos_classico)?;
+    teste.conferir_recordes()?;
     println!("{}", resumo(&teste.logcat));
-    println!("OK: o jogo rodou no celular virtual (Zen e Clássico, toque e arrasto).");
+    println!("OK: o jogo rodou no celular virtual (Zen e Clássico, toque e arrasto; fechar, reabrir e atualizar por cima guardam a partida e os recordes).");
     Ok(())
 }
 
@@ -628,10 +806,21 @@ mod tests {
         Classico,
     }
 
+    impl ModoFalso {
+        fn nome(self) -> &'static str {
+            match self {
+                ModoFalso::Zen => "zen",
+                ModoFalso::Classico => "classico",
+            }
+        }
+    }
+
     /// Um celular de mentira. Obedece aos mesmos comandos do `adb` que o teste usa, guarda um
     /// "registro" (logcat) e roda um mini-jogo: toques e arrastos chegam em coordenadas da TELA,
     /// o jogo falso desconta o deslocamento da janela (como o Android de verdade) e só reage se o
     /// teste acertou a casa ou o botão. O tempo é um relógio de mentira: `dormir` só soma.
+    /// Ele também guarda dados "no armazenamento" (modo ativo, partida e recorde de cada modo), que
+    /// sobrevivem a fechar o app e a instalar por cima, e escreve as linhas `PRISMA_M2` como o app.
     struct CelularFalso {
         // ---- o que o teste liga para provocar cada falha ----
         deslocamento: (i32, i32),
@@ -652,6 +841,14 @@ mod tests {
         classico_comeca_com_pontos: bool,
         novo_jogo_nao_zera: bool,
         zen_perde_os_pontos: bool,
+        reabrir_perde_os_pontos_do_zen: bool,
+        modo_ativo_nao_e_guardado: bool,
+        nunca_grava: bool,
+        erro_ao_gravar: bool,
+        atualizar_apaga_os_dados: bool,
+        recorde_diminui: bool,
+        recorde_perdido_ao_reabrir: Option<usize>, // 0 = Zen, 1 = Clássico
+        force_stop_nao_funciona: bool,
         // ---- o que ele guarda ----
         relogio_ms: u64,
         logcat: String,
@@ -659,6 +856,13 @@ mod tests {
         aberto: bool,
         modo: ModoFalso,
         pontos: [u64; 2], // [Zen, Clássico]
+        melhor: [u64; 2],
+        // ---- o "armazenamento": sobrevive a fechar o app e a instalar por cima ----
+        salvo: [bool; 2], // já existe arquivo da partida de [Zen, Clássico]?
+        modo_salvo: ModoFalso,
+        instalacoes: usize,
+        aberturas: usize,
+        force_stops: usize,
         selecionada: Option<usize>,
         confirmando: bool,
         dica: Option<(usize, usize)>,
@@ -668,6 +872,7 @@ mod tests {
         arrastos: usize,
         fotos_reduzidas: usize,
         relogio_no_ultimo_arrasto: u64,
+        relogio_na_ultima_jogada: u64,
     }
 
     impl CelularFalso {
@@ -692,12 +897,26 @@ mod tests {
                 classico_comeca_com_pontos: false,
                 novo_jogo_nao_zera: false,
                 zen_perde_os_pontos: false,
+                reabrir_perde_os_pontos_do_zen: false,
+                modo_ativo_nao_e_guardado: false,
+                nunca_grava: false,
+                erro_ao_gravar: false,
+                atualizar_apaga_os_dados: false,
+                recorde_diminui: false,
+                recorde_perdido_ao_reabrir: None,
+                force_stop_nao_funciona: false,
                 relogio_ms: 0,
                 logcat: String::new(),
                 instalado: false,
                 aberto: false,
                 modo: ModoFalso::Zen,
                 pontos: [0, 0],
+                melhor: [0, 0],
+                salvo: [false, false],
+                modo_salvo: ModoFalso::Zen,
+                instalacoes: 0,
+                aberturas: 0,
+                force_stops: 0,
                 selecionada: None,
                 confirmando: false,
                 dica: None,
@@ -707,6 +926,7 @@ mod tests {
                 arrastos: 0,
                 fotos_reduzidas: 0,
                 relogio_no_ultimo_arrasto: 0,
+                relogio_na_ultima_jogada: 0,
             }
         }
 
@@ -731,6 +951,55 @@ mod tests {
                 ModoFalso::Zen => 0,
                 ModoFalso::Classico => 1,
             }
+        }
+
+        /// O app grava a partida do modo atual e o modo ativo (como o `gravar_tudo` do app) e avisa no
+        /// registro; ou avisa do erro, ou não diz nada, conforme o que o teste ligou.
+        fn gravar(&mut self) {
+            let i = self.indice();
+            self.salvo[i] = true;
+            self.modo_salvo = self.modo;
+            if self.nunca_grava {
+                return;
+            }
+            if self.erro_ao_gravar {
+                self.escrever("PRISMA_M2 erro_ao_gravar não consegui gravar zen.json: Permission denied (os error 13)");
+                return;
+            }
+            let linha = format!("PRISMA_M2 gravado modo={} pontos={}", self.modo.nome(), self.pontos[i]);
+            self.escrever(&linha);
+        }
+
+        /// O app abre (do zero ou de novo): lê o que está guardado e escreve `pronto` e `aberto`.
+        fn abrir_app(&mut self) {
+            if self.aberturas > 1 && self.reabrir_perde_os_pontos_do_zen {
+                self.pontos[0] = 0; // o arquivo existe, mas a partida que o app leu estava zerada
+            }
+            if let Some(modo) = self.recorde_perdido_ao_reabrir.filter(|_| self.aberturas > 1) {
+                self.melhor[modo] = 0;
+            }
+            self.modo = if self.modo_ativo_nao_e_guardado { ModoFalso::Zen } else { self.modo_salvo };
+            self.selecionada = None;
+            self.confirmando = false;
+            self.dica = None;
+            self.aberto = true;
+            self.escrever_geometria();
+            if !self.sem_pronto {
+                let linha = format!("PRISMA_M1 pronto modo={}", self.modo.nome());
+                self.escrever(&linha);
+            }
+            let origem = |salvo: bool| if salvo { "arquivo" } else { "novo" };
+            let linha = format!(
+                "PRISMA_M2 aberto modo={} zen={}:{} classico={}:{} melhor_zen={} melhor_classico={}",
+                self.modo.nome(),
+                origem(self.salvo[0]),
+                self.pontos[0],
+                origem(self.salvo[1]),
+                self.pontos[1],
+                self.melhor[0],
+                self.melhor[1],
+            );
+            self.escrever(&linha);
         }
 
         /// O tabuleiro muda de lugar no Clássico (some o botão Embaralhar): quem não ler de novo erra a casa.
@@ -797,7 +1066,12 @@ mod tests {
                 self.pontos[indice] += 75;
             }
             let pontos = self.pontos[indice];
+            self.relogio_na_ultima_jogada = self.relogio_ms;
+            self.melhor[indice] = self.melhor[indice].max(pontos);
             self.escrever(&format!("PRISMA_M1 jogada valida={valida} pontos={pontos} nivel=1"));
+            if valida {
+                self.gravar(); // o app grava logo depois da jogada, antes de a animação acabar
+            }
             if !self.animacao_nunca_termina {
                 self.escrever("PRISMA_M1 animacao_terminou");
             }
@@ -824,6 +1098,7 @@ mod tests {
                         self.pontos[1] = if self.novo_jogo_nao_zera { 7 } else { 0 };
                         let pontos = self.pontos[1];
                         self.escrever(&format!("PRISMA_M1 novo_jogo modo=classico pontos={pontos}"));
+                        self.gravar();
                     }
                     Some("cancelar") => self.confirmando = false,
                     _ => {}
@@ -841,6 +1116,7 @@ mod tests {
                         self.escrever_geometria();
                         let pontos = self.pontos[0];
                         self.escrever(&format!("PRISMA_M1 modo=zen pontos={pontos}"));
+                        self.gravar();
                     }
                     "classico" if self.modo != ModoFalso::Classico => {
                         self.modo = ModoFalso::Classico;
@@ -851,6 +1127,7 @@ mod tests {
                         self.escrever_geometria();
                         let pontos = self.pontos[1];
                         self.escrever(&format!("PRISMA_M1 modo=classico pontos={pontos}"));
+                        self.gravar();
                     }
                     "dica" if !self.sem_dica => {
                         let a = (self.dicas_dadas % 7) * 9;
@@ -918,6 +1195,18 @@ mod tests {
                         });
                     }
                     self.instalado = true;
+                    self.instalacoes += 1;
+                    // Instalar por cima fecha o app que estava rodando, mas guarda os dados.
+                    self.aberto = false;
+                    if self.instalacoes >= 2 && self.atualizar_apaga_os_dados {
+                        self.pontos = [0, 0];
+                        self.melhor = [0, 0];
+                        self.salvo = [false, false];
+                        self.modo_salvo = ModoFalso::Zen;
+                    }
+                    if self.instalacoes >= 2 && self.recorde_diminui {
+                        self.melhor[0] /= 2;
+                    }
                     resposta_ok("Performing Streamed Install\nSuccess\n")
                 }
                 ["logcat", "-c"] => {
@@ -926,16 +1215,20 @@ mod tests {
                 }
                 ["logcat", "-d"] => Ok(Resposta { sucesso: true, texto: self.logcat.clone().into_bytes(), erro: String::new() }),
                 ["shell", "monkey", "-p", pacote, "-c", "android.intent.category.LAUNCHER", "1"] => {
-                    if *pacote == PACOTE && self.instalado {
-                        self.aberto = !self.app_fechado;
-                        if self.aberto {
-                            self.escrever_geometria();
-                            if !self.sem_pronto {
-                                self.escrever("PRISMA_M1 pronto modo=zen");
-                            }
-                        }
+                    // Se o app já está rodando o Android só o traz para a frente: não abre de novo e
+                    // não escreve nada. Quem quer reabrir de verdade precisa fechá-lo antes.
+                    if *pacote == PACOTE && self.instalado && !self.aberto && !self.app_fechado {
+                        self.aberturas += 1;
+                        self.abrir_app();
                     }
                     resposta_ok("Events injected: 1\n")
+                }
+                ["shell", "am", "force-stop", pacote] => {
+                    self.force_stops += 1;
+                    if *pacote == PACOTE && !self.force_stop_nao_funciona {
+                        self.aberto = false;
+                    }
+                    resposta_ok("")
                 }
                 ["shell", "pidof", pacote] => {
                     if *pacote == PACOTE && self.aberto {
@@ -1000,9 +1293,16 @@ mod tests {
         assert_eq!(celular.arrastos, 5, "5 jogadas arrastando no Zen");
         // 1 calibração + 5 dicas do Zen + 1 aba + 15 no Clássico (dica e dois toques, 5 vezes)
         // + Novo jogo + Confirmar + voltar ao Zen
-        assert_eq!(celular.toques, 25);
-        assert_eq!(celular.pontos, [375, 0], "Zen guardou os pontos; o Novo jogo zerou o Clássico");
-        assert_eq!(celular.fotos_reduzidas, 7);
+        // + 1 calibração depois de reabrir no Zen
+        // + 1 aba Clássico + 3 (dica e dois toques) da jogada do Clássico + 1 calibração depois de reabrir
+        // + 1 calibração depois de atualizar por cima
+        assert_eq!(celular.toques, 32);
+        assert_eq!(celular.pontos, [375, 75], "Zen guardou os pontos; o Novo jogo zerou o Clássico, que jogou de novo");
+        assert_eq!(celular.melhor, [375, 375], "os recordes nunca diminuem");
+        assert_eq!(celular.instalacoes, 2, "instalou e depois atualizou por cima");
+        assert_eq!(celular.aberturas, 4, "a abertura do começo e 3 reaberturas");
+        assert_eq!(celular.force_stops, 3, "cada reabertura fecha o app de verdade antes");
+        assert_eq!(celular.fotos_reduzidas, 9);
         for nome in [
             "1-zen-inicio",
             "2-zen-dica",
@@ -1011,6 +1311,8 @@ mod tests {
             "5-classico",
             "6-classico-confirmando",
             "7-zen-de-volta",
+            "8-reaberto-zen",
+            "9-atualizado",
         ] {
             assert!(pasta.0.join(format!("resultado/tela-{nome}.png")).exists(), "faltou a foto {nome}");
             assert!(pasta.0.join(format!("resultado/pequena-{nome}.png")).exists(), "faltou a foto pequena {nome}");
@@ -1018,6 +1320,124 @@ mod tests {
         assert!(pasta.0.join("resultado/logcat.txt").exists());
         assert!(pasta.0.join("resultado/instalacao.txt").exists());
         assert!(!pasta.0.join("resultado/tela-do-erro.png").exists());
+        // Cada reabertura apaga o registro do celular: o de cada sessão fica guardado à parte.
+        let primeira = fs::read_to_string(pasta.0.join("resultado/logcat-sessao-0.txt")).unwrap();
+        assert!(primeira.contains("PRISMA_M1 pronto modo=zen") && primeira.contains("PRISMA_M1 jogada"), "{primeira}");
+        let segunda = fs::read_to_string(pasta.0.join("resultado/logcat-sessao-1.txt")).unwrap();
+        assert!(segunda.contains("PRISMA_M2 aberto modo=zen zen=arquivo:375 classico=arquivo:0"), "{segunda}");
+        assert!(segunda.contains("PRISMA_M2 gravado modo=classico pontos=75"), "{segunda}");
+        let terceira = fs::read_to_string(pasta.0.join("resultado/logcat-sessao-2.txt")).unwrap();
+        assert!(terceira.contains("PRISMA_M2 aberto modo=classico zen=arquivo:375 classico=arquivo:75"), "{terceira}");
+        assert!(!pasta.0.join("resultado/logcat-sessao-3.txt").exists(), "a última sessão fica no logcat.txt");
+        let ultima = fs::read_to_string(pasta.0.join("resultado/logcat.txt")).unwrap();
+        assert!(ultima.contains("PRISMA_M2 aberto modo=classico zen=arquivo:375 classico=arquivo:75"), "{ultima}");
+    }
+
+    #[test]
+    fn o_teste_fecha_o_app_de_verdade_antes_de_reabrir() {
+        // Com o app ainda rodando o `monkey` só o traz para a frente e não escreve nada: sem o
+        // `force-stop` a reabertura não teria a linha `aberto`.
+        let mut celular = CelularFalso::novo();
+        celular.force_stop_nao_funciona = true;
+        let erro = erro_de(&mut celular, "force_stop_nao_funciona");
+        assert!(erro.contains("faltou a linha 'PRISMA_M2 aberto' depois de reabrir"), "{erro}");
+    }
+
+    #[test]
+    fn falha_quando_a_reabertura_perde_os_pontos_do_zen() {
+        let mut celular = CelularFalso::novo();
+        celular.reabrir_perde_os_pontos_do_zen = true;
+        let (resultado, pasta) = rodar_com(&mut celular, "reabrir_perde_os_pontos");
+        let erro = resultado.expect_err("o teste devia ter falhado");
+        assert!(erro.contains("ao reabrir o app"), "{erro}");
+        assert!(erro.contains("o Zen devia voltar do arquivo com 375 pontos ('zen=arquivo:375'), mas o app escreveu 'zen=arquivo:0'"), "{erro}");
+        assert!(erro.contains("PRISMA_M2 aberto modo=zen zen=arquivo:0 classico=arquivo:0"), "a linha do app aparece: {erro}");
+        // O registro e a foto da tela do erro ainda saem.
+        let registro = fs::read_to_string(pasta.0.join("resultado/logcat.txt")).unwrap();
+        assert!(registro.contains("PRISMA_M2 aberto modo=zen zen=arquivo:0"), "{registro}");
+        assert!(pasta.0.join("resultado/tela-do-erro.png").exists());
+        assert!(pasta.0.join("resultado/pequena-do-erro.png").exists());
+        assert_eq!(celular.fotos_reduzidas, 7 + 1, "as 7 do fluxo e a do erro (a 8-reaberto-zen não sai)");
+    }
+
+    #[test]
+    fn falha_quando_o_modo_ativo_nao_volta_como_classico() {
+        let mut celular = CelularFalso::novo();
+        celular.modo_ativo_nao_e_guardado = true;
+        let (resultado, pasta) = rodar_com(&mut celular, "modo_ativo_perdido");
+        let erro = resultado.expect_err("o teste devia ter falhado");
+        assert!(erro.contains("ao reabrir o app"), "{erro}");
+        assert!(erro.contains("o app devia voltar no modo classico, mas abriu no modo zen"), "{erro}");
+        assert!(pasta.0.join("resultado/logcat.txt").exists());
+        assert!(pasta.0.join("resultado/tela-do-erro.png").exists());
+        assert_eq!(celular.aberturas, 3, "o Zen foi reaberto bem; o Clássico não");
+    }
+
+    #[test]
+    fn falha_quando_nao_chega_a_linha_gravado() {
+        let mut celular = CelularFalso::novo();
+        celular.nunca_grava = true;
+        let (resultado, pasta) = rodar_com(&mut celular, "nunca_grava");
+        let erro = resultado.expect_err("o teste devia ter falhado");
+        assert!(erro.contains("o app não escreveu 'PRISMA_M2 gravado modo=classico pontos=75' em 5 s"), "{erro}");
+        assert!(pasta.0.join("resultado/logcat.txt").exists());
+        assert!(pasta.0.join("resultado/tela-do-erro.png").exists());
+        assert_eq!(celular.force_stops, 1, "não fecha o app antes de ter a certeza de que gravou");
+        // Espera os 5 s inteiros (depois da animação, que leva meio segundo), e não para sempre.
+        let esperou = celular.relogio_ms - celular.relogio_na_ultima_jogada;
+        assert!((5_500..=7_000).contains(&esperou), "esperou {esperou} ms depois da jogada");
+    }
+
+    #[test]
+    fn falha_quando_o_app_nao_consegue_gravar() {
+        let mut celular = CelularFalso::novo();
+        celular.erro_ao_gravar = true;
+        let erro = erro_de(&mut celular, "erro_ao_gravar");
+        assert!(
+            erro.contains("o app não conseguiu gravar: não consegui gravar zen.json: Permission denied (os error 13)"),
+            "{erro}"
+        );
+    }
+
+    #[test]
+    fn falha_quando_atualizar_por_cima_apaga_os_dados() {
+        let mut celular = CelularFalso::novo();
+        celular.atualizar_apaga_os_dados = true;
+        let (resultado, pasta) = rodar_com(&mut celular, "atualizar_apaga");
+        let erro = resultado.expect_err("o teste devia ter falhado");
+        assert!(erro.contains("depois de atualizar por cima"), "{erro}");
+        assert!(erro.contains("o app devia voltar no modo classico, mas abriu no modo zen"), "{erro}");
+        assert!(erro.contains("o Zen devia voltar do arquivo com 375 pontos ('zen=arquivo:375'), mas o app escreveu 'zen=novo:0'"), "{erro}");
+        assert!(erro.contains("o Clássico devia voltar do arquivo com 75 pontos ('classico=arquivo:75'), mas o app escreveu 'classico=novo:0'"), "{erro}");
+        assert!(pasta.0.join("resultado/logcat.txt").exists());
+        assert!(pasta.0.join("resultado/tela-do-erro.png").exists());
+        assert_eq!(celular.instalacoes, 2);
+    }
+
+    #[test]
+    fn falha_quando_o_recorde_nao_cobre_o_que_foi_jogado() {
+        for (modo, nome) in [(0, "Zen"), (1, "Clássico")] {
+            let mut celular = CelularFalso::novo();
+            celular.recorde_perdido_ao_reabrir = Some(modo);
+            let erro = erro_de(&mut celular, &format!("recorde_perdido_{modo}"));
+            assert!(
+                erro.contains(&format!("o recorde do {nome} (0) está abaixo dos 375 pontos que o {nome} já fez")),
+                "{erro}"
+            );
+        }
+    }
+
+    #[test]
+    fn falha_quando_o_recorde_diminui() {
+        let mut celular = CelularFalso::novo();
+        celular.recorde_diminui = true;
+        let (resultado, pasta) = rodar_com(&mut celular, "recorde_diminui");
+        let erro = resultado.expect_err("o teste devia ter falhado");
+        assert!(erro.contains("o recorde do Zen diminuiu: era 375 e agora é 187"), "{erro}");
+        assert!(pasta.0.join("resultado/logcat.txt").exists());
+        assert!(pasta.0.join("resultado/tela-do-erro.png").exists());
+        // As outras conferências da atualização passaram: só o recorde reprovou.
+        assert!(!erro.contains("devia voltar"), "{erro}");
     }
 
     #[test]
@@ -1240,11 +1660,11 @@ mod tests {
 
     #[test]
     fn resumo_pega_as_linhas_que_ajudam_a_achar_erro_sem_ligar_para_maiuscula() {
-        let logcat = "I Outro: nada\nE AndroidRuntime: FATAL EXCEPTION\nI SAPP : PRISMA_M1 toque x=1 y=2\nthread panicked at x\nF libc: Fatal signal 11 (SIGSEGV)\nD  DEBUG  : backtrace\nI miniquad: algo\ndlopen failed\nI Banal: de novo nada\n";
+        let logcat = "I Outro: nada\nE AndroidRuntime: FATAL EXCEPTION\nI SAPP : PRISMA_M1 toque x=1 y=2\nI SAPP : PRISMA_M2 aberto modo=zen\nthread panicked at x\nF libc: Fatal signal 11 (SIGSEGV)\nD  DEBUG  : backtrace\nI miniquad: algo\ndlopen failed\nI Banal: de novo nada\n";
         let texto = resumo(logcat);
         assert!(texto.starts_with("===== logcat (resumo) =====\n"));
         assert!(texto.ends_with("\n===== fim do resumo ====="));
-        for deve in ["FATAL EXCEPTION", "PRISMA_M1 toque", "panicked", "SIGSEGV", "backtrace", "miniquad", "dlopen"] {
+        for deve in ["FATAL EXCEPTION", "PRISMA_M1 toque", "PRISMA_M2 aberto", "panicked", "SIGSEGV", "backtrace", "miniquad", "dlopen"] {
             assert!(texto.contains(deve), "o resumo devia ter '{deve}': {texto}");
         }
         assert!(!texto.contains("nada"), "linhas banais ficam de fora: {texto}");

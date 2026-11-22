@@ -13,6 +13,7 @@
 11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=cancelar x=99 y=346
 11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=confirmar x=221 y=346
 11-21 20:35:50.224  3597  3633 I SAPP    : PRISMA_M1 pronto modo=zen
+11-21 20:35:50.224  3597  3633 I SAPP    : PRISMA_M2 aberto modo=zen zen=novo:0 classico=novo:0 melhor_zen=0 melhor_classico=0
 11-21 20:36:09.448  4727  4727 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
 11-21 20:36:09.449  4727  4727 I AndroidRuntime: Using default boot image
 11-21 20:36:09.449  4727  4727 I AndroidRuntime: Leaving lock profiling enabled
@@ -34,6 +35,7 @@
 11-21 20:36:18.885  3597  3633 I SAPP    : PRISMA_M1 toque x=216 y=438
 11-21 20:36:19.086  5191  5191 D AndroidRuntime: Shutting down VM
 11-21 20:36:19.088  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=195 nivel=1
+11-21 20:36:19.088  3597  3633 I SAPP    : PRISMA_M2 gravado modo=zen pontos=195
 11-21 20:36:19.854  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
 11-21 20:36:22.904  5412  5412 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
 11-21 20:36:22.905  5412  5412 I AndroidRuntime: Using default boot image
@@ -197,4 +199,5 @@
 11-21 20:37:09.410  6422  6422 D AndroidRuntime: Shutting down VM
 11-21 20:37:09.419  3597  3633 I SAPP    : PRISMA_M1 toque x=216 y=250
 11-21 20:37:09.420  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=405 nivel=1
+11-21 20:37:10.186  3597  3633 I SAPP    : PRISMA_M2 erro_ao_gravar não consegui criar a pasta /data/data/x/files: Permission denied (os error 13)
 11-21 20:37:10.186  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
