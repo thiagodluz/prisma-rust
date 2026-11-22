@@ -8,8 +8,9 @@
 //!   5. volta ao Zen e confere que os pontos do Zen continuam lá.
 //!
 //! Guarda o registro de erros (logcat) e uma foto da tela de cada etapa numa pasta. Foi escrito
-//! primeiro em shell (`tools/teste-emulador.sh`); aqui faz a mesma coisa, mas o controle de fluxo
-//! (esperas, conferências, mensagens de erro) tem testes que rodam contra um celular falso.
+//! primeiro em shell (o antigo `tools/teste-emulador.sh`, que ficou no histórico do git); aqui faz
+//! a mesma coisa, mas o controle de fluxo (esperas, conferências, mensagens de erro) tem testes
+//! que rodam contra um celular falso.
 //!
 //! O app escreve no registro do Android linhas que começam com `PRISMA_M1` (veja `App::registro`
 //! em `game/src/app.rs`): a posição do tabuleiro e dos botões, cada toque que recebe e o que

@@ -69,11 +69,11 @@ Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
 1. abre o app, espera 15 segundos e confere que continua aberto e abriu direto no jogo
    (`PRISMA_M1 pronto modo=zen`) e **calibra o toque**: o app mede os toques a partir do canto
    da própria janela, mas o `adb input` usa coordenadas da tela, e no emulador a janela começa
-   abaixo da barra de status (uns 28 px). O script toca num ponto da margem de cima (que não
+   abaixo da barra de status (uns 24 a 28 px). O programa toca num ponto da margem de cima (que não
    faz nada no jogo), lê no registro onde o app viu esse toque (`PRISMA_M1 toque x=.. y=..`) e
    soma a diferença a todos os toques seguintes;
 2. **Zen:** 5 vezes, toca em "Dica", lê no registro quais são as duas pedras da dica, **arrasta
-   o dedo** de uma até a outra (`adb shell input swipe`), espera a animação terminar e confere
+   o dedo** de uma até a outra (`adb shell input draganddrop`), espera a animação terminar e confere
    que a jogada valeu (`jogada valida=true`) e que os pontos subiram;
 3. **Clássico:** toca na aba, confere que começou com 0 pontos e faz 5 jogadas tocando numa
    pedra e depois na vizinha (`adb shell input tap`);
@@ -82,12 +82,28 @@ Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
 
 O app escreve no registro do Android linhas que começam com `PRISMA_M1` (função `App::registro`
 em `game/src/app.rs` e `rodar_jogo` em `game/src/main.rs`): a posição do tabuleiro e dos botões,
-**em pixels reais da tela** (para o script saber onde tocar), e o que acontece no jogo
+**em pixels reais da tela** (para o teste saber onde tocar), e o que acontece no jogo
 (`toque x=.. y=..`, `dica a=.. b=..`, `jogada valida=.. pontos=.. nivel=..`,
-`animacao_terminou`, `modo=..`, `novo_jogo ..`, `fim ..`). O script lê essas linhas. Ele guarda o registro de erros
+`animacao_terminou`, `modo=..`, `novo_jogo ..`, `fim ..`). O teste lê essas linhas. Ele guarda o registro de erros
 (`logcat.txt`) e uma foto da tela de cada etapa como artefato `emulador-android-<versão>`, e
 imprime um resumo no próprio registro da execução (as fotos saem em texto, entre
-`TELA_BASE64_INICIO` e `TELA_BASE64_FIM`). Script: `tools/teste-emulador.sh`.
+`TELA_BASE64_INICIO` e `TELA_BASE64_FIM`).
+
+**Quem faz o teste:** o programa `prisma_tools` (Rust, pasta `tools/`, fora do workspace do jogo
+para o gerador de APK nunca ver as dependências dele). No fluxo ele é compilado só com a parte do
+emulador (`--no-default-features`, sem nenhuma dependência) e roda assim:
+`tools/target/release/prisma_tools emulador apk resultado`. Termina com código 1 se qualquer
+conferência falhar, e nesse caso ainda guarda o registro, imprime o resumo e a foto da tela.
+Os testes dele (45 hoje, com um "celular falso" que imita o `adb` e o jogo) rodam em qualquer
+computador, sem emulador: `cargo test --manifest-path tools/Cargo.toml`. O programa de
+`adb` pode ser trocado com a variável `ADB`, e cada chamada do `adb` tem limite de 60 s.
+
+**Por que `draganddrop` e não `swipe`:** o app lê a posição do dedo **uma vez por quadro**
+(`mouse_position()` em `rodar_jogo`), e os quadros do emulador do GitHub são lentos. Com `swipe`
+o dedo já andou quando o app "vê" o toque, e o arrasto pode começar na casa do lado (derrubou o
+Android 14 numa execução, `toque x=198` para um arrasto que saiu de `x=179`). O `draganddrop`
+segura o dedo parado uns 0,5 s no começo e só depois anda; assim o ponto de partida registrado é
+exatamente o pedido.
 
 O "teste de vida" do M0b (contador de aberturas, som, vibração) saiu do emulador; a tela dele
 continua no app e abre com `--tela diagnostico` no PC.
