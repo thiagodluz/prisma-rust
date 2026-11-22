@@ -2,7 +2,8 @@
 //!
 //! O jogo escreve no registro do Android linhas como `PRISMA_M1 jogada valida=true pontos=60 nivel=1`
 //! (o que o jogador vê e faz) e, desde o M2, linhas `PRISMA_M2 ...` (o que o app guardou e leu do
-//! armazenamento: `aberto`, `gravado`, `erro_ao_gravar`).
+//! armazenamento: `aberto`, `gravado`, `erro_ao_gravar`) e, desde o M3, linhas `PRISMA_M3 ...` (o som:
+//! `pronto`, `efeito`, `carregado`, `erro`).
 //! Este módulo transforma cada uma dessas linhas num valor de Rust (`Linha`), sem depender de
 //! `grep` nem de `sed`. É código puro (só texto entra e sai), por isso é fácil de testar.
 //!
@@ -61,7 +62,7 @@ impl std::fmt::Display for Aberto {
     }
 }
 
-/// Uma linha `PRISMA_M1 ...` ou `PRISMA_M2 ...` do registro, já lida.
+/// Uma linha `PRISMA_M1 ...`, `PRISMA_M2 ...` ou `PRISMA_M3 ...` do registro, já lida.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Linha {
     /// `PRISMA_M1 pronto modo=zen`: o jogo abriu.
@@ -90,16 +91,27 @@ pub enum Linha {
     Gravado { modo: String, pontos: u64 },
     /// `PRISMA_M2 erro_ao_gravar <texto>`: a gravação falhou (o jogo segue).
     ErroAoGravar { texto: String },
+    /// `PRISMA_M3 pronto efeitos=20 ms=75`: os efeitos sonoros ficaram prontos (quantos e em quanto tempo).
+    SomPronto { efeitos: u32, ms: u64 },
+    /// `PRISMA_M3 efeito sinal=cascata elevacao=1`: um efeito foi pedido ao áudio.
+    Efeito { sinal: String, elevacao: u8 },
+    /// `PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=482`: uma música (`tipo=musica`) ou um
+    /// ambiente (`tipo=ambiente`) terminou de carregar.
+    FaixaCarregada { tipo: String, nome: String, ms: u64 },
+    /// `PRISMA_M3 erro tipo=musica nome=cozy-puzzle texto=...`: um som falhou. O `texto` aqui é o RESTO
+    /// da linha depois de `erro` (o tipo, o nome e o motivo), para a mensagem dizer qual som falhou.
+    ErroDeSom { texto: String },
 }
 
 /// Os marcadores que o jogo põe no começo de cada linha dele. O logcat escreve hora, número do
 /// processo etc. ANTES deles, então o marcador pode aparecer no meio da linha.
 const MARCADOR_M1: &str = "PRISMA_M1 ";
 const MARCADOR_M2: &str = "PRISMA_M2 ";
+const MARCADOR_M3: &str = "PRISMA_M3 ";
 
 /// Qual marcador a linha tem (vale o que aparece primeiro) e o texto que vem depois dele.
 fn depois_do_marcador(texto: &str) -> Option<(&'static str, &str)> {
-    [MARCADOR_M1, MARCADOR_M2]
+    [MARCADOR_M1, MARCADOR_M2, MARCADOR_M3]
         .into_iter()
         .filter_map(|marcador| Some((texto.find(marcador)?, marcador)))
         .min_by_key(|(posicao, _)| *posicao)
@@ -137,6 +149,9 @@ pub fn ler_linha(texto: &str) -> Option<Linha> {
     let (marcador, depois) = depois_do_marcador(texto)?;
     if marcador == MARCADOR_M2 {
         return ler_linha_m2(depois);
+    }
+    if marcador == MARCADOR_M3 {
+        return ler_linha_m3(depois);
     }
     let palavras: Vec<&str> = depois.split_whitespace().collect();
     let primeira = *palavras.first()?;
@@ -208,7 +223,37 @@ fn ler_linha_m2(depois: &str) -> Option<Linha> {
     }
 }
 
-/// Todas as linhas `PRISMA_M1` e `PRISMA_M2` de um despejo do logcat, na ordem em que apareceram.
+/// Lê o que vem depois de `PRISMA_M3 `. `carregado` só vale para `tipo=musica` e `tipo=ambiente`.
+fn ler_linha_m3(depois: &str) -> Option<Linha> {
+    let palavras: Vec<&str> = depois.split_whitespace().collect();
+    match *palavras.first()? {
+        "pronto" => Some(Linha::SomPronto { efeitos: numero(&palavras, "efeitos")?, ms: numero(&palavras, "ms")? }),
+        "efeito" => Some(Linha::Efeito {
+            sinal: campo(&palavras, "sinal")?.to_string(),
+            elevacao: numero(&palavras, "elevacao")?,
+        }),
+        "carregado" => {
+            let tipo = campo(&palavras, "tipo")?;
+            if tipo != "musica" && tipo != "ambiente" {
+                return None;
+            }
+            Some(Linha::FaixaCarregada {
+                tipo: tipo.to_string(),
+                nome: campo(&palavras, "nome")?.to_string(),
+                ms: numero(&palavras, "ms")?,
+            })
+        }
+        // O resto da linha, com espaços e tudo.
+        "erro" => {
+            let texto = depois.trim().strip_prefix("erro")?.trim();
+            Some(Linha::ErroDeSom { texto: Some(texto).filter(|t| !t.is_empty())?.to_string() })
+        }
+        _ => None,
+    }
+}
+
+/// Todas as linhas `PRISMA_M1`, `PRISMA_M2` e `PRISMA_M3` de um despejo do logcat, na ordem em que
+/// apareceram.
 #[derive(Debug)]
 pub struct Registro {
     linhas: Vec<Linha>,
@@ -309,6 +354,35 @@ impl Registro {
         })
     }
 
+    /// O último `pronto` do som: `(efeitos, ms)`. Vale o último porque o app escreve um a cada abertura.
+    pub fn som_pronto(&self) -> Option<(u32, u64)> {
+        self.linhas.iter().rev().find_map(|l| match l {
+            Linha::SomPronto { efeitos, ms } => Some((*efeitos, *ms)),
+            _ => None,
+        })
+    }
+
+    /// Quantos efeitos sonoros o app pediu ao áudio (cada linha `efeito` conta uma vez).
+    pub fn efeitos_tocados(&self) -> usize {
+        self.linhas.iter().filter(|l| matches!(l, Linha::Efeito { .. })).count()
+    }
+
+    /// A última faixa carregada desse tipo (`musica` ou `ambiente`): `(nome, ms)`.
+    pub fn faixa_carregada(&self, tipo: &str) -> Option<(String, u64)> {
+        self.linhas.iter().rev().find_map(|l| match l {
+            Linha::FaixaCarregada { tipo: t, nome, ms } if t == tipo => Some((nome.clone(), *ms)),
+            _ => None,
+        })
+    }
+
+    /// O texto do primeiro `erro` de som (tipo, nome e motivo), se algum som falhou.
+    pub fn primeiro_erro_de_som(&self) -> Option<String> {
+        self.linhas.iter().find_map(|l| match l {
+            Linha::ErroDeSom { texto } => Some(texto.clone()),
+            _ => None,
+        })
+    }
+
     /// Existe a linha `novo_jogo` com esse modo e esses pontos?
     pub fn tem_novo_jogo(&self, modo: &str, pontos: u64) -> bool {
         self.linhas
@@ -344,7 +418,8 @@ mod tests {
     /// As linhas de logcat que o fluxo real do M1 imprimiu no GitHub (celular virtual, Android 11):
     /// 70 linhas do jogo (`PRISMA_M1 ...`) misturadas com 130 de outros programas. Para o M2 foram
     /// acrescentadas à mão 3 linhas `PRISMA_M2` (`aberto`, `gravado` e `erro_ao_gravar`), no formato
-    /// que o app escreve, nos lugares onde ele as escreveria.
+    /// que o app escreve, nos lugares onde ele as escreveria. Para o M3, mais 6 linhas `PRISMA_M3`
+    /// (`pronto`, 2 `efeito`, 2 `carregado` e 1 `erro`) e 4 linhas de botão (`som` e os da folha).
     const AMOSTRA: &str = include_str!("../tests/amostra-logcat.txt");
 
     fn tipo_de(linha: &Linha) -> &'static str {
@@ -362,6 +437,10 @@ mod tests {
             Linha::Aberto(_) => "aberto",
             Linha::Gravado { .. } => "gravado",
             Linha::ErroAoGravar { .. } => "erro_ao_gravar",
+            Linha::SomPronto { .. } => "som_pronto",
+            Linha::Efeito { .. } => "efeito",
+            Linha::FaixaCarregada { .. } => "faixa_carregada",
+            Linha::ErroDeSom { .. } => "erro_de_som",
         }
     }
 
@@ -376,11 +455,12 @@ mod tests {
     #[test]
     fn le_todas_as_linhas_da_amostra_real() {
         let r = Registro::de(AMOSTRA);
-        // Contagens conferidas à mão com `grep -c "PRISMA_M1 <tipo>"` no arquivo (70 do M1 + 3 do M2).
-        assert_eq!(r.linhas.len(), 73);
+        // Contagens conferidas à mão com `grep -c "PRISMA_M1 <tipo>"` no arquivo (70 do M1 + 3 do M2
+        // + 4 botões e 6 linhas do M3).
+        assert_eq!(r.linhas.len(), 83);
         assert_eq!(quantas(&r, "pronto"), 1);
         assert_eq!(quantas(&r, "tabuleiro"), 2);
-        assert_eq!(quantas(&r, "botao"), 15);
+        assert_eq!(quantas(&r, "botao"), 19);
         assert_eq!(quantas(&r, "toque"), 24);
         assert_eq!(quantas(&r, "dica"), 9);
         assert_eq!(quantas(&r, "jogada"), 9);
@@ -559,7 +639,7 @@ mod tests {
             "PRISMA_M2 inventada x=1",                                           // tipo que não existe
             "PRISMA_M2",                                                         // só o marcador
             "PRISMA_M2 ",                                                        // marcador e nada mais
-            "PRISMA_M3 gravado modo=zen pontos=5",                               // marcador que não existe
+            "PRISMA_M3 gravado modo=zen pontos=5",                               // tipo do M2 com o marcador do M3
             "PRISMAM2 gravado modo=zen pontos=5",                                // marcador errado
             "PRISMA_M1 gravado modo=zen pontos=5",                               // tipo do M2 com o marcador do M1
             "PRISMA_M2 toque x=1 y=2",                                           // tipo do M1 com o marcador do M2
@@ -573,6 +653,146 @@ mod tests {
         );
         assert!(r.tem_gravado("zen", 75));
         assert_eq!(r.ultimo_aberto(), None);
+    }
+
+    #[test]
+    fn le_as_linhas_prisma_m3_da_amostra() {
+        let r = Registro::de(AMOSTRA);
+        assert_eq!(quantas(&r, "som_pronto"), 1);
+        assert_eq!(quantas(&r, "efeito"), 2);
+        assert_eq!(quantas(&r, "faixa_carregada"), 2);
+        assert_eq!(quantas(&r, "erro_de_som"), 1);
+        assert_eq!(r.som_pronto(), Some((20, 75)));
+        assert_eq!(r.efeitos_tocados(), 2);
+        assert_eq!(r.faixa_carregada("musica"), Some(("cozy-puzzle".to_string(), 482)));
+        assert_eq!(r.faixa_carregada("ambiente"), Some(("rain-soft".to_string(), 63)));
+        assert_eq!(r.faixa_carregada("efeito"), None, "só existem faixas de música e de ambiente");
+        assert_eq!(
+            r.primeiro_erro_de_som().as_deref(),
+            Some("tipo=musica nome=magic-puzzle texto=arquivo não encontrado: musica/magic-puzzle.ogg")
+        );
+        // Os botões novos (♪ e os da folha) são lidos como os outros.
+        assert_eq!(r.ultimo_botao("som"), Some((300, 96)));
+        assert_eq!(r.ultimo_botao("fechar_som"), Some((482, 240)));
+        assert_eq!(r.ultimo_botao("liga_musica"), Some((110, 520)));
+        assert_eq!(r.ultimo_botao("liga_ambiente"), Some((110, 700)));
+    }
+
+    #[test]
+    fn cada_linha_m3_e_lida_com_e_sem_o_prefixo_do_logcat() {
+        let prefixo = "11-21 20:36:19.088  3597  3633 I SAPP    : ";
+        let casos: Vec<(&str, Linha)> = vec![
+            ("PRISMA_M3 pronto efeitos=20 ms=75", Linha::SomPronto { efeitos: 20, ms: 75 }),
+            ("PRISMA_M3 efeito sinal=combinacao elevacao=0", Linha::Efeito { sinal: "combinacao".into(), elevacao: 0 }),
+            ("PRISMA_M3 efeito sinal=cascata elevacao=7", Linha::Efeito { sinal: "cascata".into(), elevacao: 7 }),
+            (
+                "PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=482",
+                Linha::FaixaCarregada { tipo: "musica".into(), nome: "cozy-puzzle".into(), ms: 482 },
+            ),
+            (
+                "PRISMA_M3 carregado tipo=ambiente nome=rain-thunder ms=63",
+                Linha::FaixaCarregada { tipo: "ambiente".into(), nome: "rain-thunder".into(), ms: 63 },
+            ),
+            // O texto do erro é o resto da linha, com espaços e tudo (diz qual som falhou e por quê).
+            (
+                "PRISMA_M3 erro tipo=efeito nome=cascata texto=sem placa de som",
+                Linha::ErroDeSom { texto: "tipo=efeito nome=cascata texto=sem placa de som".into() },
+            ),
+        ];
+        for (texto, esperada) in casos {
+            assert_eq!(ler_linha(texto), Some(esperada.clone()), "sem prefixo: {texto}");
+            let com_prefixo = format!("{prefixo}{texto}");
+            assert_eq!(ler_linha(&com_prefixo), Some(esperada), "com prefixo: {com_prefixo}");
+        }
+    }
+
+    #[test]
+    fn linha_m3_mal_formada_ou_com_tipo_desconhecido_e_ignorada() {
+        let estranhas = [
+            "PRISMA_M3 pronto efeitos=20",                                    // falta o ms
+            "PRISMA_M3 pronto ms=75",                                         // falta os efeitos
+            "PRISMA_M3 pronto efeitos=vinte ms=75",                           // não é número
+            "PRISMA_M3 pronto efeitos=20 ms=-1",                              // negativo
+            "PRISMA_M3 pronto efeitos=20 ms=7.5",                             // número com ponto
+            "PRISMA_M3 efeito sinal=combinacao",                              // falta a elevação
+            "PRISMA_M3 efeito elevacao=1",                                    // falta o sinal
+            "PRISMA_M3 efeito sinal= elevacao=1",                             // sinal vazio
+            "PRISMA_M3 efeito sinal=cascata elevacao=x",                      // não é número
+            "PRISMA_M3 efeito sinal=cascata elevacao=256",                    // não cabe em u8
+            "PRISMA_M3 efeito sinal=cascata elevacao=-1",                     // negativa
+            "PRISMA_M3 carregado tipo=musica nome=cozy-puzzle",               // falta o ms
+            "PRISMA_M3 carregado tipo=musica ms=482",                         // falta o nome
+            "PRISMA_M3 carregado nome=cozy-puzzle ms=482",                    // falta o tipo
+            "PRISMA_M3 carregado tipo=efeito nome=cascata ms=482",            // tipo que não é de faixa
+            "PRISMA_M3 carregado tipo=filme nome=cozy-puzzle ms=482",         // tipo desconhecido
+            "PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=muito",      // não é número
+            "PRISMA_M3 erro",                                                 // sem texto
+            "PRISMA_M3 erro    ",                                             // só espaços
+            "PRISMA_M3 inventada x=1",                                        // tipo que não existe
+            "PRISMA_M3",                                                      // só o marcador
+            "PRISMA_M3 ",                                                     // marcador e nada mais
+            "PRISMAM3 pronto efeitos=20 ms=75",                               // marcador errado
+            "PRISMA_M1 pronto efeitos=20 ms=75",                              // tipo do M3 com o marcador do M1
+            "PRISMA_M2 efeito sinal=cascata elevacao=1",                      // tipo do M3 com o marcador do M2
+        ];
+        for texto in estranhas {
+            assert_eq!(ler_linha(texto), None, "devia ser ignorada: {texto:?}");
+        }
+        // Misturadas com linhas boas, só as boas entram.
+        let r = Registro::de(
+            "PRISMA_M3 efeito sinal=cascata elevacao=999\r\n  PRISMA_M3   efeito   sinal=cascata   elevacao=2  \r\nPRISMA_M3 pronto efeitos=20\r\n",
+        );
+        assert_eq!(r.efeitos_tocados(), 1);
+        assert_eq!(r.som_pronto(), None);
+    }
+
+    #[test]
+    fn o_registro_de_sons_responde_pelo_que_leu_e_sem_linha_nao_ha_resposta() {
+        let r = Registro::de(
+            "PRISMA_M3 pronto efeitos=20 ms=75\n\
+             PRISMA_M3 pronto efeitos=20 ms=90\n\
+             PRISMA_M3 efeito sinal=combinacao elevacao=0\n\
+             PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=400\n\
+             PRISMA_M3 carregado tipo=musica nome=space-city ms=500\n\
+             PRISMA_M3 erro tipo=ambiente nome=rain-soft texto=falhou\n\
+             PRISMA_M3 erro tipo=musica nome=space-city texto=outra falha\n",
+        );
+        assert_eq!(r.som_pronto(), Some((20, 90)), "vale o último pronto (o app reabriu)");
+        assert_eq!(r.efeitos_tocados(), 1);
+        assert_eq!(r.faixa_carregada("musica"), Some(("space-city".to_string(), 500)), "vale a última faixa");
+        assert_eq!(r.faixa_carregada("ambiente"), None);
+        assert_eq!(r.primeiro_erro_de_som().as_deref(), Some("tipo=ambiente nome=rain-soft texto=falhou"), "vale o primeiro erro");
+        let vazio = Registro::de("PRISMA_M1 pronto modo=zen\n");
+        assert_eq!(vazio.som_pronto(), None);
+        assert_eq!(vazio.efeitos_tocados(), 0);
+        assert_eq!(vazio.faixa_carregada("musica"), None);
+        assert_eq!(vazio.primeiro_erro_de_som(), None);
+    }
+
+    #[test]
+    fn o_registro_de_sons_nao_confunde_com_as_linhas_do_m2() {
+        // As amostras do M2 continuam lidas igual, com as linhas do M3 no meio.
+        let r = Registro::de(AMOSTRA);
+        assert_eq!(r.ultimo_aberto(), Some(aberto("zen", (Origem::Novo, 0), (Origem::Novo, 0), (0, 0))));
+        assert!(r.tem_gravado("zen", 195));
+        assert_eq!(quantas(&r, "gravado"), 1);
+        assert_eq!(quantas(&r, "erro_ao_gravar"), 1);
+        assert_eq!(
+            r.primeiro_erro_ao_gravar().as_deref(),
+            Some("não consegui criar a pasta /data/data/x/files: Permission denied (os error 13)"),
+            "o erro de gravação não é o erro de som, e o contrário também"
+        );
+        assert_ne!(r.primeiro_erro_ao_gravar(), r.primeiro_erro_de_som());
+        // Um erro de som sozinho não conta como erro de gravação (e vice-versa).
+        let so_som = Registro::de("PRISMA_M3 erro tipo=musica nome=x texto=falhou\n");
+        assert_eq!(so_som.primeiro_erro_ao_gravar(), None);
+        let so_gravacao = Registro::de("PRISMA_M2 erro_ao_gravar falhou\n");
+        assert_eq!(so_gravacao.primeiro_erro_de_som(), None);
+        // Uma linha com os dois marcadores vale o que aparece primeiro.
+        assert_eq!(
+            ler_linha("PRISMA_M3 erro tipo=musica nome=x texto=veja PRISMA_M2 aberto"),
+            Some(Linha::ErroDeSom { texto: "tipo=musica nome=x texto=veja PRISMA_M2 aberto".into() })
+        );
     }
 
     #[test]

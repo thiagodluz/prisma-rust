@@ -11,7 +11,10 @@
 //!      agora volta no Clássico (o modo ativo foi guardado), com a jogada, e o Zen continua intacto;
 //!   8. instala o mesmo APK por cima (`adb install -r`, como numa atualização) e confere que a
 //!      partida, o modo e os recordes continuam lá;
-//!   9. confere que os recordes nunca diminuíram.
+//!   9. confere que os recordes nunca diminuíram;
+//!  10. som (M3): confere que os efeitos ficaram prontos e que uma jogada válida pede efeito, vai
+//!      para o Zen, abre a folha do ♪, liga a música e o ambiente (cada um tem 20 s para carregar),
+//!      tira a foto, mede a memória do app (`dumpsys meminfo`), fecha a folha e joga mais uma vez.
 //!
 //! Guarda o registro de erros (logcat) e uma foto da tela de cada etapa numa pasta. Foi escrito
 //! primeiro em shell (o antigo `tools/teste-emulador.sh`, que ficou no histórico do git); aqui faz
@@ -21,7 +24,8 @@
 //! O app escreve no registro do Android linhas que começam com `PRISMA_M1` (veja `App::registro`
 //! em `game/src/app.rs`): a posição do tabuleiro e dos botões, cada toque que recebe e o que
 //! acontece no jogo; e, desde o M2, linhas `PRISMA_M2`: o que ele leu ao abrir (`aberto`) e o que
-//! gravou (`gravado`, `erro_ao_gravar`). O módulo `registro` lê essas linhas.
+//! gravou (`gravado`, `erro_ao_gravar`); e, desde o M3, linhas `PRISMA_M3`: o som (`pronto`, `efeito`,
+//! `carregado`, `erro`). O módulo `registro` lê essas linhas.
 
 use crate::base64;
 use crate::registro::{centro_da_casa, deslocamento, Aberto, Origem, Registro};
@@ -33,6 +37,13 @@ use std::time::{Duration, Instant};
 
 /// Quanto tempo cada chamada do `adb` pode levar antes de ser interrompida.
 const LIMITE_DO_ADB: Duration = Duration::from_secs(60);
+
+/// Quanto tempo o app tem para carregar a música ou o ambiente depois de ligados (são OGG de 60 s,
+/// decodificados inteiros: no celular isso leva de algumas centenas de milissegundos a alguns segundos).
+const PRAZO_DA_FAIXA_MS: u64 = 20_000;
+
+/// Quanto tempo a folha de Som tem para aparecer depois do toque no ♪.
+const PRAZO_DA_FOLHA_MS: u64 = 10_000;
 
 /// O que um comando do `adb` respondeu.
 #[derive(Debug)]
@@ -184,9 +195,10 @@ fn achar_apk(pasta: &Path) -> Result<PathBuf, String> {
 
 /// As linhas do registro que mais ajudam a achar um erro (sem ligar para maiúsculas), no máximo 200.
 pub fn resumo(logcat: &str) -> String {
-    const PADROES: [&str; 13] = [
+    const PADROES: [&str; 14] = [
         "prisma_m1",
         "prisma_m2",
+        "prisma_m3",
         "fatal",
         "androidruntime",
         "panicked",
@@ -712,6 +724,136 @@ impl Teste<'_> {
         println!("OK: os recordes não diminuíram (Zen {}, Clássico {}).", ultima.melhor_zen, ultima.melhor_classico);
         Ok(())
     }
+
+    /// Falha se o app avisou no registro que um som não carregou ou não tocou (o tipo, o nome e o
+    /// motivo vêm no texto dele).
+    fn sem_erro_de_som(&self) -> Result<(), String> {
+        match self.registro.primeiro_erro_de_som() {
+            Some(texto) => Err(format!("o app não conseguiu tocar um som: {texto}")),
+            None => Ok(()),
+        }
+    }
+
+    /// Uma jogada no Zen: toca em "Dica", arrasta o dedo de uma pedra da dica até a outra e espera a
+    /// animação terminar. Devolve os pontos novos (que têm de ser mais que `anteriores`).
+    fn jogada_arrastando(&mut self, rodada: usize, anteriores: u64) -> Result<u64, String> {
+        self.continua_aberto(&format!("antes da jogada {rodada} do Zen"))?;
+        let (a, b) = self.pedir_dica()?;
+        println!("Rodada {rodada} (Zen): a dica pede trocar a casa {a} com a {b}");
+        let animacoes = self.registro.contar_animacoes();
+        let (de, ate) = (self.centro_da_casa(a), self.centro_da_casa(b));
+        println!("Arrastando de ({},{}) até ({},{})", de.0, de.1, ate.0, ate.1);
+        self.arrastar(de, ate)?;
+        self.esperar_animacao(animacoes)?;
+        self.continua_aberto(&format!("durante a jogada {rodada} do Zen"))?;
+        self.conferir_jogada("Zen", rodada, anteriores)
+    }
+
+    /// Toca no ♪ e espera (até 10 s) a folha de Som aparecer: o app só escreve a posição dos botões
+    /// dela (`liga_musica`...) quando ela abre.
+    fn abrir_a_folha_de_som(&mut self) -> Result<(), String> {
+        self.tocar_botao("som")?;
+        let mut esperou_ms = 1_000; // o `tocar_botao` já esperou 1 s e leu o registro
+        while self.registro.ultimo_botao("liga_musica").is_none() {
+            if esperou_ms >= PRAZO_DA_FOLHA_MS {
+                return Err(format!(
+                    "o toque no ♪ não abriu a folha de Som em {} s: o registro não tem a posição do botão 'liga_musica'",
+                    PRAZO_DA_FOLHA_MS / 1000
+                ));
+            }
+            self.celular.dormir(500);
+            esperou_ms += 500;
+            self.ler_registro()?;
+        }
+        println!("OK: a folha de Som abriu.");
+        Ok(())
+    }
+
+    /// Espera (até 20 s, de meio em meio segundo) o app avisar que terminou de carregar a música
+    /// (`tipo` = "musica") ou o ambiente (`tipo` = "ambiente") que acabou de ser ligado. Enquanto
+    /// espera, o app não pode fechar nem avisar de um erro de som.
+    fn esperar_faixa(&mut self, tipo: &str) -> Result<(), String> {
+        let faixa = if tipo == "musica" { "a música" } else { "o ambiente" };
+        let mut esperou_ms = 1_000; // o `tocar_botao` que ligou já esperou 1 s e leu o registro
+        loop {
+            self.continua_aberto(&format!("enquanto esperava {faixa} carregar"))?;
+            self.sem_erro_de_som()?;
+            if let Some((nome, ms)) = self.registro.faixa_carregada(tipo) {
+                println!("OK: {faixa} '{nome}' carregou em {ms} ms (o teste esperou {esperou_ms} ms).");
+                return Ok(());
+            }
+            if esperou_ms >= PRAZO_DA_FAIXA_MS {
+                return Err(format!(
+                    "{faixa} não carregou em {} s: faltou a linha 'PRISMA_M3 carregado tipo={tipo}'",
+                    PRAZO_DA_FAIXA_MS / 1000
+                ));
+            }
+            self.celular.dormir(500);
+            esperou_ms += 500;
+            self.ler_registro()?;
+        }
+    }
+
+    /// Mede a memória do app (`dumpsys meminfo`): imprime as linhas TOTAL e guarda a saída inteira em
+    /// `meminfo.txt`. Só informa, nunca reprova: o que importa é o número ficar no registro.
+    fn medir_memoria(&mut self) {
+        match self.celular.adb(&["shell", "dumpsys", "meminfo", self.pacote]) {
+            Ok(resposta) if resposta.sucesso => {
+                let texto = resposta.texto_lossy();
+                if let Err(e) = fs::write(self.saida.join("meminfo.txt"), &texto) {
+                    println!("AVISO: não consegui guardar o meminfo.txt: {e}");
+                }
+                let totais: Vec<&str> = texto.lines().map(str::trim).filter(|linha| linha.starts_with("TOTAL")).collect();
+                if totais.is_empty() {
+                    println!("AVISO: o meminfo não tem nenhuma linha TOTAL (veja o meminfo.txt).");
+                }
+                for linha in totais {
+                    println!("Memória do app com a música e o ambiente ligados: {linha}");
+                }
+            }
+            Ok(resposta) => println!("AVISO: o dumpsys meminfo falhou: {}", resposta.erro.trim()),
+            Err(e) => println!("AVISO: não consegui medir a memória do app: {e}"),
+        }
+    }
+
+    /// Fase 10: o som. O app está no Clássico (depois de atualizar por cima); os três canais (efeitos,
+    /// música e ambiente) são do Zen, então a fase volta para ele.
+    fn som(&mut self) -> Result<(), String> {
+        let Some((efeitos, ms)) = self.registro.som_pronto() else {
+            return Err("faltou a linha 'PRISMA_M3 pronto' (os efeitos sonoros não ficaram prontos?)".to_string());
+        };
+        if efeitos == 0 {
+            return Err(format!("nenhum efeito sonoro ficou pronto: 'PRISMA_M3 pronto efeitos=0 ms={ms}'"));
+        }
+        self.sem_erro_de_som()?;
+        println!("OK: {efeitos} efeitos sonoros prontos em {ms} ms.");
+        self.tocar_botao("zen")?;
+        if self.registro.ultimo_modo() != Some(("zen".to_string(), self.pontos_zen)) {
+            return Err(format!("ao tocar na aba Zen para testar o som, o Zen devia ter {} pontos", self.pontos_zen));
+        }
+        self.ler_tabuleiro()?; // o tabuleiro muda de lugar quando volta o botão Embaralhar
+        let efeitos_antes = self.registro.efeitos_tocados();
+        let pontos = self.jogada_arrastando(6, self.pontos_zen)?;
+        self.pontos_zen = pontos;
+        if self.registro.efeitos_tocados() <= efeitos_antes {
+            return Err("a jogada valeu, mas o app não pediu nenhum efeito sonoro (nenhuma linha nova 'PRISMA_M3 efeito')".to_string());
+        }
+        println!("OK: a jogada pediu {} efeito(s) sonoro(s).", self.registro.efeitos_tocados() - efeitos_antes);
+        self.abrir_a_folha_de_som()?;
+        self.tocar_botao("liga_musica")?;
+        self.esperar_faixa("musica")?;
+        self.tocar_botao("liga_ambiente")?;
+        self.esperar_faixa("ambiente")?;
+        self.foto("10-som");
+        self.medir_memoria();
+        self.tocar_botao("fechar_som")?;
+        let pontos = self
+            .jogada_arrastando(7, pontos)
+            .map_err(|erro| format!("depois de ligar a música e o ambiente: {erro}"))?;
+        self.pontos_zen = pontos;
+        println!("OK: com a música e o ambiente ligados o jogo continua jogando (Zen em {pontos} pontos).");
+        Ok(())
+    }
 }
 
 fn executar(celular: &mut dyn Celular, pacote: &str, pasta_apk: &Path, saida: &Path) -> Result<(), String> {
@@ -744,8 +886,9 @@ fn executar(celular: &mut dyn Celular, pacote: &str, pasta_apk: &Path, saida: &P
     let pontos_classico = teste.classico_em_separado()?;
     teste.atualizar_por_cima(&apk, pontos_classico)?;
     teste.conferir_recordes()?;
+    teste.som()?;
     println!("{}", resumo(&teste.logcat));
-    println!("OK: o jogo rodou no celular virtual (Zen e Clássico, toque e arrasto; fechar, reabrir e atualizar por cima guardam a partida e os recordes).");
+    println!("OK: o jogo rodou no celular virtual (Zen e Clássico, toque e arrasto; fechar, reabrir e atualizar por cima guardam a partida e os recordes; efeitos, música e ambiente carregam e o jogo segue).");
     Ok(())
 }
 
@@ -815,6 +958,14 @@ mod tests {
         }
     }
 
+    /// Algo que o app faz sozinho, um tempo depois de um toque.
+    enum Pendente {
+        /// Escreve esta linha no registro.
+        Linha(String),
+        /// O app morre (o Android o fecha).
+        Morre,
+    }
+
     /// Um celular de mentira. Obedece aos mesmos comandos do `adb` que o teste usa, guarda um
     /// "registro" (logcat) e roda um mini-jogo: toques e arrastos chegam em coordenadas da TELA,
     /// o jogo falso desconta o deslocamento da janela (como o Android de verdade) e só reage se o
@@ -849,6 +1000,27 @@ mod tests {
         recorde_diminui: bool,
         recorde_perdido_ao_reabrir: Option<usize>, // 0 = Zen, 1 = Clássico
         force_stop_nao_funciona: bool,
+        // ---- o som (M3) ----
+        sem_som_pronto: bool,
+        /// Quantos efeitos o app diz que ficaram prontos (o de verdade tem 20).
+        efeitos_prontos: u32,
+        /// Um efeito falha ao carregar na abertura (o app avisa com `erro tipo=efeito`).
+        erro_de_efeito_ao_abrir: bool,
+        sem_efeito: bool,
+        folha_nao_abre: bool,
+        /// Quanto tempo (ms) depois do toque a música e o ambiente terminam de carregar.
+        musica_carrega_em_ms: u64,
+        ambiente_carrega_em_ms: u64,
+        musica_nunca_carrega: bool,
+        ambiente_nunca_carrega: bool,
+        erro_de_som: bool,
+        morre_depois_de_carregar_a_musica: bool,
+        /// O app fecha 1 s depois de o ambiente carregar (já com tudo ligado).
+        morre_depois_de_carregar_o_ambiente: bool,
+        /// Depois da segunda instalação (a por cima), a aba Zen mostra uma partida zerada.
+        aba_zen_perde_os_pontos_depois_de_atualizar: bool,
+        trava_depois_do_som: bool,
+        sem_meminfo: bool,
         // ---- o que ele guarda ----
         relogio_ms: u64,
         logcat: String,
@@ -865,6 +1037,11 @@ mod tests {
         force_stops: usize,
         selecionada: Option<usize>,
         confirmando: bool,
+        folha: bool,
+        musica_ligada: bool,
+        ambiente_ligado: bool,
+        /// Coisas que o app faz sozinho daqui a um tempo (carregar uma música, morrer): `(quando em ms, o quê)`.
+        pendentes: Vec<(u64, Pendente)>,
         dica: Option<(usize, usize)>,
         dicas_dadas: usize,
         jogadas: usize,
@@ -872,6 +1049,8 @@ mod tests {
         arrastos: usize,
         fotos_reduzidas: usize,
         relogio_no_ultimo_arrasto: u64,
+        /// O relógio de mentira no último toque no ♪.
+        relogio_no_toque_no_som: u64,
         relogio_na_ultima_jogada: u64,
     }
 
@@ -905,6 +1084,21 @@ mod tests {
                 recorde_diminui: false,
                 recorde_perdido_ao_reabrir: None,
                 force_stop_nao_funciona: false,
+                sem_som_pronto: false,
+                efeitos_prontos: 20,
+                erro_de_efeito_ao_abrir: false,
+                sem_efeito: false,
+                folha_nao_abre: false,
+                musica_carrega_em_ms: 3_000,
+                ambiente_carrega_em_ms: 1_000,
+                musica_nunca_carrega: false,
+                ambiente_nunca_carrega: false,
+                erro_de_som: false,
+                morre_depois_de_carregar_a_musica: false,
+                morre_depois_de_carregar_o_ambiente: false,
+                aba_zen_perde_os_pontos_depois_de_atualizar: false,
+                trava_depois_do_som: false,
+                sem_meminfo: false,
                 relogio_ms: 0,
                 logcat: String::new(),
                 instalado: false,
@@ -919,6 +1113,10 @@ mod tests {
                 force_stops: 0,
                 selecionada: None,
                 confirmando: false,
+                folha: false,
+                musica_ligada: false,
+                ambiente_ligado: false,
+                pendentes: Vec::new(),
                 dica: None,
                 dicas_dadas: 0,
                 jogadas: 0,
@@ -926,6 +1124,7 @@ mod tests {
                 arrastos: 0,
                 fotos_reduzidas: 0,
                 relogio_no_ultimo_arrasto: 0,
+                relogio_no_toque_no_som: 0,
                 relogio_na_ultima_jogada: 0,
             }
         }
@@ -981,11 +1180,22 @@ mod tests {
             self.modo = if self.modo_ativo_nao_e_guardado { ModoFalso::Zen } else { self.modo_salvo };
             self.selecionada = None;
             self.confirmando = false;
+            self.folha = false;
+            self.musica_ligada = false;
+            self.ambiente_ligado = false;
+            self.pendentes.clear();
             self.dica = None;
             self.aberto = true;
             self.escrever_geometria();
             if !self.sem_pronto {
                 let linha = format!("PRISMA_M1 pronto modo={}", self.modo.nome());
+                self.escrever(&linha);
+            }
+            if self.erro_de_efeito_ao_abrir {
+                self.escrever("PRISMA_M3 erro tipo=efeito nome=cascata texto=sem placa de som");
+            }
+            if !self.sem_som_pronto {
+                let linha = format!("PRISMA_M3 pronto efeitos={} ms=75", self.efeitos_prontos);
                 self.escrever(&linha);
             }
             let origem = |salvo: bool| if salvo { "arquivo" } else { "novo" };
@@ -1018,8 +1228,23 @@ mod tests {
                     ("embaralhar", 58, 517),
                     ("dica", 160, 517),
                     ("novo_jogo", 262, 517),
+                    ("som", 300, 96),
                 ],
-                ModoFalso::Classico => vec![("zen", 83, 96), ("classico", 237, 96), ("dica", 109, 517), ("novo_jogo", 211, 517)],
+                ModoFalso::Classico => vec![
+                    ("zen", 83, 96),
+                    ("classico", 237, 96),
+                    ("dica", 109, 517),
+                    ("novo_jogo", 211, 517),
+                    ("som", 300, 96),
+                ],
+            }
+        }
+
+        /// Os botões da folha de Som: no Clássico só o de fechar; no Zen também os dois interruptores.
+        fn botoes_da_folha(&self) -> Vec<(&'static str, i32, i32)> {
+            match self.modo {
+                ModoFalso::Zen => vec![("fechar_som", 482, 240), ("liga_musica", 110, 520), ("liga_ambiente", 110, 700)],
+                ModoFalso::Classico => vec![("fechar_som", 482, 240)],
             }
         }
 
@@ -1035,6 +1260,9 @@ mod tests {
             }
             let mut todos = self.botoes_normais();
             todos.extend(Self::botoes_da_confirmacao());
+            if self.folha {
+                todos.extend(self.botoes_da_folha());
+            }
             for (nome, bx, by) in todos {
                 if self.sem_botao != Some(nome) {
                     self.escrever(&format!("PRISMA_M1 botao={nome} x={bx} y={by}"));
@@ -1042,8 +1270,62 @@ mod tests {
             }
         }
 
+        /// O app começou a carregar a música: a linha `carregado` sai daqui a `musica_carrega_em_ms`
+        /// (ou nunca, ou com um erro de som, ou seguida da morte do app, conforme o que o teste ligou).
+        fn carregar_musica(&mut self) {
+            if self.erro_de_som {
+                self.escrever("PRISMA_M3 erro tipo=musica nome=cozy-puzzle texto=sem placa de som");
+            }
+            if self.musica_nunca_carrega {
+                return;
+            }
+            let quando = self.relogio_ms + self.musica_carrega_em_ms;
+            let ms = self.musica_carrega_em_ms;
+            self.pendentes.push((quando, Pendente::Linha(format!("PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms={ms}"))));
+            if self.morre_depois_de_carregar_a_musica {
+                self.pendentes.push((quando, Pendente::Morre));
+            }
+        }
+
+        fn carregar_ambiente(&mut self) {
+            if self.ambiente_nunca_carrega {
+                return;
+            }
+            let quando = self.relogio_ms + self.ambiente_carrega_em_ms;
+            let ms = self.ambiente_carrega_em_ms;
+            self.pendentes.push((quando, Pendente::Linha(format!("PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms={ms}"))));
+            if self.morre_depois_de_carregar_o_ambiente {
+                self.pendentes.push((quando + 1_000, Pendente::Morre));
+            }
+        }
+
+        /// Faz o que já deu a hora (o relógio de mentira só anda com `dormir`).
+        fn liberar_pendentes(&mut self) {
+            let agora = self.relogio_ms;
+            let pendentes = std::mem::take(&mut self.pendentes);
+            for (quando, o_que) in pendentes {
+                if quando > agora {
+                    self.pendentes.push((quando, o_que));
+                } else if self.aberto {
+                    match o_que {
+                        Pendente::Linha(linha) => self.escrever(&linha),
+                        Pendente::Morre => self.aberto = false,
+                    }
+                }
+            }
+        }
+
         fn botao_em(&self, x: i32, y: i32) -> Option<&'static str> {
-            let candidatos = if self.confirmando { Self::botoes_da_confirmacao().to_vec() } else { self.botoes_normais() };
+            // Com a folha aberta só ela (e o ♪, que a fecha) reage: o resto fica coberto.
+            let candidatos = if self.confirmando {
+                Self::botoes_da_confirmacao().to_vec()
+            } else if self.folha {
+                let mut folha = self.botoes_da_folha();
+                folha.extend(self.botoes_normais().into_iter().filter(|(nome, _, _)| *nome == "som"));
+                folha
+            } else {
+                self.botoes_normais()
+            };
             candidatos
                 .into_iter()
                 .find(|(_, bx, by)| (x - bx).abs() <= 25 && (y - by).abs() <= 25)
@@ -1069,10 +1351,14 @@ mod tests {
             self.relogio_na_ultima_jogada = self.relogio_ms;
             self.melhor[indice] = self.melhor[indice].max(pontos);
             self.escrever(&format!("PRISMA_M1 jogada valida={valida} pontos={pontos} nivel=1"));
+            if valida && !self.sem_efeito {
+                self.escrever("PRISMA_M3 efeito sinal=combinacao elevacao=0");
+            }
             if valida {
                 self.gravar(); // o app grava logo depois da jogada, antes de a animação acabar
             }
-            if !self.animacao_nunca_termina {
+            let travou_pelo_som = self.trava_depois_do_som && self.ambiente_ligado;
+            if !self.animacao_nunca_termina && !travou_pelo_som {
                 self.escrever("PRISMA_M1 animacao_terminou");
             }
             self.dica = None;
@@ -1110,7 +1396,7 @@ mod tests {
                     "zen" if self.modo != ModoFalso::Zen => {
                         self.modo = ModoFalso::Zen;
                         self.selecionada = None;
-                        if self.zen_perde_os_pontos {
+                        if self.zen_perde_os_pontos || (self.aba_zen_perde_os_pontos_depois_de_atualizar && self.instalacoes >= 2) {
                             self.pontos[0] = 0;
                         }
                         self.escrever_geometria();
@@ -1136,8 +1422,28 @@ mod tests {
                         self.escrever(&format!("PRISMA_M1 dica a={a} b={}", a + 1));
                     }
                     "novo_jogo" if self.modo == ModoFalso::Classico => self.confirmando = true,
+                    "som" => {
+                        self.relogio_no_toque_no_som = self.relogio_ms;
+                        self.folha = !self.folha && !self.folha_nao_abre;
+                        self.escrever_geometria();
+                    }
+                    "fechar_som" if self.folha => {
+                        self.folha = false;
+                        self.escrever_geometria();
+                    }
+                    "liga_musica" if self.folha && !self.musica_ligada => {
+                        self.musica_ligada = true;
+                        self.carregar_musica();
+                    }
+                    "liga_ambiente" if self.folha && !self.ambiente_ligado => {
+                        self.ambiente_ligado = true;
+                        self.carregar_ambiente();
+                    }
                     _ => {}
                 }
+                return;
+            }
+            if self.folha {
                 return;
             }
             if let Some(casa) = self.casa_em(x, y) {
@@ -1157,7 +1463,7 @@ mod tests {
             self.arrastos += 1;
             self.relogio_no_ultimo_arrasto = self.relogio_ms;
             self.ruido();
-            if self.ignora_toques || !self.aberto {
+            if self.ignora_toques || !self.aberto || self.folha {
                 return;
             }
             let visto = if self.quadros_lentos && !segura_no_inicio {
@@ -1183,6 +1489,7 @@ mod tests {
 
     impl Celular for CelularFalso {
         fn adb(&mut self, args: &[&str]) -> Result<Resposta, String> {
+            self.liberar_pendentes();
             match args {
                 ["shell", "getprop", "ro.build.version.release"] => resposta_ok("11\n"),
                 ["shell", "getprop", "ro.product.cpu.abilist"] => resposta_ok("x86,armeabi-v7a\n"),
@@ -1251,6 +1558,14 @@ mod tests {
                     resposta_ok("")
                 }
                 ["exec-out", "screencap", "-p"] => Ok(Resposta { sucesso: true, texto: vec![0x89, b'P', b'N', b'G', 1, 2, 3], erro: String::new() }),
+                ["shell", "dumpsys", "meminfo", pacote] => {
+                    if self.sem_meminfo || *pacote != PACOTE || !self.aberto {
+                        return Ok(Resposta { sucesso: false, texto: Vec::new(), erro: "No process found for: x\n".to_string() });
+                    }
+                    resposta_ok(&format!(
+                        "Applications Memory Usage (in Kilobytes):\nUptime: 123456 Realtime: 123456\n\n** MEMINFO in pid 4321 [{PACOTE}] **\n                   Pss  Private  Private  SwapPss\n                 Total    Dirty    Clean    Dirty\n  Native Heap    71234    71000      100        0\n        TOTAL   234567   180000    30000        0       TOTAL SWAP PSS:        0\n"
+                    ))
+                }
                 outro => Err(format!("comando inesperado no celular falso: {outro:?}")),
             }
         }
@@ -1290,19 +1605,20 @@ mod tests {
         let mut celular = CelularFalso::novo();
         let (resultado, pasta) = rodar_com(&mut celular, "fluxo_completo");
         assert_eq!(resultado, Ok(()));
-        assert_eq!(celular.arrastos, 5, "5 jogadas arrastando no Zen");
+        assert_eq!(celular.arrastos, 7, "5 jogadas arrastando no Zen e mais 2 na fase do som");
         // 1 calibração + 5 dicas do Zen + 1 aba + 15 no Clássico (dica e dois toques, 5 vezes)
         // + Novo jogo + Confirmar + voltar ao Zen
         // + 1 calibração depois de reabrir no Zen
         // + 1 aba Clássico + 3 (dica e dois toques) da jogada do Clássico + 1 calibração depois de reabrir
         // + 1 calibração depois de atualizar por cima
-        assert_eq!(celular.toques, 32);
-        assert_eq!(celular.pontos, [375, 75], "Zen guardou os pontos; o Novo jogo zerou o Clássico, que jogou de novo");
-        assert_eq!(celular.melhor, [375, 375], "os recordes nunca diminuem");
+        // + a fase do som: 1 aba Zen, 1 dica, o ♪, os 2 interruptores, o ✕ da folha e 1 dica
+        assert_eq!(celular.toques, 39);
+        assert_eq!(celular.pontos, [525, 75], "Zen guardou os pontos e fez 2 jogadas na fase do som; o Clássico zerou e jogou de novo");
+        assert_eq!(celular.melhor, [525, 375], "os recordes nunca diminuem");
         assert_eq!(celular.instalacoes, 2, "instalou e depois atualizou por cima");
         assert_eq!(celular.aberturas, 4, "a abertura do começo e 3 reaberturas");
         assert_eq!(celular.force_stops, 3, "cada reabertura fecha o app de verdade antes");
-        assert_eq!(celular.fotos_reduzidas, 9);
+        assert_eq!(celular.fotos_reduzidas, 10);
         for nome in [
             "1-zen-inicio",
             "2-zen-dica",
@@ -1313,6 +1629,7 @@ mod tests {
             "7-zen-de-volta",
             "8-reaberto-zen",
             "9-atualizado",
+            "10-som",
         ] {
             assert!(pasta.0.join(format!("resultado/tela-{nome}.png")).exists(), "faltou a foto {nome}");
             assert!(pasta.0.join(format!("resultado/pequena-{nome}.png")).exists(), "faltou a foto pequena {nome}");
@@ -1331,6 +1648,164 @@ mod tests {
         assert!(!pasta.0.join("resultado/logcat-sessao-3.txt").exists(), "a última sessão fica no logcat.txt");
         let ultima = fs::read_to_string(pasta.0.join("resultado/logcat.txt")).unwrap();
         assert!(ultima.contains("PRISMA_M2 aberto modo=classico zen=arquivo:375 classico=arquivo:75"), "{ultima}");
+    }
+
+    #[test]
+    fn a_fase_de_som_liga_a_musica_e_o_ambiente_e_guarda_o_meminfo() {
+        let mut celular = CelularFalso::novo();
+        let (resultado, pasta) = rodar_com(&mut celular, "fase_som");
+        assert_eq!(resultado, Ok(()));
+        assert!(celular.musica_ligada && celular.ambiente_ligado, "a fase 10 liga a música e o ambiente na folha de Som");
+        assert!(!celular.folha, "a folha de Som foi fechada no fim");
+        assert!(celular.modo == ModoFalso::Zen, "a fase 10 termina no Zen, que tem os três canais");
+        let registro = fs::read_to_string(pasta.0.join("resultado/logcat.txt")).unwrap();
+        for linha in [
+            "PRISMA_M3 pronto efeitos=20 ms=75",
+            "PRISMA_M3 efeito sinal=combinacao elevacao=0",
+            "PRISMA_M3 carregado tipo=musica nome=cozy-puzzle",
+            "PRISMA_M3 carregado tipo=ambiente nome=rain-soft",
+        ] {
+            assert!(registro.contains(linha), "faltou '{linha}' no registro guardado: {registro}");
+        }
+        let memoria = fs::read_to_string(pasta.0.join("resultado/meminfo.txt")).unwrap();
+        assert!(memoria.contains("TOTAL   234567"), "o meminfo.txt guarda a saída do dumpsys: {memoria}");
+        assert!(pasta.0.join("resultado/tela-10-som.png").exists());
+    }
+
+    #[test]
+    fn falha_quando_o_app_nao_avisa_que_o_som_ficou_pronto() {
+        let mut celular = CelularFalso::novo();
+        celular.sem_som_pronto = true;
+        let erro = erro_de(&mut celular, "sem_som_pronto");
+        assert!(erro.contains("faltou a linha 'PRISMA_M3 pronto'"), "{erro}");
+        assert_eq!(celular.arrastos, 5, "falhou antes da primeira jogada da fase do som");
+    }
+
+    #[test]
+    fn falha_quando_nenhum_efeito_ficou_pronto() {
+        let mut celular = CelularFalso::novo();
+        celular.efeitos_prontos = 0;
+        let erro = erro_de(&mut celular, "nenhum_efeito_pronto");
+        assert!(erro.contains("nenhum efeito sonoro ficou pronto"), "{erro}");
+        assert_eq!(celular.arrastos, 5);
+    }
+
+    #[test]
+    fn falha_quando_um_efeito_nao_carrega_ao_abrir() {
+        let mut celular = CelularFalso::novo();
+        celular.erro_de_efeito_ao_abrir = true;
+        celular.efeitos_prontos = 19;
+        let erro = erro_de(&mut celular, "erro_de_efeito_ao_abrir");
+        assert!(erro.contains("o app não conseguiu tocar um som: tipo=efeito nome=cascata texto=sem placa de som"), "{erro}");
+        assert_eq!(celular.arrastos, 5, "o erro do efeito é visto antes da primeira jogada da fase do som");
+    }
+
+    #[test]
+    fn falha_quando_uma_jogada_valida_nao_pede_nenhum_efeito() {
+        let mut celular = CelularFalso::novo();
+        celular.sem_efeito = true;
+        let erro = erro_de(&mut celular, "sem_efeito");
+        assert!(erro.contains("a jogada valeu, mas o app não pediu nenhum efeito sonoro"), "{erro}");
+        assert_eq!(celular.arrastos, 6, "falhou na primeira jogada da fase do som");
+    }
+
+    #[test]
+    fn falha_quando_o_toque_no_som_nao_abre_a_folha() {
+        let mut celular = CelularFalso::novo();
+        celular.folha_nao_abre = true;
+        let erro = erro_de(&mut celular, "folha_nao_abre");
+        assert!(erro.contains("o toque no ♪ não abriu a folha de Som"), "{erro}");
+        assert!(erro.contains("liga_musica"), "diz o que faltou no registro: {erro}");
+        let esperou = celular.relogio_ms - celular.relogio_no_toque_no_som;
+        assert_eq!(esperou, 10_000, "esperou {esperou} ms depois do toque no ♪: 10 s pela folha, nem mais nem menos");
+    }
+
+    #[test]
+    fn a_musica_tem_20_s_para_carregar_nem_mais_nem_menos() {
+        let mut no_limite = CelularFalso::novo();
+        no_limite.musica_carrega_em_ms = 20_000;
+        let (resultado, _pasta) = rodar_com(&mut no_limite, "musica_em_20_s");
+        assert_eq!(resultado, Ok(()), "carregar em exatos 20 s ainda vale");
+        let mut passou = CelularFalso::novo();
+        passou.musica_carrega_em_ms = 20_500;
+        let erro = erro_de(&mut passou, "musica_em_20_5_s");
+        assert!(erro.contains("a música não carregou em 20 s"), "{erro}");
+        assert!(erro.contains("PRISMA_M3 carregado tipo=musica"), "diz a linha que faltou: {erro}");
+        let mut nunca = CelularFalso::novo();
+        nunca.musica_nunca_carrega = true;
+        let erro = erro_de(&mut nunca, "musica_nunca_carrega");
+        assert!(erro.contains("a música não carregou em 20 s"), "{erro}");
+    }
+
+    #[test]
+    fn o_ambiente_tem_20_s_para_carregar_nem_mais_nem_menos() {
+        let mut no_limite = CelularFalso::novo();
+        no_limite.ambiente_carrega_em_ms = 20_000;
+        let (resultado, _pasta) = rodar_com(&mut no_limite, "ambiente_em_20_s");
+        assert_eq!(resultado, Ok(()), "carregar em exatos 20 s ainda vale");
+        let mut passou = CelularFalso::novo();
+        passou.ambiente_carrega_em_ms = 20_500;
+        let erro = erro_de(&mut passou, "ambiente_em_20_5_s");
+        assert!(erro.contains("o ambiente não carregou em 20 s"), "{erro}");
+        assert!(erro.contains("PRISMA_M3 carregado tipo=ambiente"), "diz a linha que faltou: {erro}");
+        let mut nunca = CelularFalso::novo();
+        nunca.ambiente_nunca_carrega = true;
+        let erro = erro_de(&mut nunca, "ambiente_nunca_carrega");
+        assert!(erro.contains("o ambiente não carregou em 20 s"), "{erro}");
+    }
+
+    #[test]
+    fn falha_quando_o_app_avisa_de_um_erro_de_som_mesmo_com_a_musica_carregada() {
+        let mut celular = CelularFalso::novo();
+        celular.erro_de_som = true;
+        celular.musica_carrega_em_ms = 500; // a linha `carregado` já está no registro junto com o erro
+        let erro = erro_de(&mut celular, "erro_de_som");
+        assert!(erro.contains("o app não conseguiu tocar um som: tipo=musica nome=cozy-puzzle texto=sem placa de som"), "{erro}");
+    }
+
+    #[test]
+    fn falha_quando_o_app_fecha_depois_de_ligar_a_musica() {
+        let mut celular = CelularFalso::novo();
+        celular.morre_depois_de_carregar_a_musica = true;
+        let erro = erro_de(&mut celular, "morre_com_a_musica");
+        assert!(erro.contains("o app FECHOU sozinho enquanto esperava a música carregar"), "{erro}");
+    }
+
+    #[test]
+    fn falha_quando_o_app_fecha_depois_de_carregar_o_ambiente() {
+        let mut celular = CelularFalso::novo();
+        celular.morre_depois_de_carregar_o_ambiente = true;
+        let erro = erro_de(&mut celular, "morre_com_o_ambiente");
+        assert!(erro.contains("depois de ligar a música e o ambiente"), "{erro}");
+        assert!(erro.contains("o app FECHOU sozinho antes da jogada 7 do Zen"), "{erro}");
+    }
+
+    #[test]
+    fn falha_quando_a_aba_zen_nao_traz_a_partida_do_zen_para_a_fase_do_som() {
+        let mut celular = CelularFalso::novo();
+        celular.aba_zen_perde_os_pontos_depois_de_atualizar = true;
+        let erro = erro_de(&mut celular, "aba_zen_zerada");
+        assert!(erro.contains("ao tocar na aba Zen para testar o som, o Zen devia ter 375 pontos"), "{erro}");
+        assert_eq!(celular.arrastos, 5, "falhou antes da primeira jogada da fase do som");
+    }
+
+    #[test]
+    fn falha_quando_a_jogada_seguinte_nao_termina_com_a_musica_e_o_ambiente_ligados() {
+        let mut celular = CelularFalso::novo();
+        celular.trava_depois_do_som = true;
+        let erro = erro_de(&mut celular, "trava_com_o_som");
+        assert!(erro.contains("depois de ligar a música e o ambiente"), "{erro}");
+        assert!(erro.contains("a animação não terminou em 30 s"), "{erro}");
+        assert_eq!(celular.arrastos, 7, "a jogada de antes do som passou e a de depois travou");
+    }
+
+    #[test]
+    fn a_falta_do_meminfo_nao_reprova_o_teste() {
+        let mut celular = CelularFalso::novo();
+        celular.sem_meminfo = true;
+        let (resultado, pasta) = rodar_com(&mut celular, "sem_meminfo");
+        assert_eq!(resultado, Ok(()), "a memória só é medida para a gente ler, não é uma conferência");
+        assert!(!pasta.0.join("resultado/meminfo.txt").exists(), "sem resposta do dumpsys não se guarda arquivo");
     }
 
     #[test]
@@ -1660,11 +2135,11 @@ mod tests {
 
     #[test]
     fn resumo_pega_as_linhas_que_ajudam_a_achar_erro_sem_ligar_para_maiuscula() {
-        let logcat = "I Outro: nada\nE AndroidRuntime: FATAL EXCEPTION\nI SAPP : PRISMA_M1 toque x=1 y=2\nI SAPP : PRISMA_M2 aberto modo=zen\nthread panicked at x\nF libc: Fatal signal 11 (SIGSEGV)\nD  DEBUG  : backtrace\nI miniquad: algo\ndlopen failed\nI Banal: de novo nada\n";
+        let logcat = "I Outro: nada\nE AndroidRuntime: FATAL EXCEPTION\nI SAPP : PRISMA_M1 toque x=1 y=2\nI SAPP : PRISMA_M2 aberto modo=zen\nI SAPP : PRISMA_M3 pronto efeitos=20 ms=75\nthread panicked at x\nF libc: Fatal signal 11 (SIGSEGV)\nD  DEBUG  : backtrace\nI miniquad: algo\ndlopen failed\nI Banal: de novo nada\n";
         let texto = resumo(logcat);
         assert!(texto.starts_with("===== logcat (resumo) =====\n"));
         assert!(texto.ends_with("\n===== fim do resumo ====="));
-        for deve in ["FATAL EXCEPTION", "PRISMA_M1 toque", "PRISMA_M2 aberto", "panicked", "SIGSEGV", "backtrace", "miniquad", "dlopen"] {
+        for deve in ["FATAL EXCEPTION", "PRISMA_M1 toque", "PRISMA_M2 aberto", "PRISMA_M3 pronto", "panicked", "SIGSEGV", "backtrace", "miniquad", "dlopen"] {
             assert!(texto.contains(deve), "o resumo devia ter '{deve}': {texto}");
         }
         assert!(!texto.contains("nada"), "linhas banais ficam de fora: {texto}");
