@@ -14,6 +14,9 @@ mod layout;
 mod linha;
 mod plataforma;
 mod render;
+// Ainda sem uso até o `App` (Task 4) chamar; o `allow` sai na Task 4.
+#[allow(dead_code)]
+mod salvar;
 mod tom;
 
 use crate::app::App;
