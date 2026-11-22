@@ -6,6 +6,7 @@ mod app;
 mod assets;
 mod cenas;
 mod contador;
+mod efeitos;
 mod formato;
 mod input;
 mod layout;
