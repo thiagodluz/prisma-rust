@@ -28,9 +28,30 @@ pub fn tom_wav(frequencia_hz: f32, duracao_ms: u32, volume: f32) -> Vec<u8> {
 
     let total = (u64::from(duracao_ms) * u64::from(TAXA) / 1000) as usize;
     let suavizacao = (u64::from(SUAVIZACAO_MS) * u64::from(TAXA) / 1000) as usize;
-    let bytes_de_dados = (total * 2) as u32;
 
-    let mut wav = Vec::with_capacity(44 + total * 2);
+    let amostras: Vec<f32> = (0..total)
+        .map(|i| {
+            // `envelope` vai de 0 a 1 na subida, fica em 1 no meio e volta a 0 no fim.
+            let subida = i as f32 / suavizacao as f32;
+            let descida = (total - 1 - i) as f32 / suavizacao as f32;
+            let envelope = subida.min(descida).min(1.0);
+            // A fase é calculada em `f64`: em `f32`, tons agudos e longos perderiam precisão.
+            let fase = 2.0 * std::f64::consts::PI * f64::from(frequencia) * i as f64 / f64::from(TAXA);
+            fase.sin() as f32 * envelope * volume
+        })
+        .collect();
+    wav_de_amostras(&amostras)
+}
+
+/// Monta os bytes de um arquivo WAV (16 bits, um canal, 44 100 amostras por segundo, cabeçalho
+/// padrão de 44 bytes) a partir de amostras entre -1 e 1.
+///
+/// Valores fora dessa faixa são presos nela (infinito vira ±1) e NaN vira 0 (silêncio), então
+/// uma conta errada nunca gera um número que "dá a volta" e estoura o alto-falante.
+pub fn wav_de_amostras(amostras: &[f32]) -> Vec<u8> {
+    let bytes_de_dados = (amostras.len() * 2) as u32;
+
+    let mut wav = Vec::with_capacity(44 + amostras.len() * 2);
     wav.extend_from_slice(b"RIFF");
     wav.extend_from_slice(&(36 + bytes_de_dados).to_le_bytes());
     wav.extend_from_slice(b"WAVE");
@@ -45,15 +66,9 @@ pub fn tom_wav(frequencia_hz: f32, duracao_ms: u32, volume: f32) -> Vec<u8> {
     wav.extend_from_slice(b"data");
     wav.extend_from_slice(&bytes_de_dados.to_le_bytes());
 
-    for i in 0..total {
-        // `envelope` vai de 0 a 1 na subida, fica em 1 no meio e volta a 0 no fim.
-        let subida = i as f32 / suavizacao as f32;
-        let descida = (total - 1 - i) as f32 / suavizacao as f32;
-        let envelope = subida.min(descida).min(1.0);
-        // A fase é calculada em `f64`: em `f32`, tons agudos e longos perderiam precisão.
-        let fase = 2.0 * std::f64::consts::PI * f64::from(frequencia) * i as f64 / f64::from(TAXA);
-        let amostra = (fase.sin() as f32 * envelope * volume * 32767.0).round() as i16;
-        wav.extend_from_slice(&amostra.to_le_bytes());
+    for &amostra in amostras {
+        let amostra = if amostra.is_nan() { 0.0 } else { amostra.clamp(-1.0, 1.0) };
+        wav.extend_from_slice(&((amostra * 32767.0).round() as i16).to_le_bytes());
     }
     wav
 }
@@ -158,5 +173,54 @@ mod tests {
             let wav = tom_wav(frequencia, 100, 0.5);
             assert_eq!(wav.len(), 44 + 2 * 4_410, "frequência {frequencia}");
         }
+    }
+
+    /// Impressão digital (FNV-1a de 64 bits) de uma lista de bytes: muda se qualquer byte mudar.
+    fn impressao(bytes: &[u8]) -> u64 {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        hash
+    }
+
+    #[test]
+    fn tom_wav_continua_igual() {
+        // Valores tirados do código de ANTES de separar `wav_de_amostras`: o M0b (botão de som)
+        // depende de `tom_wav` sair byte a byte igual.
+        let wav = tom_wav(440.0, 300, 0.4);
+        assert_eq!(wav.len(), 26_504);
+        assert_eq!(impressao(&wav), 0x63f9_9152_5108_8c1d);
+        let primeiros: [u8; 64] = [
+            82, 73, 70, 70, 128, 103, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0, 1, 0, 68, 172, 0, 0, 136,
+            88, 1, 0, 2, 0, 16, 0, 100, 97, 116, 97, 92, 103, 0, 0, 0, 0, 4, 0, 15, 0, 33, 0, 59, 0, 92, 0, 131, 0, 177, 0,
+            229, 0, 31, 1,
+        ];
+        assert_eq!(&wav[..64], &primeiros[..]);
+    }
+
+    #[test]
+    fn wav_de_amostras_tem_cabecalho_valido() {
+        let wav = wav_de_amostras(&[0.0, 0.5, -0.5, 1.0]);
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert_eq!(&wav[8..12], b"WAVE");
+        assert_eq!(u16_em(&wav, 20), 1, "formato 1 = PCM");
+        assert_eq!(u16_em(&wav, 22), 1, "um canal");
+        assert_eq!(u32_em(&wav, 24), TAXA, "taxa de amostragem");
+        assert_eq!(u16_em(&wav, 34), 16, "bits por amostra");
+        assert_eq!(&wav[36..40], b"data");
+        assert_eq!(wav.len(), 44 + 2 * 4);
+        assert_eq!(u32_em(&wav, 4) as usize, wav.len() - 8);
+        assert_eq!(u32_em(&wav, 40), 8);
+        assert_eq!(amostras(&wav), vec![0, 16384, -16384, 32767]);
+        // Sem amostras: um WAV válido e vazio.
+        assert_eq!(wav_de_amostras(&[]).len(), 44);
+    }
+
+    #[test]
+    fn wav_de_amostras_prende_valores_fora_de_1() {
+        let wav = wav_de_amostras(&[2.0, -2.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+        assert_eq!(amostras(&wav), vec![32767, -32767, 0, 32767, -32767]);
     }
 }

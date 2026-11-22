@@ -45,8 +45,18 @@ pub enum Passo {
     /// Se `valida` for falso, elas vão e voltam (a troca não formou combinação).
     Troca { antes: Board, a: usize, b: usize, valida: bool },
     /// Pedras somem. `tabuleiro` é o tabuleiro ANTES de limpar; `celulas` são as que somem;
-    /// `ativadas` são as casas de pedras especiais (e Supernovas) que dispararam.
-    Limpeza { tabuleiro: Board, celulas: Vec<usize>, ativadas: Vec<usize>, supernova: bool, ganho: u64 },
+    /// `ativadas` são as casas de pedras especiais (e Supernovas) que dispararam. `cadeia` é o
+    /// número da limpeza na jogada (1 = a primeira, 2 = a primeira cascata...) e `criou` diz se
+    /// ela fez nascer uma pedra especial. Os dois servem para escolher o efeito sonoro.
+    Limpeza {
+        tabuleiro: Board,
+        celulas: Vec<usize>,
+        ativadas: Vec<usize>,
+        supernova: bool,
+        ganho: u64,
+        cadeia: u32,
+        criou: bool,
+    },
     /// As pedras caem. `tabuleiro` é o tabuleiro DEPOIS da queda; `origens[destino]` é a casa
     /// de onde a pedra veio (`linha * 8 + coluna`); número negativo = pedra nova, que nasceu
     /// acima do tabuleiro.
@@ -80,12 +90,14 @@ pub fn montar(antes: Board, a: usize, b: usize, resultado: &MoveResult, nivel_fi
     }
     for evento in &resultado.events {
         match evento {
-            Event::Clear { board, cells, activated, earned, .. } => passos.push(Passo::Limpeza {
+            Event::Clear { board, cells, activated, creations, chain, earned, .. } => passos.push(Passo::Limpeza {
                 tabuleiro: *board,
                 celulas: cells.clone(),
                 ativadas: activated.iter().map(casa_da_ativacao).collect(),
                 supernova: activated.iter().any(|ativacao| matches!(ativacao, Activation::Supernova(_))),
                 ganho: *earned,
+                cadeia: *chain,
+                criou: !creations.is_empty(),
             }),
             Event::Fall { board, falls, .. } => {
                 passos.push(Passo::Queda { tabuleiro: *board, origens: falls.clone() });
@@ -505,6 +517,8 @@ mod tests {
             ativadas,
             supernova: false,
             ganho: 0,
+            cadeia: 1,
+            criou: false,
         };
         assert!(perto(duracao_ms(&limpeza(vec![], vec![1, 2, 3])), 270.0));
         assert!(duracao_ms(&limpeza(vec![0], vec![0, 1])) >= 340.0);
@@ -698,5 +712,33 @@ mod tests {
             }
         }
         assert!(jogadas > 200);
+    }
+
+    #[test]
+    fn limpeza_guarda_a_cadeia_e_se_criou_pedra_especial() {
+        // Semente 4: a 1ª limpeza cria uma pedra especial e a 2ª (a cascata) não.
+        let mut game = Game::with_random(lcg_random(4));
+        let (antes, a, b, resultado) = jogar(&mut game).unwrap();
+        let passos = montar(antes, a, b, &resultado, game.level);
+        let limpezas: Vec<(u32, bool)> = passos
+            .iter()
+            .filter_map(|passo| match passo {
+                Passo::Limpeza { cadeia, criou, .. } => Some((*cadeia, *criou)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(limpezas, vec![(1, true), (2, false)]);
+        // Semente 9: quatro limpezas seguidas, nenhuma cria pedra.
+        let mut game = Game::with_random(lcg_random(9));
+        let (antes, a, b, resultado) = jogar(&mut game).unwrap();
+        let passos = montar(antes, a, b, &resultado, game.level);
+        let limpezas: Vec<(u32, bool)> = passos
+            .iter()
+            .filter_map(|passo| match passo {
+                Passo::Limpeza { cadeia, criou, .. } => Some((*cadeia, *criou)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(limpezas, vec![(1, false), (2, false), (3, false), (4, false)]);
     }
 }

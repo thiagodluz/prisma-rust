@@ -41,7 +41,13 @@ chave fixa do app; ver "Assinatura").
 - **O comando roda de dentro de `game/`.** A ferramenta ignora `-p prisma_game` e usa o
   pacote da pasta onde está. Da raiz ela pegaria o motor (que não depende do `miniquad`) e
   pararia com "no miniquad is found in the dependencies tree".
-- **Imagens dentro do executável** (`include_bytes!`). O APK não leva a pasta `assets`.
+- **Imagens dentro do executável** (`include_bytes!`); os efeitos sonoros são gerados pelo código.
+  **Música e ambiente são a exceção:** os 9 arquivos OGG (uns 15 MB) vão na pasta `assets` do
+  APK (`assets = "sons"` em `game/Cargo.toml`, que vira `assets/musica/` e `assets/ambiente/`).
+  Eles não ficam no git: o passo **"Preparar os sons"** do fluxo os recria com
+  `prisma_tools audio game/sons` antes de gerar o APK (veja `docs/notes/audio.md`).
+  Depois de assinar, o passo **"Conferir os sons e o tamanho do APK"** reprova se faltar algum
+  dos 9 arquivos dentro do APK ou se o APK passar de **60 MB**, e imprime o tamanho.
 
 ## Instalar no celular
 
@@ -124,7 +130,17 @@ Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
    jogada, e o Zen intacto;
 8. **atualiza por cima:** instala o mesmo APK de novo (`adb install -r`, como o jogador fará
    quando sair uma versão nova, já que a chave é fixa) e abre: modo, partidas e recordes iguais;
-9. confere que os recordes do fim não são menores que os da primeira reabertura.
+9. confere que os recordes do fim não são menores que os da primeira reabertura;
+10. **som (M3):** confere que o app avisou que os efeitos ficaram prontos
+    (`PRISMA_M3 pronto efeitos=..`, nenhum `PRISMA_M3 erro`), vai para o Zen e faz uma jogada que
+    tem de **pedir pelo menos um efeito** (`PRISMA_M3 efeito ..`); toca no **♪** e espera a folha
+    de Som abrir (até 10 s: o app só escreve a posição dos botões dela, `liga_musica`,
+    `liga_ambiente` e `fechar_som`, quando ela abre); liga a **música** e o **ambiente**, cada um
+    com **até 20 s para carregar** (`PRISMA_M3 carregado tipo=musica|ambiente ..`; um
+    `PRISMA_M3 erro` ou o app fechando nesse meio-tempo reprova na hora); tira a foto
+    `10-som` (com a folha aberta); **mede a memória** do app (`adb shell dumpsys meminfo`: imprime
+    as linhas `TOTAL` e guarda `meminfo.txt`; só informa, nunca reprova); fecha a folha e faz mais
+    uma jogada, que tem de terminar com a música e o ambiente tocando.
 
 Se o app avisar no registro que não conseguiu gravar (`PRISMA_M2 erro_ao_gravar <motivo>`), o
 teste para na hora com esse motivo. Como o `logcat -c` de cada reabertura apaga o registro, o de
@@ -141,7 +157,10 @@ em `game/src/app.rs` e `rodar_jogo` em `game/src/main.rs`): a posição do tabul
 `animacao_terminou`, `modo=..`, `novo_jogo ..`, `fim ..`) e, desde o M2 (salvar), linhas que
 começam com `PRISMA_M2`: `aberto modo=.. zen=<novo|arquivo|estragado>:<pontos> classico=..
 melhor_zen=.. melhor_classico=..` (o que ele leu ao abrir), `gravado modo=.. pontos=..` e
-`erro_ao_gravar <motivo>`. O teste lê essas linhas. Ele guarda o registro de erros
+`erro_ao_gravar <motivo>`. Desde o M3 há também as linhas `PRISMA_M3` do som (`pronto`, `efeito`,
+`carregado`, `erro`: veja `docs/notes/audio.md`) e os botões `som`, `fechar_som`, `liga_musica` e
+`liga_ambiente` na lista de posições (os três últimos só enquanto a folha de Som está aberta). O
+teste lê essas linhas. Ele guarda o registro de erros
 (`logcat.txt`) e uma foto da tela de cada etapa como artefato `emulador-android-<versão>`, e
 imprime um resumo no próprio registro da execução (as fotos saem em texto, entre
 `TELA_BASE64_INICIO` e `TELA_BASE64_FIM`).

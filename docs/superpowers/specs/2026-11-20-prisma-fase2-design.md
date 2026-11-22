@@ -107,7 +107,7 @@ O comando `prisma_tools imagens` (Rust, pasta `tools/`) lê os WebP da pasta do 
 ### 5.5 Som
 
 - **Efeitos:** portar as notas de `sound.js` (frequência, duração, volume, forma de onda) para Rust, gerando as amostras em memória, montando bytes WAV e carregando com o Macroquad. Os testes conferem duração e volume máximo; quem julga o som é o ouvido do Thiago.
-- **Música e ambientes:** arquivos OGG. Os dois MP3 (`stream`, `rainforest`) precisam virar OGG (ffmpeg na preparação) ou ficam de fora até lá. Os arquivos não entram no git: um script os baixa e confere o SHA-256, como o `download-audio.mjs`. O tamanho do APK é conferido no M3.
+- **Música e ambientes:** arquivos OGG. Os dois MP3 (`stream`, `rainforest`) precisam virar OGG (ffmpeg na preparação) ou ficam de fora até lá. Os arquivos não entram no git: um script os baixa e confere o SHA-256, como o `download-audio.mjs`. O tamanho do APK é conferido no M3: com os 9 sons o APK ficou com 48 084 723 bytes (uns 46 MiB), abaixo do limite de 60 MB que o fluxo do Android confere.
 - **Volumes:** três canais (efeitos, música, ambiente), de 0 a 100.
 
 ### 5.6 Saves e preferências

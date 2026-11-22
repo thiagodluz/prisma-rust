@@ -14,6 +14,7 @@
 11-21 20:35:50.219  3597  3633 I SAPP    : PRISMA_M1 botao=confirmar x=221 y=346
 11-21 20:35:50.224  3597  3633 I SAPP    : PRISMA_M1 pronto modo=zen
 11-21 20:35:50.224  3597  3633 I SAPP    : PRISMA_M2 aberto modo=zen zen=novo:0 classico=novo:0 melhor_zen=0 melhor_classico=0
+11-21 20:35:50.230  3597  3633 I SAPP    : PRISMA_M3 pronto efeitos=20 ms=75
 11-21 20:36:09.448  4727  4727 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
 11-21 20:36:09.449  4727  4727 I AndroidRuntime: Using default boot image
 11-21 20:36:09.449  4727  4727 I AndroidRuntime: Leaving lock profiling enabled
@@ -201,3 +202,12 @@
 11-21 20:37:09.420  3597  3633 I SAPP    : PRISMA_M1 jogada valida=true pontos=405 nivel=1
 11-21 20:37:10.186  3597  3633 I SAPP    : PRISMA_M2 erro_ao_gravar não consegui criar a pasta /data/data/x/files: Permission denied (os error 13)
 11-21 20:37:10.186  3597  3633 I SAPP    : PRISMA_M1 animacao_terminou
+11-21 20:37:11.201  3597  3633 I SAPP    : PRISMA_M3 efeito sinal=combinacao elevacao=0
+11-21 20:37:11.601  3597  3633 I SAPP    : PRISMA_M3 efeito sinal=cascata elevacao=1
+11-21 20:37:13.010  3597  3633 I SAPP    : PRISMA_M1 botao=som x=300 y=96
+11-21 20:37:13.010  3597  3633 I SAPP    : PRISMA_M1 botao=fechar_som x=482 y=240
+11-21 20:37:13.010  3597  3633 I SAPP    : PRISMA_M1 botao=liga_musica x=110 y=520
+11-21 20:37:13.010  3597  3633 I SAPP    : PRISMA_M1 botao=liga_ambiente x=110 y=700
+11-21 20:37:15.600  3597  3633 I SAPP    : PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=482
+11-21 20:37:16.900  3597  3633 I SAPP    : PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63
+11-21 20:37:20.000  3597  3633 I SAPP    : PRISMA_M3 erro tipo=musica nome=magic-puzzle texto=arquivo não encontrado: musica/magic-puzzle.ogg

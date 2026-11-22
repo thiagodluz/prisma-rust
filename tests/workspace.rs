@@ -61,3 +61,107 @@ fn ultimo_pedaco_do_package_name_e_o_nome_do_programa() {
          chama \"{programa}\". O app fecharia ao abrir no Android (librust.so not found)."
     );
 }
+
+/// O trecho de `texto` que vai da linha `cabecalho` (por exemplo `[package.metadata.android]`)
+/// até a linha anterior ao próximo cabeçalho `[...]`. Serve para conferir em que seção do
+/// `Cargo.toml` uma linha está.
+fn secao<'a>(texto: &'a str, cabecalho: &str) -> &'a str {
+    let mut inicio = None;
+    let mut posicao = 0;
+    for linha in texto.split_inclusive('\n') {
+        match inicio {
+            None if linha.trim() == cabecalho => inicio = Some(posicao),
+            Some(comeco) if linha.trim_start().starts_with('[') => return &texto[comeco..posicao],
+            _ => {}
+        }
+        posicao += linha.len();
+    }
+    match inicio {
+        Some(comeco) => &texto[comeco..],
+        None => panic!("não achei a seção {cabecalho}"),
+    }
+}
+
+/// As músicas e os ambientes são preparados na pasta `game/sons` e o gerador de APK a leva para
+/// dentro do APK (`assets/musica/...`, `assets/ambiente/...`). Sem esta linha o APK sai sem
+/// som de fundo e o jogo só mostra o aviso de que o áudio não começou.
+#[test]
+fn os_sons_vao_como_assets_do_android() {
+    let texto = ler("game/Cargo.toml");
+    let android = secao(&texto, "[package.metadata.android]");
+    assert!(
+        android.lines().any(|linha| linha.trim() == "assets = \"sons\""),
+        "falta `assets = \"sons\"` em [package.metadata.android] do game/Cargo.toml: o APK sairia sem as músicas e os ambientes."
+    );
+}
+
+/// O Macroquad descompacta o OGG inteiro ao carregar. Em modo de desenvolvimento (que é o que o
+/// CI usa para o APK) isso leva uns 5 s por música sem otimização; com as dependências
+/// otimizadas, bem menos. O código do jogo continua em modo de desenvolvimento (fácil de depurar).
+#[test]
+fn dependencias_otimizadas_no_modo_de_desenvolvimento() {
+    let texto = ler("Cargo.toml");
+    let secao_do_perfil = secao(&texto, "[profile.dev.package.\"*\"]");
+    assert!(
+        secao_do_perfil.lines().any(|linha| linha.trim() == "opt-level = 2"),
+        "falta `opt-level = 2` em [profile.dev.package.\"*\"] do Cargo.toml da raiz: carregar uma música ficaria lento no celular."
+    );
+}
+
+/// Os sons são recriados por `prisma_tools audio` e nunca entram no git (a spec pede isso).
+#[test]
+fn a_pasta_de_sons_nao_entra_no_git() {
+    let texto = ler(".gitignore");
+    assert!(
+        texto.lines().any(|linha| linha.trim().trim_start_matches('/') == "game/sons/"),
+        ".gitignore deveria ignorar game/sons/ (os sons são gerados por `prisma_tools audio`)."
+    );
+}
+
+/// As nove obras de terceiros precisam estar citadas, e o Ruído suave (o único CC BY, que exige
+/// atribuição) com a licença certa.
+#[test]
+fn os_creditos_de_audio_citam_os_9_trabalhos_e_a_licenca_cc_by() {
+    let texto = ler("docs/CREDITOS-AUDIO.md");
+    let obras = [
+        "Magic Puzzle In-Game 1",
+        "Cozy Puzzle In-Game 3",
+        "Space City",
+        "Soft Rain Loop",
+        "cicadas.wav",
+        "Rain Sound and Rainforest.mp3",
+        "creek loop",
+        "distant rain and thunder",
+        "Gentle White Noise Air Tone",
+    ];
+    for obra in obras {
+        assert!(texto.contains(obra), "docs/CREDITOS-AUDIO.md não cita a obra \"{obra}\".");
+    }
+    assert!(texto.contains("CC BY 4.0"), "docs/CREDITOS-AUDIO.md não cita a licença CC BY 4.0 do Ruído suave.");
+    assert!(texto.contains("Geoff Bremner"), "docs/CREDITOS-AUDIO.md não atribui o Ruído suave a Geoff Bremner.");
+}
+
+/// O fluxo do Android tem de preparar os sons antes de gerar o APK e reprovar um APK sem os nove
+/// arquivos ou grande demais. Aqui só se confere que os passos existem e citam os nove arquivos;
+/// quem os executa é o CI.
+#[test]
+fn o_fluxo_do_android_prepara_os_sons_e_confere_o_apk() {
+    let texto = ler(".github/workflows/android.yml");
+    for trecho in ["Preparar os sons", "audio game/sons", "60 * 1024 * 1024"] {
+        assert!(texto.contains(trecho), ".github/workflows/android.yml não tem \"{trecho}\".");
+    }
+    let sons = [
+        "musica/magic-puzzle",
+        "musica/cozy-puzzle",
+        "musica/space-city",
+        "ambiente/stream",
+        "ambiente/rain-soft",
+        "ambiente/forest-cicadas",
+        "ambiente/rainforest",
+        "ambiente/rain-thunder",
+        "ambiente/soft-noise",
+    ];
+    for som in sons {
+        assert!(texto.contains(som), ".github/workflows/android.yml não confere o som {som} dentro do APK.");
+    }
+}
