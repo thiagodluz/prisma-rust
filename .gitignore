@@ -1,2 +1,4 @@
 /target
 /tools/target
+# Sons preparados por `prisma_tools audio` (nunca entram no git; ver docs/notes/audio.md)
+/game/sons/

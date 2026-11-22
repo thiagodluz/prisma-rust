@@ -6,14 +6,17 @@ license = "GPL-3.0-only"
 description = "Ferramentas do Prisma: teste do celular virtual e gerador de imagens"
 
 # "Features" são peças opcionais do programa. A `imagens` liga a biblioteca `image`
-# (só o gerador de imagens usa). O CI do celular virtual compila sem ela
-# (`--no-default-features`), então não baixa nem compila nada além da biblioteca padrão.
+# (só o gerador de imagens usa) e a `audio` liga a `sha2` (só o preparo dos sons usa, para
+# conferir o SHA-256). O CI do celular virtual compila sem elas (`--no-default-features`),
+# então não baixa nem compila nada além da biblioteca padrão.
 [features]
-default = ["imagens"]
+default = ["imagens", "audio"]
 imagens = ["dep:image"]
+audio = ["dep:sha2"]
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "webp"], optional = true }
+sha2 = { version = "0.10", optional = true }
 
 # Esta tabela vazia faz de `tools/` um workspace só dele: o gerador de APK do jogo
 # (cargo-quad-apk, que carrega um Cargo antigo) nunca enxerga estas dependências.
