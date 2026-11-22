@@ -13,3 +13,10 @@ members = ["game"]
 # `tools/` é um pacote à parte (tem o próprio [workspace] e Cargo.lock): o gerador de APK
 # carrega um Cargo antigo e não pode enxergar as dependências das ferramentas.
 exclude = ["tools"]
+
+# O Macroquad descompacta cada música (OGG) inteira ao carregar, e o CI gera o APK em modo de
+# desenvolvimento (debug). Sem otimizar as bibliotecas, carregar uma música travava o jogo por uns
+# 5 s. Com `opt-level = 2` só nas dependências (o código do jogo continua em modo de
+# desenvolvimento, fácil de depurar) isso cai muito. O teste `tests/workspace.rs` confere a seção.
+[profile.dev.package."*"]
+opt-level = 2

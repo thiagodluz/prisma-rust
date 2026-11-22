@@ -26,6 +26,23 @@ jobs:
       - name: Deixar o Cargo.lock no formato antigo
         run: sed -i 's/^version = 4$/version = 3/' Cargo.lock
 
+      # As músicas e os ambientes do Zen não ficam no git: `prisma_tools audio` baixa a release v1.4.2
+      # do Prisma em JS (onde os 9 áudios vêm embutidos), confere o SHA-256 de cada um e prepara os
+      # ambientes (laços de 60 s a 44,1 kHz, com o `ffmpeg`). A pasta `game/sons` resultante vai para
+      # dentro do APK (`assets = "sons"` em game/Cargo.toml). Só a parte de áudio da ferramenta é
+      # compilada (`--no-default-features --features audio`), sem o gerador de imagens.
+      - name: Preparar os sons
+        run: |
+          set -eu
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          ffmpeg -version | head -n 1
+          cargo run --release --manifest-path tools/Cargo.toml --no-default-features --features audio -- audio game/sons
+          echo "== o que ficou em game/sons =="
+          ls -laR game/sons
+
       # Imagem oficial do tutorial do Macroquad: já traz Android SDK/NDK e o cargo-quad-apk.
       # Modo debug, mas SEM assinar (`--nosign`): quem assina é o passo seguinte, com a chave fixa
       # do app (por isso o app instala por cima do anterior e mantém a partida salva).
@@ -136,6 +153,33 @@ jobs:
             readelf -d "$LIB" | grep -E "NEEDED|SONAME" || true
             readelf --dyn-syms -W "$LIB" | grep -E "JNI_OnLoad|Java_|ANativeActivity|android_main| main$" | head -20 || true
           done
+
+      # Reprova o fluxo se o APK não tiver os 9 áudios (sem eles o Zen não teria música nem
+      # ambiente) ou se passar de 60 MB (a spec pede um APK de tamanho razoável).
+      - name: Conferir os sons e o tamanho do APK
+        run: |
+          set -eu
+          APK="apk-assinado/prisma-rust.apk"
+          LISTA="$(unzip -Z1 "$APK")"
+          FALTAM=""
+          for arquivo in musica/magic-puzzle musica/cozy-puzzle musica/space-city \
+                         ambiente/stream ambiente/rain-soft ambiente/forest-cicadas \
+                         ambiente/rainforest ambiente/rain-thunder ambiente/soft-noise; do
+            if ! grep -qx "assets/$arquivo.ogg" <<< "$LISTA"; then
+              FALTAM="$FALTAM assets/$arquivo.ogg"
+            fi
+          done
+          if [ -n "$FALTAM" ]; then
+            echo "::error::O APK não tem estes sons:$FALTAM. Confira o passo 'Preparar os sons' e o 'assets = \"sons\"' de game/Cargo.toml."
+            exit 1
+          fi
+          TAMANHO="$(stat -c %s "$APK")"
+          LIMITE=$((60 * 1024 * 1024))
+          echo "Tamanho do APK: $TAMANHO bytes (cerca de $((TAMANHO / 1024 / 1024)) MB); o limite é 60 MB."
+          if [ "$TAMANHO" -gt "$LIMITE" ]; then
+            echo "::error::O APK ficou com $((TAMANHO / 1024 / 1024)) MB, acima do limite de 60 MB."
+            exit 1
+          fi
 
       - name: Guardar o APK
         uses: actions/upload-artifact@v4

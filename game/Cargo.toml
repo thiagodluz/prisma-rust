@@ -27,6 +27,10 @@ label = "Prisma (Rust)"
 # Ícones do app (gerados por `prisma_tools imagens`, da pasta tools/, em android_res/mipmap-*/).
 res = "android_res"
 icon = "@mipmap/ic_launcher"
+# A pasta `sons` (músicas e ambientes do Zen, preparados por `prisma_tools audio`, que não entram
+# no git) vai para dentro do APK como `assets/musica/...` e `assets/ambiente/...`. O jogo lê de lá.
+# O teste `tests/workspace.rs` avisa se esta linha sumir.
+assets = "sons"
 
 # Permissão para vibrar (o botão "Vibrar" do teste do M0b).
 [[package.metadata.android.permission]]
