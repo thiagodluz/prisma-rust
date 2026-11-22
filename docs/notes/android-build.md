@@ -94,7 +94,7 @@ para o gerador de APK nunca ver as dependências dele). No fluxo ele é compilad
 emulador (`--no-default-features`, sem nenhuma dependência) e roda assim:
 `tools/target/release/prisma_tools emulador apk resultado`. Termina com código 1 se qualquer
 conferência falhar, e nesse caso ainda guarda o registro, imprime o resumo e a foto da tela.
-Os testes dele (45 hoje, com um "celular falso" que imita o `adb` e o jogo) rodam em qualquer
+Os testes dele (com um "celular falso" que imita o `adb` e o jogo) rodam em qualquer
 computador, sem emulador: `cargo test --manifest-path tools/Cargo.toml`. O programa de
 `adb` pode ser trocado com a variável `ADB`, e cada chamada do `adb` tem limite de 60 s.
 
@@ -104,6 +104,13 @@ o dedo já andou quando o app "vê" o toque, e o arrasto pode começar na casa d
 Android 14 numa execução, `toque x=198` para um arrasto que saiu de `x=179`). O `draganddrop`
 segura o dedo parado uns 0,5 s no começo e só depois anda; assim o ponto de partida registrado é
 exatamente o pedido.
+
+**Imagens do jogo:** o mesmo programa gera as imagens e os ícones a partir da pasta do Prisma em JS:
+`cargo run --release --manifest-path tools/Cargo.toml -- imagens <pasta-do-prisma-js> game`.
+Os PNG já estão no repositório; só precisa rodar se a origem mudar. Só grava depois de ter tudo
+pronto, então uma imagem de origem errada não deixa o jogo pela metade. Um teste à parte compara
+com os PNG do repositório (rodado só sob pedido):
+`PRISMA_JS=<pasta-do-prisma-js> cargo test --manifest-path tools/Cargo.toml -- --ignored`.
 
 O "teste de vida" do M0b (contador de aberturas, som, vibração) saiu do emulador; a tela dele
 continua no app e abre com `--tela diagnostico` no PC.

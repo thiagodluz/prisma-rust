@@ -102,7 +102,7 @@ Só o estilo "Novo" (pedras ilustradas, o padrão do JS) vem primeiro.
 
 ### 5.4 Imagens
 
-Um script `tools/prepare_assets.py` (Python + Pillow) lê os WebP/JPG da pasta do Prisma em JS, recorta as sete pedras de cada atlas (grade 3×3), centraliza cada pedra pelo pixel visível (alfa acima de 50%, como o JS faz), reduz ao tamanho do jogo e grava PNG em `game/assets/`. Os PNG entram no repositório, junto com o aviso de licença CC BY-SA 4.0 e a atribuição.
+O comando `prisma_tools imagens` (Rust, pasta `tools/`) lê os WebP da pasta do Prisma em JS, recorta as sete pedras de cada atlas (grade 3×3), centraliza cada pedra pelo pixel visível (alfa acima de 50%, como o JS faz), reduz ao tamanho do jogo e grava PNG em `game/assets/` (e os ícones do Android em `game/android_res/`). Os PNG entram no repositório, junto com o aviso de licença CC BY-SA 4.0 e a atribuição.
 
 ### 5.5 Som
 

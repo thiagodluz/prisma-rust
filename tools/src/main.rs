@@ -5,9 +5,11 @@
 
 mod base64;
 mod emulador;
+#[cfg(feature = "imagens")]
+mod imagens;
 mod registro;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// O que a pessoa pediu na linha de comando, já separado e conferido.
@@ -49,12 +51,33 @@ fn main() -> ExitCode {
         Ok(Comando::Emulador { apk, saida }) => {
             ExitCode::from(u8::try_from(emulador::rodar_do_programa(&apk, &saida)).unwrap_or(1))
         }
-        // Provisório: o comando `imagens` entra na Task 5.
-        Ok(comando) => {
-            eprintln!("ERRO: ainda não implementado: {comando:?}");
+        Ok(Comando::Imagens { origem, jogo }) => rodar_imagens(&origem, &jogo),
+    }
+}
+
+/// Gera as imagens do jogo e lista cada arquivo gravado. Sai com 1 se alguma imagem de origem
+/// estiver faltando ou errada (e, nesse caso, não grava nada).
+#[cfg(feature = "imagens")]
+fn rodar_imagens(origem: &Path, jogo: &Path) -> ExitCode {
+    match imagens::preparar(origem, jogo) {
+        Ok(arquivos) => {
+            for arquivo in &arquivos {
+                println!("gerado {}", arquivo.display());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(erro) => {
+            eprintln!("ERRO: {erro}");
             ExitCode::from(1)
         }
     }
+}
+
+/// O programa do celular virtual é compilado sem a biblioteca de imagens (`--no-default-features`).
+#[cfg(not(feature = "imagens"))]
+fn rodar_imagens(_origem: &Path, _jogo: &Path) -> ExitCode {
+    eprintln!("ERRO: este programa foi compilado sem o comando `imagens` (use o padrão, sem --no-default-features)");
+    ExitCode::from(1)
 }
 
 #[cfg(test)]

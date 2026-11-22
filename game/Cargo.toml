@@ -19,7 +19,7 @@ macroquad = { version = "0.4", features = ["audio"] }
 # `tests/workspace.rs` avisa. (O Prisma em JS usa com.thiagodluz.prisma, então os dois convivem.)
 package_name = "com.thiagodluz.prisma_game"
 label = "Prisma (Rust)"
-# Ícones do app (gerados por tools/prepare_assets.py em android_res/mipmap-*/).
+# Ícones do app (gerados por `prisma_tools imagens`, da pasta tools/, em android_res/mipmap-*/).
 res = "android_res"
 icon = "@mipmap/ic_launcher"
 
