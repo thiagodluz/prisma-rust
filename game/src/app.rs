@@ -8,6 +8,7 @@
 
 use crate::efeitos::{elevacao_da_cadeia, sinal_da_limpeza, Efeito, Sinal};
 use crate::formato::Recordes;
+use crate::fundo::Desejado;
 use crate::input::{Acao, Evento, Gestos};
 use crate::layout::{Rect, TelaJogo, TelaSom};
 use crate::linha::{montar, Passo, Reprodutor};
@@ -917,8 +918,6 @@ impl App {
     }
 
     /// Entrega (e esvazia) os efeitos sonoros que chegaram a hora de tocar.
-    // Ainda sem uso fora dos testes: o laço do `main.rs` passa a chamar na Task 6.
-    #[allow(dead_code)]
     pub fn sons(&mut self) -> Vec<Efeito> {
         std::mem::take(&mut self.sons)
     }
@@ -1006,10 +1005,22 @@ impl App {
     }
 
     /// As escolhas de som de agora (volumes, interruptores, faixas, respiração).
-    // TEMPORÁRIO: sem uso fora dos testes até a Task 6 (o laço do `main.rs` e a camada de áudio).
-    #[allow(dead_code)]
     pub fn preferencias(&self) -> Preferencias {
         self.preferencias.clone()
+    }
+
+    /// O que a música e o ambiente deveriam estar tocando agora: nada fora do Zen; no Zen, só o que
+    /// está ligado, com o volume do canal dividido por 100 (0,0 a 1,0).
+    pub fn som_desejado(&self) -> Desejado {
+        if self.modo != Mode::Zen {
+            return Desejado::default();
+        }
+        let preferencias = &self.preferencias;
+        let volume = |canal| f32::from(preferencias.volumes.de(canal)) / 100.0;
+        Desejado {
+            musica: preferencias.musica_ligada.then(|| (preferencias.musica, volume(Canal::Musica))),
+            ambiente: preferencias.ambiente_ligado.then(|| (preferencias.ambiente, volume(Canal::Ambiente))),
+        }
     }
 
     /// Onde o guia de respiração está agora; `None` no Clássico e com o guia desligado.
@@ -1031,8 +1042,6 @@ impl App {
 
     /// A camada de áudio conta que a Música ou o Ambiente falhou (`Some(texto)`) ou está bem
     /// (`None`). Os efeitos não têm aviso próprio.
-    // TEMPORÁRIO: sem uso fora dos testes até a Task 6 (a camada de áudio).
-    #[allow(dead_code)]
     pub fn erro_de_audio(&mut self, canal: Canal, texto: Option<String>) {
         match canal {
             Canal::Musica => self.erros_de_audio[0] = texto,
@@ -1051,6 +1060,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::formato::partida_para_json;
+    use crate::fundo::Desejado;
     use crate::input::Evento;
     use crate::layout::{cell_rect, tela_jogo, Rect, TelaJogo};
     use crate::linha::{Passo, Reprodutor};
@@ -3053,5 +3063,53 @@ mod tests {
         assert_eq!(app.aviso_de_audio(), Some(texto), "o Ambiente ainda falhou");
         tocar_em(&mut app, &tela, tela.som.liga_ambiente.unwrap());
         assert_eq!(app.aviso_de_audio(), None);
+    }
+
+    // ----- O que o som de fundo deve tocar -----
+
+    fn tudo_ligado() -> Preferencias {
+        Preferencias { musica_ligada: true, ambiente_ligado: true, ..Preferencias::default() }
+    }
+
+    #[test]
+    fn som_desejado_e_vazio_no_classico_e_volta_ao_trocar_para_o_zen() {
+        let mut app = App::com_sementes(7, 9).com_preferencias(tudo_ligado());
+        let no_zen = app.som_desejado();
+        assert_eq!(no_zen.musica, Some((Musica::CozyPuzzle, 0.70)));
+        assert_eq!(no_zen.ambiente, Some((Ambiente::Chuva, 0.65)));
+        app.apertar(Botao::Classico);
+        assert_eq!(app.som_desejado(), Desejado::default(), "no Clássico não há música nem ambiente");
+        app.apertar(Botao::Zen);
+        assert_eq!(app.som_desejado(), no_zen, "ao voltar para o Zen, volta tudo como estava");
+    }
+
+    #[test]
+    fn som_desejado_usa_o_volume_do_canal_dividido_por_100() {
+        let mut preferencias = tudo_ligado();
+        preferencias.volumes = Volumes { efeitos: 10, musica: 35, ambiente: 100 };
+        let app = App::com_sementes(7, 9).com_preferencias(preferencias);
+        let desejado = app.som_desejado();
+        assert_eq!(desejado.musica, Some((Musica::CozyPuzzle, 35.0 / 100.0)));
+        assert_eq!(desejado.ambiente, Some((Ambiente::Chuva, 1.0)));
+        // O volume 0 continua pedindo a faixa (em silêncio): subir a barra não recarrega nada.
+        let mut mudo = tudo_ligado();
+        mudo.volumes = Volumes { efeitos: 0, musica: 0, ambiente: 0 };
+        let desejado = App::com_sementes(7, 9).com_preferencias(mudo).som_desejado();
+        assert_eq!((desejado.musica, desejado.ambiente), (Some((Musica::CozyPuzzle, 0.0)), Some((Ambiente::Chuva, 0.0))));
+    }
+
+    #[test]
+    fn som_desejado_so_inclui_o_que_esta_ligado() {
+        let com = |musica_ligada, ambiente_ligado| {
+            let preferencias = Preferencias { musica_ligada, ambiente_ligado, musica: Musica::SpaceCity, ambiente: Ambiente::Trovoada, ..Preferencias::default() };
+            App::com_sementes(7, 9).com_preferencias(preferencias).som_desejado()
+        };
+        assert_eq!(com(false, false), Desejado::default());
+        assert_eq!(com(true, false), Desejado { musica: Some((Musica::SpaceCity, 0.70)), ambiente: None });
+        assert_eq!(com(false, true), Desejado { musica: None, ambiente: Some((Ambiente::Trovoada, 0.65)) });
+        // Os efeitos não entram: "Sons do jogo" desligado não mexe na música nem no ambiente.
+        let preferencias = Preferencias { sons_do_jogo: false, ..tudo_ligado() };
+        let desejado = App::com_sementes(7, 9).com_preferencias(preferencias).som_desejado();
+        assert!(desejado.musica.is_some() && desejado.ambiente.is_some());
     }
 }

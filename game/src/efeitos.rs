@@ -4,9 +4,6 @@
 //! onda). `renderizar` transforma a lista em amostras de som e `wav` entrega os bytes de um
 //! arquivo WAV pronto para o Macroquad tocar. Tudo aqui é "puro": só números entram e saem, sem
 //! tocar nada, então dá para testar sem placa de som.
-//!
-//! TEMPORÁRIO: o `allow` abaixo sai na Task 6, quando a camada de áudio passa a usar o módulo.
-#![allow(dead_code)]
 
 use crate::tom::{wav_de_amostras, TAXA};
 use prisma_engine::TileKind;

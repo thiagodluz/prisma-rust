@@ -4,10 +4,12 @@
 
 mod app;
 mod assets;
+mod audio;
 mod cenas;
 mod contador;
 mod efeitos;
 mod formato;
+mod fundo;
 mod input;
 mod layout;
 mod linha;
@@ -223,6 +225,8 @@ fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32) -> Vec<String> {
 /// sem `--dados` não lê nem grava nada (ver `usa_arquivos`).
 async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<String>) {
     let com_arquivos = usa_arquivos(&cena, &foto, &dados);
+    // O som só liga no jogo de verdade: foto e cena são imagens paradas e não carregam áudio.
+    let com_audio = cena.is_none() && foto.is_none();
     let mut app = match cena {
         Some(nome) => cenas::cena(&nome).unwrap_or_else(|| {
             eprintln!("cena desconhecida: {nome}");
@@ -232,6 +236,7 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
         None => App::novo(),
     };
     let sprites = render::Sprites::load();
+    let mut audio_do_jogo = com_audio.then(audio::Audio::novo);
     let calcular_tela = |app: &App| layout::tela_jogo(screen_width(), screen_height(), app.modo() == Mode::Zen);
 
     let mut quadro = 0u32;
@@ -257,6 +262,23 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
         // (No modo foto o jogo fica parado, para a cena sair exatamente como foi montada.)
         if foto.is_none() {
             app.avancar(get_frame_time() * 1000.0);
+        }
+
+        // Sons: os efeitos que chegaram a hora de tocar e o que a música e o ambiente do Zen
+        // deveriam estar fazendo agora (o planejador compara com o que está carregado).
+        let efeitos = app.sons();
+        if let Some(audio) = audio_do_jogo.as_mut() {
+            if !efeitos.is_empty() {
+                let volumes = app.preferencias().volumes;
+                for efeito in efeitos {
+                    audio.tocar(efeito, &volumes);
+                }
+            }
+            let comandos = fundo::planejar(&audio.atual(), &app.som_desejado());
+            if !comandos.is_empty() {
+                // Carregar uma música trava o quadro por um instante; o tempo vai para o registro.
+                audio.aplicar(comandos, &mut app).await;
+            }
         }
 
         // O modo pode ter mudado com o toque: o desenho e o registro usam o layout novo.
