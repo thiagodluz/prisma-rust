@@ -27,27 +27,105 @@ jobs:
         run: sed -i 's/^version = 4$/version = 3/' Cargo.lock
 
       # Imagem oficial do tutorial do Macroquad: já traz Android SDK/NDK e o cargo-quad-apk.
-      # Modo debug (assinado com uma chave de teste).
+      # Modo debug, mas SEM assinar (`--nosign`): quem assina é o passo seguinte, com a chave fixa
+      # do app (por isso o app instala por cima do anterior e mantém a partida salva).
+      # O `versionCode` do app é o número da execução (sobe a cada execução; escrito só aqui no
+      # executor, sem commitar), para o Android aceitar uma atualização por cima da outra.
       # O comando roda de dentro de `game/` (-w): a ferramenta ignora `-p` e só enxerga o
       # pacote da pasta onde está; da raiz ela pegaria o motor e reclamaria que não acha o
       # miniquad. O APK sai em target/android-artifacts/debug/apk/ na raiz do projeto.
       # A imagem traz um Rust antigo (1.79, de 2024); o motor usa `Option::is_none_or`, que só
       # existe a partir do 1.82. Por isso o contêiner atualiza o Rust antes e instala de novo
       # os alvos do Android para a versão nova.
-      - name: Gerar o APK
+      - name: Gerar o APK (sem assinar)
         run: |
+          sed -i "s/^version_code = .*/version_code = ${GITHUB_RUN_NUMBER}/" game/Cargo.toml
+          grep -n "^version_code = ${GITHUB_RUN_NUMBER}$" game/Cargo.toml
           docker run --rm -v "$PWD":/root/src -w /root/src/game notfl3/cargo-apk sh -c '
             rustup update stable &&
             rustup default stable &&
             rustup target add armv7-linux-androideabi aarch64-linux-android i686-linux-android &&
             rustc --version &&
-            cargo quad-apk build'
+            cargo quad-apk build --nosign'
+          echo "== o que saiu em target/android-artifacts/debug/apk/ =="
+          ls -la target/android-artifacts/debug/apk/
+
+      # Assina com a chave fixa do app, guardada nos segredos do repositório
+      # (PRISMA_RUST_KEYSTORE_BASE64 e PRISMA_RUST_KEYSTORE_PASSWORD; ver "Assinatura" em
+      # docs/notes/android-build.md). O arquivo da chave só existe numa pasta temporária do
+      # executor e é apagado no passo seguinte. Depois de assinar, confere se a impressão digital
+      # do certificado é a de tools/assinatura-sha256.txt: se for outra, o APK não seguiria
+      # instalando por cima do anterior, então o fluxo reprova em vez de publicar.
+      - name: Assinar o APK com a chave fixa
+        env:
+          KEYSTORE_BASE64: ${{ secrets.PRISMA_RUST_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.PRISMA_RUST_KEYSTORE_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_BASE64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+            echo "::error::Faltam os segredos PRISMA_RUST_KEYSTORE_BASE64 e/ou PRISMA_RUST_KEYSTORE_PASSWORD do repositório. Veja a seção 'Assinatura' de docs/notes/android-build.md."
+            exit 1
+          fi
+
+          # O APK sem assinatura: o único .apk da pasta (se houver mais de um, não adivinho).
+          ls -la target/android-artifacts/debug/apk/
+          SEM_ASSINAR=""
+          CONTAGEM=0
+          for arquivo in target/android-artifacts/debug/apk/*.apk; do
+            [ -e "$arquivo" ] || continue
+            case "$arquivo" in *unaligned*) continue ;; esac
+            SEM_ASSINAR="$arquivo"
+            CONTAGEM=$((CONTAGEM + 1))
+          done
+          if [ "$CONTAGEM" -ne 1 ]; then
+            echo "::error::Esperava achar um único .apk (fora os 'unaligned') em target/android-artifacts/debug/apk/ e achei $CONTAGEM."
+            exit 1
+          fi
+          echo "APK sem assinatura: $SEM_ASSINAR"
+
+          # As ferramentas do Android SDK (a versão mais nova das que o executor traz).
+          FERRAMENTAS="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          FERRAMENTAS="${FERRAMENTAS%/}"
+          echo "Ferramentas do Android: $FERRAMENTAS"
+
+          CHAVE="$RUNNER_TEMP/prisma-rust.keystore"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$CHAVE"
+          ALINHADO="$RUNNER_TEMP/prisma-rust-alinhado.apk"
+          mkdir -p apk-assinado
+          FINAL="apk-assinado/prisma-rust.apk"
+
+          "$FERRAMENTAS/zipalign" -p -f 4 "$SEM_ASSINAR" "$ALINHADO"
+          "$FERRAMENTAS/apksigner" sign \
+            --ks "$CHAVE" --ks-key-alias prisma \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD \
+            --out "$FINAL" "$ALINHADO"
+          rm -f "$ALINHADO"
+
+          SAIDA="$("$FERRAMENTAS/apksigner" verify --print-certs -v "$FINAL")"
+          echo "$SAIDA"
+          LINHA="$(grep -m 1 'Signer #1 certificate SHA-256 digest:' <<< "$SAIDA" || true)"
+          OBTIDO="$(sed 's/.*digest: *//' <<< "$LINHA" | tr -d ' \r' | tr 'A-F' 'a-f')"
+          ESPERADO="$(tr -d ' \r\n' < tools/assinatura-sha256.txt | tr 'A-F' 'a-f')"
+          echo "Impressão digital esperada: $ESPERADO"
+          echo "Impressão digital obtida:   $OBTIDO"
+          if [ -z "$OBTIDO" ] || [ "$OBTIDO" != "$ESPERADO" ]; then
+            echo "::error::A impressão digital do APK assinado não é a de tools/assinatura-sha256.txt. Os segredos têm a chave certa?"
+            exit 1
+          fi
+          ls -l "$FINAL"
+
+      # Apaga o arquivo da chave do executor, mesmo se um passo anterior tiver falhado.
+      - name: Apagar o arquivo da chave
+        if: always()
+        run: rm -f "$RUNNER_TEMP/prisma-rust.keystore" "$RUNNER_TEMP/prisma-rust-alinhado.apk"
 
       # Só informação (não reprova o fluxo): lista o que tem dentro do APK e quais funções cada
       # biblioteca de cada processador expõe para o Android (JNI_OnLoad, Java_...).
       - name: Conferir o que tem dentro do APK
         run: |
-          APK="$(ls target/android-artifacts/debug/apk/*.apk | head -n 1)"
+          APK="apk-assinado/prisma-rust.apk"
+          FERRAMENTAS="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          "${FERRAMENTAS%/}/aapt2" dump badging "$APK" | head -n 5 || true
           unzip -l "$APK"
           mkdir -p /tmp/apk-aberto && unzip -q -o "$APK" -d /tmp/apk-aberto
           for abi in armeabi-v7a arm64-v8a x86; do
@@ -62,7 +140,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: prisma-debug-apk
-          path: target/android-artifacts/debug/apk/*.apk
+          path: apk-assinado/*.apk
           if-no-files-found: error
 
       # Release de endereço fixo, para baixar o .apk direto no celular, sem zip e sem login:
@@ -75,13 +153,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp "$(ls target/android-artifacts/debug/apk/*.apk | head -n 1)" prisma-rust.apk
+          cp apk-assinado/prisma-rust.apk prisma-rust.apk
           gh release delete apk-mais-recente --cleanup-tag --yes || true
           gh release create apk-mais-recente prisma-rust.apk \
             --target "$GITHUB_SHA" \
             --prerelease \
             --title "APK mais recente (versão de teste)" \
-            --notes "Gerado automaticamente a partir do commit ${GITHUB_SHA::7}. É uma versão de teste, assinada com uma chave de debug que muda a cada geração: desinstale a versão anterior antes de instalar esta."
+            --notes "Gerado automaticamente a partir do commit ${GITHUB_SHA::7}. É uma versão de teste, assinada com a chave fixa do app: instala por cima da anterior e mantém a partida salva. Se você ainda tem uma versão assinada com a chave antiga (de teste, que mudava a cada geração), desinstale-a uma vez antes de instalar esta."
 
   # Abre o APK num celular virtual e joga (Zen e Clássico, com toque e arrasto), conferindo
   # as jogadas pelo registro do app; guarda o registro de erros e as fotos da tela. Roda depois

@@ -20,6 +20,9 @@ serde_json = "1"
 # que o Android acha a biblioteca (libprisma_game.so). Se mudar um, mude o outro; o teste
 # `tests/workspace.rs` avisa. (O Prisma em JS usa com.thiagodluz.prisma, então os dois convivem.)
 package_name = "com.thiagodluz.prisma_game"
+# O número da versão para o Android: no CI sobe a cada execução (o fluxo reescreve esta linha só no
+# executor, sem commitar); o Android só aceita instalar por cima uma versão com número igual ou maior.
+version_code = 1
 label = "Prisma (Rust)"
 # Ícones do app (gerados por `prisma_tools imagens`, da pasta tools/, em android_res/mipmap-*/).
 res = "android_res"
