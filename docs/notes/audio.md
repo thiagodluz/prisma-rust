@@ -39,9 +39,12 @@ ambientes originais chegam a 12 minutos (mais de 250 MB só de um som), o que de
 Com o laço de 60 s cada ambiente pesa uns 21 MB na memória (10 MB o `soft-noise`, que é mono).
 
 As músicas ficam inteiras (de 117 s a 124 s, uns 41 a 44 MB cada, decodificadas). Pela conta,
-**música + ambiente ligados** passam de 60 MB de memória. Esse número é **estimativa**: a fase 10
-do celular virtual mede o real (`dumpsys meminfo`, linhas `TOTAL`, arquivo `meminfo.txt` no
-artefato) com os dois ligados.
+**música + ambiente ligados** passam de 60 MB de memória (estimativa). A fase 10 do celular
+virtual mede o real (`dumpsys meminfo`, linhas `TOTAL`, arquivo `meminfo.txt` no artefato) com os
+dois ligados. Na primeira execução (emulador x86, música Cozy Puzzle e ambiente Chuva), o **PSS
+total do app inteiro** ficou em **131,8 MB no Android 30** e **179,2 MB no Android 34**. Os dois
+carregaram sem erro: a música em 0,5 s (Android 30) e 1,0 s (Android 34), o ambiente em 0,06 s e
+0,14 s; os 20 efeitos ficaram prontos em 0,17 s e 0,63 s.
 
 O `Audio` guarda **no máximo uma música e um ambiente** por vez; ao trocar de faixa, a anterior é
 parada antes de a nova carregar (`parar` em `game/src/audio.rs`).
@@ -54,9 +57,9 @@ parada antes de a nova carregar (`parar` em `game/src/audio.rs`).
 | No PC (para jogar e testar) | `game/sons/musica/*.ogg` e `game/sons/ambiente/*.ogg`; a variável `PRISMA_SONS` troca a pasta |
 | Dentro do APK | `assets/musica/*.ogg` e `assets/ambiente/*.ogg` (`assets = "sons"` em `game/Cargo.toml`) |
 
-Os sons somam uns 15 MB. O APK sem eles tinha 26,9 MB; **a projeção é de uns 42 MB** e o fluxo
-reprova acima de **60 MB**. O número medido no CI entra na spec (item "tamanho do APK com as
-músicas") depois da primeira execução.
+Os sons somam uns 15 MB. O APK sem eles tinha 26,9 MB; com os 9 sons ele ficou com
+**48 084 723 bytes (uns 46 MiB; o fluxo escreve "cerca de 45 MB")**, medido no CI. O fluxo reprova
+acima de **60 MB**.
 
 ## Linhas que o app escreve no registro
 
