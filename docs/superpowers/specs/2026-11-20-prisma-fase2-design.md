@@ -119,7 +119,7 @@ JSON em arquivo no diretório privado do app (Android: `getFilesDir()` via JNI; 
 - Pacote `com.thiagodluz.prisma.rust`, **diferente** do `com.thiagodluz.prisma` do JS, para os dois conviverem no celular.
 - Retrato fixo; minSdk 26 e targetSdk 35, como o JS, se a ferramenta permitir; sem permissão de internet; `VIBRATE` só entra no M4.
 - Ícone a partir de `icon-512.png`.
-- **Assinatura:** a mesma chave do Prisma em JS (decisão do Thiago em 22/11/2026, no lugar de uma chave nova só para este app), guardada como segredo do GitHub do `prisma-rust` com os mesmos quatro nomes que o JS usa (`PRISMA_KEYSTORE_BASE64` e os outros). Os pacotes são diferentes (`com.thiagodluz.prisma` e `com.thiagodluz.prisma_game`), então os dois apps convivem no celular. Do M2 em diante isso é obrigatório (os saves dependem de atualizar por cima); no M0 e no M1 reinstalar é aceitável.
+- **Assinatura:** uma chave nova só para este app, guardada como segredo do GitHub (como o JS faz com `PRISMA_KEYSTORE_BASE64`). Do M2 em diante isso é obrigatório (os saves dependem de atualizar por cima); no M0 e no M1 reinstalar é aceitável.
 - Instalação: baixar o APK do resultado (artefato) do GitHub Actions no próprio celular.
 
 ### 5.8 Integração contínua (GitHub Actions)
@@ -160,7 +160,7 @@ Cada marco recebe o seu plano de implementação só quando o anterior termina, 
 - `serde_json` no jogo (o motor continua sem dependências).
 - Efeitos sonoros sintetizados em Rust, em vez de gravar WAV com outra ferramenta.
 - PNG recortados e versionados em `game/assets/`; áudio baixado e verificado por script, fora do git.
-- Mesma chave de assinatura do Prisma em JS (decisão do Thiago em 22/11/2026; a primeira ideia era uma chave própria, separada).
+- Chave de assinatura própria deste app, separada da do Prisma em JS.
 - Marcos pequenos, cada um com seu plano.
 
 ## 9. Fica para quem constrói
@@ -171,4 +171,4 @@ Tamanho em pixels das pedras, cores e fontes do painel, curvas e durações das 
 
 - Licença do código do `prisma-rust` (o JS usa GPL-3.0-only).
 - Repositório público ou privado no GitHub.
-- Guardar a chave de assinatura: resolvido, é a do Prisma em JS, que ele já guarda (segredos no GitHub e cópia de segurança fora dele); falta só cadastrar os segredos no `prisma-rust`.
+- Guardar a chave de assinatura (segredo no GitHub e uma cópia de segurança fora dele).
