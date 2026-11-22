@@ -6,7 +6,7 @@ mod app;
 mod assets;
 mod cenas;
 mod contador;
-// Ainda sem uso até o `salvar` (Task 3) chamar; o `allow` sai na Task 4.
+// Ainda sem uso até o `main` chamar `App::abrir` (Task 5); o `allow` sai na Task 5.
 #[allow(dead_code)]
 mod formato;
 mod input;
@@ -14,7 +14,7 @@ mod layout;
 mod linha;
 mod plataforma;
 mod render;
-// Ainda sem uso até o `App` (Task 4) chamar; o `allow` sai na Task 4.
+// Ainda sem uso até o `main` chamar `App::abrir` (Task 5); o `allow` sai na Task 5.
 #[allow(dead_code)]
 mod salvar;
 mod tom;
