@@ -11,6 +11,8 @@ license = "GPL-3.0-only"
 prisma_engine = { path = ".." }
 # Biblioteca que abre a janela, desenha, lê toque e (mais tarde) toca som.
 macroquad = { version = "0.4", features = ["audio"] }
+# Ler e gravar os arquivos de partida e recordes (JSON), no mesmo formato do Prisma em JS.
+serde_json = "1"
 
 # Dados para o gerador de APK. Só o essencial por enquanto.
 [package.metadata.android]

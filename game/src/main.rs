@@ -6,6 +6,9 @@ mod app;
 mod assets;
 mod cenas;
 mod contador;
+// Ainda sem uso até o `salvar` (Task 3) chamar; o `allow` sai na Task 4.
+#[allow(dead_code)]
+mod formato;
 mod input;
 mod layout;
 mod linha;
