@@ -110,13 +110,35 @@ Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
 3. **Clássico:** toca na aba, confere que começou com 0 pontos e faz 5 jogadas tocando numa
    pedra e depois na vizinha (`adb shell input tap`);
 4. toca em "Novo jogo" e em "Confirmar" e confere que os pontos voltaram a 0;
-5. volta para a aba Zen e confere que os pontos do Zen continuam lá.
+5. volta para a aba Zen e confere que os pontos do Zen continuam lá;
+6. **fecha o app de verdade** (`adb shell am force-stop`, como tirá-lo dos apps recentes), apaga o
+   registro e abre de novo: o app tem de voltar no Zen (`PRISMA_M2 aberto modo=zen ...`), com a
+   partida do Zen vinda **do arquivo** com os mesmos pontos, a do Clássico (zerada pelo Novo
+   jogo) e recordes (`melhor_zen`, `melhor_classico`) que cobrem tudo o que foi jogado;
+7. **Clássico em separado:** toca na aba Clássico, faz uma jogada, **espera até 5 s o app avisar
+   que gravou** (`PRISMA_M2 gravado modo=classico pontos=..`: só depois é seguro fechar), fecha e
+   abre de novo: agora o app tem de voltar **no Clássico** (o modo ativo foi guardado), com a
+   jogada, e o Zen intacto;
+8. **atualiza por cima:** instala o mesmo APK de novo (`adb install -r`, como o jogador fará
+   quando sair uma versão nova, já que a chave é fixa) e abre: modo, partidas e recordes iguais;
+9. confere que os recordes do fim não são menores que os da primeira reabertura.
+
+Se o app avisar no registro que não conseguiu gravar (`PRISMA_M2 erro_ao_gravar <motivo>`), o
+teste para na hora com esse motivo. Como o `logcat -c` de cada reabertura apaga o registro, o de
+cada sessão fica guardado à parte (`logcat-sessao-0.txt`, `-1`, `-2`; o da última sessão é o
+`logcat.txt`), e duas fotos novas saem: `8-reaberto-zen` e `9-atualizado`. O app do teste não é
+"depurável", então o teste não consegue estragar um arquivo de dentro do celular para ver o app
+se recuperar; essa parte (arquivo estragado vira cópia `.corrupt` e só aquele item recomeça) é
+coberta pelos testes do próprio jogo (`game/src/salvar.rs` e `game/src/app.rs`).
 
 O app escreve no registro do Android linhas que começam com `PRISMA_M1` (função `App::registro`
 em `game/src/app.rs` e `rodar_jogo` em `game/src/main.rs`): a posição do tabuleiro e dos botões,
 **em pixels reais da tela** (para o teste saber onde tocar), e o que acontece no jogo
 (`toque x=.. y=..`, `dica a=.. b=..`, `jogada valida=.. pontos=.. nivel=..`,
-`animacao_terminou`, `modo=..`, `novo_jogo ..`, `fim ..`). O teste lê essas linhas. Ele guarda o registro de erros
+`animacao_terminou`, `modo=..`, `novo_jogo ..`, `fim ..`) e, desde o M2 (salvar), linhas que
+começam com `PRISMA_M2`: `aberto modo=.. zen=<novo|arquivo|estragado>:<pontos> classico=..
+melhor_zen=.. melhor_classico=..` (o que ele leu ao abrir), `gravado modo=.. pontos=..` e
+`erro_ao_gravar <motivo>`. O teste lê essas linhas. Ele guarda o registro de erros
 (`logcat.txt`) e uma foto da tela de cada etapa como artefato `emulador-android-<versão>`, e
 imprime um resumo no próprio registro da execução (as fotos saem em texto, entre
 `TELA_BASE64_INICIO` e `TELA_BASE64_FIM`).
