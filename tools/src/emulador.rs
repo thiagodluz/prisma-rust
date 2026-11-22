@@ -307,9 +307,14 @@ impl Teste<'_> {
         Ok(())
     }
 
+    /// Arrasta o dedo de `de` até `ate` (pontos da TELA). Usa `draganddrop` e não `swipe`: o app lê a
+    /// posição do dedo uma vez por quadro, e no emulador do GitHub os quadros são lentos; com o
+    /// `swipe` o dedo já andou quando o app "vê" o toque e o arrasto começa na casa do lado (isso
+    /// derrubou o Android 14 numa execução). O `draganddrop` segura o dedo parado no começo
+    /// (o tempo de um toque longo, uns 0,5 s) e só depois anda os 200 ms até o fim.
     fn arrastar(&mut self, de: (i32, i32), ate: (i32, i32)) -> Result<(), String> {
         let (x1, y1, x2, y2) = (de.0.to_string(), de.1.to_string(), ate.0.to_string(), ate.1.to_string());
-        self.celular.adb(&["shell", "input", "swipe", &x1, &y1, &x2, &y2, "200"])?;
+        self.celular.adb(&["shell", "input", "draganddrop", &x1, &y1, &x2, &y2, "200"])?;
         Ok(())
     }
 
@@ -640,6 +645,7 @@ mod tests {
         pontos_param: bool,
         instalacao_falha: bool,
         sem_convert: bool,
+        quadros_lentos: bool,
         sem_tabuleiro: bool,
         lado_zero_no_registro: bool,
         classico_comeca_com_pontos: bool,
@@ -678,6 +684,8 @@ mod tests {
                 pontos_param: false,
                 instalacao_falha: false,
                 sem_convert: false,
+                // O emulador do GitHub desenha poucos quadros por segundo (é o normal dele).
+                quadros_lentos: true,
                 sem_tabuleiro: false,
                 lado_zero_no_registro: false,
                 classico_comeca_com_pontos: false,
@@ -862,16 +870,26 @@ mod tests {
             }
         }
 
-        fn arrastar(&mut self, de: (i32, i32), ate: (i32, i32)) {
+        /// `segura_no_inicio`: o dedo fica parado no ponto de partida antes de andar (`draganddrop`).
+        /// Sem isso (`swipe`), o dedo já anda desde o primeiro instante; o app só lê a posição uma
+        /// vez por quadro, então, com quadros lentos, ele "vê" o toque depois de o dedo ter andado
+        /// (aqui: 60% do caminho) e o arrasto começa na casa errada, como aconteceu de verdade no
+        /// Android 14 do GitHub.
+        fn arrastar(&mut self, de: (i32, i32), ate: (i32, i32), segura_no_inicio: bool) {
             self.arrastos += 1;
             self.relogio_no_ultimo_arrasto = self.relogio_ms;
             self.ruido();
             if self.ignora_toques || !self.aberto {
                 return;
             }
+            let visto = if self.quadros_lentos && !segura_no_inicio {
+                (de.0 + (ate.0 - de.0) * 6 / 10, de.1 + (ate.1 - de.1) * 6 / 10)
+            } else {
+                de
+            };
             let (dx, dy) = self.deslocamento;
-            self.escrever(&format!("PRISMA_M1 toque x={} y={}", de.0 - dx, de.1 - dy));
-            if let (Some(a), Some(b)) = (self.casa_em(de.0 - dx, de.1 - dy), self.casa_em(ate.0 - dx, ate.1 - dy)) {
+            self.escrever(&format!("PRISMA_M1 toque x={} y={}", visto.0 - dx, visto.1 - dy));
+            if let (Some(a), Some(b)) = (self.casa_em(visto.0 - dx, visto.1 - dy), self.casa_em(ate.0 - dx, ate.1 - dy)) {
                 self.tentar_jogada(a, b);
             }
         }
@@ -931,7 +949,11 @@ mod tests {
                     resposta_ok("")
                 }
                 ["shell", "input", "swipe", x1, y1, x2, y2, "200"] => {
-                    self.arrastar((numero(x1)?, numero(y1)?), (numero(x2)?, numero(y2)?));
+                    self.arrastar((numero(x1)?, numero(y1)?), (numero(x2)?, numero(y2)?), false);
+                    resposta_ok("")
+                }
+                ["shell", "input", "draganddrop", x1, y1, x2, y2, "200"] => {
+                    self.arrastar((numero(x1)?, numero(y1)?), (numero(x2)?, numero(y2)?), true);
                     resposta_ok("")
                 }
                 ["exec-out", "screencap", "-p"] => Ok(Resposta { sucesso: true, texto: vec![0x89, b'P', b'N', b'G', 1, 2, 3], erro: String::new() }),
@@ -995,6 +1017,21 @@ mod tests {
         assert!(pasta.0.join("resultado/logcat.txt").exists());
         assert!(pasta.0.join("resultado/instalacao.txt").exists());
         assert!(!pasta.0.join("resultado/tela-do-erro.png").exists());
+    }
+
+    #[test]
+    fn o_arrasto_segura_o_dedo_no_inicio_para_nao_depender_da_velocidade_dos_quadros() {
+        // Com quadros lentos o app só lê o toque depois de o dedo andar: um `swipe` começaria na
+        // casa errada. O teste usa `draganddrop`, que espera antes de mover; com quadros rápidos
+        // (aqui desligados) qualquer um dos dois funcionaria.
+        let mut lentos = CelularFalso::novo();
+        lentos.quadros_lentos = true;
+        let (resultado, _pasta) = rodar_com(&mut lentos, "quadros_lentos");
+        assert_eq!(resultado, Ok(()), "o arrasto não pode depender da velocidade dos quadros");
+        let mut rapidos = CelularFalso::novo();
+        rapidos.quadros_lentos = false;
+        let (resultado, _pasta) = rodar_com(&mut rapidos, "quadros_rapidos");
+        assert_eq!(resultado, Ok(()));
     }
 
     #[test]
