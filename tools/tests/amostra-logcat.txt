@@ -208,6 +208,17 @@
 11-21 20:37:13.010  3597  3633 I SAPP    : PRISMA_M1 botao=fechar_som x=482 y=240
 11-21 20:37:13.010  3597  3633 I SAPP    : PRISMA_M1 botao=liga_musica x=110 y=520
 11-21 20:37:13.010  3597  3633 I SAPP    : PRISMA_M1 botao=liga_ambiente x=110 y=700
+11-21 20:37:13.900  3597  3633 I SAPP    : PRISMA_M4 carregando tipo=musica
 11-21 20:37:15.600  3597  3633 I SAPP    : PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=482
 11-21 20:37:16.900  3597  3633 I SAPP    : PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63
 11-21 20:37:20.000  3597  3633 I SAPP    : PRISMA_M3 erro tipo=musica nome=magic-puzzle texto=arquivo não encontrado: musica/magic-puzzle.ogg
+11-21 20:37:21.010  3597  3633 I SAPP    : PRISMA_M1 botao=menu x=44 y=96
+11-21 20:37:21.410  3597  3633 I SAPP    : PRISMA_M1 botao=fechar_menu x=482 y=130
+11-21 20:37:21.410  3597  3633 I SAPP    : PRISMA_M1 botao=aba_recordes x=130 y=190
+11-21 20:37:21.410  3597  3633 I SAPP    : PRISMA_M1 botao=aba_creditos x=360 y=190
+11-21 20:37:23.010  3597  3633 I SAPP    : PRISMA_M1 botao=liga_vibracao x=110 y=610
+11-21 20:37:23.010  3597  3633 I SAPP    : PRISMA_M1 botao=escolhe_efeitos x=110 y=780
+11-21 20:37:24.100  3597  3633 I SAPP    : PRISMA_M4 vibracao toque=ligou
+11-21 20:37:24.900  3597  3633 I SAPP    : PRISMA_M4 intensidade valor=vibrante
+11-21 20:37:26.500  3597  3633 I SAPP    : PRISMA_M4 vibracao toque=curto
+11-21 20:37:27.200  3597  3633 I SAPP    : PRISMA_M4 vibracao recusada

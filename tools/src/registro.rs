@@ -3,7 +3,8 @@
 //! O jogo escreve no registro do Android linhas como `PRISMA_M1 jogada valida=true pontos=60 nivel=1`
 //! (o que o jogador vê e faz) e, desde o M2, linhas `PRISMA_M2 ...` (o que o app guardou e leu do
 //! armazenamento: `aberto`, `gravado`, `erro_ao_gravar`) e, desde o M3, linhas `PRISMA_M3 ...` (o som:
-//! `pronto`, `efeito`, `carregado`, `erro`).
+//! `pronto`, `efeito`, `carregado`, `erro`) e, desde o M4, linhas `PRISMA_M4 ...` (o acabamento:
+//! `vibracao`, `carregando`, `intensidade`).
 //! Este módulo transforma cada uma dessas linhas num valor de Rust (`Linha`), sem depender de
 //! `grep` nem de `sed`. É código puro (só texto entra e sai), por isso é fácil de testar.
 //!
@@ -62,7 +63,7 @@ impl std::fmt::Display for Aberto {
     }
 }
 
-/// Uma linha `PRISMA_M1 ...`, `PRISMA_M2 ...` ou `PRISMA_M3 ...` do registro, já lida.
+/// Uma linha `PRISMA_M1 ...`, `PRISMA_M2 ...`, `PRISMA_M3 ...` ou `PRISMA_M4 ...` do registro, já lida.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Linha {
     /// `PRISMA_M1 pronto modo=zen`: o jogo abriu.
@@ -101,6 +102,16 @@ pub enum Linha {
     /// `PRISMA_M3 erro tipo=musica nome=cozy-puzzle texto=...`: um som falhou. O `texto` aqui é o RESTO
     /// da linha depois de `erro` (o tipo, o nome e o motivo), para a mensagem dizer qual som falhou.
     ErroDeSom { texto: String },
+    /// `PRISMA_M4 vibracao toque=curto`: o app pediu uma vibração (`curto`, `especial`, `nivel` ou `ligou`).
+    Vibracao { toque: String },
+    /// `PRISMA_M4 vibracao recusada`: o aparelho recusou o toque de "ligou" e a vibração voltou a desligada.
+    VibracaoRecusada,
+    /// `PRISMA_M4 carregando tipo=ambiente`: o app começou a carregar uma música ou um ambiente (o aviso
+    /// "Carregando…" aparece na folha de Som).
+    Carregando { tipo: String },
+    /// `PRISMA_M4 intensidade valor=vibrante`: o jogador trocou a intensidade dos efeitos (`suave`,
+    /// `padrao` ou `vibrante`).
+    Intensidade { valor: String },
 }
 
 /// Os marcadores que o jogo põe no começo de cada linha dele. O logcat escreve hora, número do
@@ -108,10 +119,11 @@ pub enum Linha {
 const MARCADOR_M1: &str = "PRISMA_M1 ";
 const MARCADOR_M2: &str = "PRISMA_M2 ";
 const MARCADOR_M3: &str = "PRISMA_M3 ";
+const MARCADOR_M4: &str = "PRISMA_M4 ";
 
 /// Qual marcador a linha tem (vale o que aparece primeiro) e o texto que vem depois dele.
 fn depois_do_marcador(texto: &str) -> Option<(&'static str, &str)> {
-    [MARCADOR_M1, MARCADOR_M2, MARCADOR_M3]
+    [MARCADOR_M1, MARCADOR_M2, MARCADOR_M3, MARCADOR_M4]
         .into_iter()
         .filter_map(|marcador| Some((texto.find(marcador)?, marcador)))
         .min_by_key(|(posicao, _)| *posicao)
@@ -152,6 +164,9 @@ pub fn ler_linha(texto: &str) -> Option<Linha> {
     }
     if marcador == MARCADOR_M3 {
         return ler_linha_m3(depois);
+    }
+    if marcador == MARCADOR_M4 {
+        return ler_linha_m4(depois);
     }
     let palavras: Vec<&str> = depois.split_whitespace().collect();
     let primeira = *palavras.first()?;
@@ -252,7 +267,41 @@ fn ler_linha_m3(depois: &str) -> Option<Linha> {
     }
 }
 
-/// Todas as linhas `PRISMA_M1`, `PRISMA_M2` e `PRISMA_M3` de um despejo do logcat, na ordem em que
+/// Lê o que vem depois de `PRISMA_M4 `. Só entende o que o teste do celular usa: os toques de vibração
+/// (`curto`, `especial`, `nivel`, `ligou`), a recusa, o `carregando` de música e ambiente e os três
+/// valores de intensidade. Qualquer outro valor é ignorado, nunca pânico.
+fn ler_linha_m4(depois: &str) -> Option<Linha> {
+    let palavras: Vec<&str> = depois.split_whitespace().collect();
+    match *palavras.first()? {
+        "vibracao" => {
+            if palavras.get(1) == Some(&"recusada") {
+                return Some(Linha::VibracaoRecusada);
+            }
+            let toque = campo(&palavras, "toque")?;
+            if !["curto", "especial", "nivel", "ligou"].contains(&toque) {
+                return None;
+            }
+            Some(Linha::Vibracao { toque: toque.to_string() })
+        }
+        "carregando" => {
+            let tipo = campo(&palavras, "tipo")?;
+            if tipo != "musica" && tipo != "ambiente" {
+                return None;
+            }
+            Some(Linha::Carregando { tipo: tipo.to_string() })
+        }
+        "intensidade" => {
+            let valor = campo(&palavras, "valor")?;
+            if !["suave", "padrao", "vibrante"].contains(&valor) {
+                return None;
+            }
+            Some(Linha::Intensidade { valor: valor.to_string() })
+        }
+        _ => None,
+    }
+}
+
+/// Todas as linhas `PRISMA_M1`, `PRISMA_M2`, `PRISMA_M3` e `PRISMA_M4` de um despejo do logcat, na ordem em que
 /// apareceram.
 #[derive(Debug)]
 pub struct Registro {
@@ -383,6 +432,58 @@ impl Registro {
         })
     }
 
+    /// Quantos toques de vibração o app pediu (cada `vibracao toque=...` conta uma vez; a recusa não).
+    pub fn toques_de_vibracao(&self) -> usize {
+        self.linhas.iter().filter(|l| matches!(l, Linha::Vibracao { .. })).count()
+    }
+
+    /// Quantas linhas de posição do botão `nome` o registro tem. O app escreve a geometria de novo a
+    /// cada mudança na tela; comparar a contagem de antes e de depois mostra que uma folha abriu DE NOVO.
+    pub fn contar_botoes(&self, nome: &str) -> usize {
+        self.linhas.iter().filter(|l| matches!(l, Linha::Botao { nome: n, .. } if n == nome)).count()
+    }
+
+    /// Quantas vezes o app anotou uma troca de intensidade.
+    pub fn contar_intensidades(&self) -> usize {
+        self.linhas.iter().filter(|l| matches!(l, Linha::Intensidade { .. })).count()
+    }
+
+    /// Quantas vezes o aparelho recusou o toque de "ligou".
+    pub fn recusas_de_vibracao(&self) -> usize {
+        self.linhas.iter().filter(|l| matches!(l, Linha::VibracaoRecusada)).count()
+    }
+
+    /// O nome do último toque de vibração pedido (`curto`, `especial`, `nivel` ou `ligou`).
+    pub fn ultimo_toque_de_vibracao(&self) -> Option<String> {
+        self.linhas.iter().rev().find_map(|l| match l {
+            Linha::Vibracao { toque } => Some(toque.clone()),
+            _ => None,
+        })
+    }
+
+    /// O último valor de intensidade que o app anotou (`suave`, `padrao` ou `vibrante`).
+    pub fn ultimo_valor_de_intensidade(&self) -> Option<String> {
+        self.linhas.iter().rev().find_map(|l| match l {
+            Linha::Intensidade { valor } => Some(valor.clone()),
+            _ => None,
+        })
+    }
+
+    /// O último `carregando` desse tipo veio ANTES do último `carregado` do mesmo tipo (o aviso
+    /// "Carregando…" sai quando a faixa começa a carregar, e a linha `carregado` quando termina)?
+    /// `None` se faltar uma das duas.
+    pub fn carregando_veio_antes(&self, tipo: &str) -> Option<bool> {
+        let posicao = |procurada: &dyn Fn(&Linha) -> bool| self.linhas.iter().rposition(procurada);
+        let carregando = posicao(&|l| matches!(l, Linha::Carregando { tipo: t } if t == tipo))?;
+        let carregada = posicao(&|l| matches!(l, Linha::FaixaCarregada { tipo: t, .. } if t == tipo))?;
+        Some(carregando < carregada)
+    }
+
+    /// Quantas faixas desse tipo (`musica` ou `ambiente`) o app já terminou de carregar.
+    pub fn faixas_carregadas(&self, tipo: &str) -> usize {
+        self.linhas.iter().filter(|l| matches!(l, Linha::FaixaCarregada { tipo: t, .. } if t == tipo)).count()
+    }
+
     /// Existe a linha `novo_jogo` com esse modo e esses pontos?
     pub fn tem_novo_jogo(&self, modo: &str, pontos: u64) -> bool {
         self.linhas
@@ -441,6 +542,10 @@ mod tests {
             Linha::Efeito { .. } => "efeito",
             Linha::FaixaCarregada { .. } => "faixa_carregada",
             Linha::ErroDeSom { .. } => "erro_de_som",
+            Linha::Vibracao { .. } => "vibracao",
+            Linha::VibracaoRecusada => "vibracao_recusada",
+            Linha::Carregando { .. } => "carregando",
+            Linha::Intensidade { .. } => "intensidade",
         }
     }
 
@@ -456,11 +561,11 @@ mod tests {
     fn le_todas_as_linhas_da_amostra_real() {
         let r = Registro::de(AMOSTRA);
         // Contagens conferidas à mão com `grep -c "PRISMA_M1 <tipo>"` no arquivo (70 do M1 + 3 do M2
-        // + 4 botões e 6 linhas do M3).
-        assert_eq!(r.linhas.len(), 83);
+        // + 4 botões e 6 linhas do M3 + 6 botões e 5 linhas do M4).
+        assert_eq!(r.linhas.len(), 94);
         assert_eq!(quantas(&r, "pronto"), 1);
         assert_eq!(quantas(&r, "tabuleiro"), 2);
-        assert_eq!(quantas(&r, "botao"), 19);
+        assert_eq!(quantas(&r, "botao"), 25);
         assert_eq!(quantas(&r, "toque"), 24);
         assert_eq!(quantas(&r, "dica"), 9);
         assert_eq!(quantas(&r, "jogada"), 9);
@@ -836,5 +941,170 @@ mod tests {
         assert_eq!(deslocamento((160, 60), (160, 36)), (0, 24));
         assert_eq!(deslocamento((100, 60), (90, 20)), (10, 40));
         assert_eq!(deslocamento((i32::MIN, i32::MAX), (i32::MAX, i32::MIN)), (i32::MIN, i32::MAX));
+    }
+
+    #[test]
+    fn le_as_linhas_prisma_m4_da_amostra() {
+        let r = Registro::de(AMOSTRA);
+        for (nome, x, y) in [
+            ("menu", 44, 96),
+            ("fechar_menu", 482, 130),
+            ("aba_recordes", 130, 190),
+            ("aba_creditos", 360, 190),
+            ("liga_vibracao", 110, 610),
+            ("escolhe_efeitos", 110, 780),
+        ] {
+            assert_eq!(r.ultimo_botao(nome), Some((x, y)), "botão {nome}");
+        }
+        assert_eq!(quantas(&r, "vibracao"), 2);
+        assert_eq!(quantas(&r, "vibracao_recusada"), 1);
+        assert_eq!(quantas(&r, "carregando"), 1);
+        assert_eq!(quantas(&r, "intensidade"), 1);
+        assert_eq!(r.toques_de_vibracao(), 2, "a recusa não conta como toque");
+        assert_eq!(r.ultimo_valor_de_intensidade().as_deref(), Some("vibrante"));
+        assert_eq!(r.carregando_veio_antes("musica"), Some(true));
+        assert_eq!(r.carregando_veio_antes("ambiente"), None, "a amostra não tem o ambiente");
+    }
+
+    #[test]
+    fn cada_linha_m4_e_lida_com_e_sem_o_prefixo_do_logcat() {
+        let prefixo = "11-21 20:36:19.088  3597  3633 I SAPP    : ";
+        let casos: Vec<(&str, Linha)> = vec![
+            ("PRISMA_M4 vibracao toque=curto", Linha::Vibracao { toque: "curto".into() }),
+            ("PRISMA_M4 vibracao toque=especial", Linha::Vibracao { toque: "especial".into() }),
+            ("PRISMA_M4 vibracao toque=nivel", Linha::Vibracao { toque: "nivel".into() }),
+            ("PRISMA_M4 vibracao toque=ligou", Linha::Vibracao { toque: "ligou".into() }),
+            ("PRISMA_M4 vibracao recusada", Linha::VibracaoRecusada),
+            ("PRISMA_M4 carregando tipo=musica", Linha::Carregando { tipo: "musica".into() }),
+            ("PRISMA_M4 carregando tipo=ambiente", Linha::Carregando { tipo: "ambiente".into() }),
+            ("PRISMA_M4 intensidade valor=suave", Linha::Intensidade { valor: "suave".into() }),
+            ("PRISMA_M4 intensidade valor=padrao", Linha::Intensidade { valor: "padrao".into() }),
+            ("PRISMA_M4 intensidade valor=vibrante", Linha::Intensidade { valor: "vibrante".into() }),
+        ];
+        for (texto, esperada) in casos {
+            assert_eq!(ler_linha(texto), Some(esperada.clone()), "sem prefixo: {texto}");
+            let com_prefixo = format!("{prefixo}{texto}");
+            assert_eq!(ler_linha(&com_prefixo), Some(esperada), "com prefixo: {com_prefixo}");
+        }
+    }
+
+    #[test]
+    fn linhas_m4_estranhas_sao_ignoradas_sem_pane() {
+        let estranhas = [
+            "PRISMA_M4 vibracao",                              // falta o toque
+            "PRISMA_M4 vibracao toque=",                       // toque vazio
+            "PRISMA_M4 vibracao toque=forte",                  // toque que o app não tem
+            "PRISMA_M4 vibracao recusado",                     // palavra errada
+            "PRISMA_M4 vibracao erro texto=sem vibrador",      // linha que o teste não usa
+            "PRISMA_M4 carregando",                            // falta o tipo
+            "PRISMA_M4 carregando tipo=",                      // tipo vazio
+            "PRISMA_M4 carregando tipo=efeito",                // efeito não carrega nada de fundo
+            "PRISMA_M4 carregando tipo=filme",                 // tipo desconhecido
+            "PRISMA_M4 intensidade",                           // falta o valor
+            "PRISMA_M4 intensidade valor=",                    // valor vazio
+            "PRISMA_M4 intensidade valor=enorme",              // valor que o app não tem
+            "PRISMA_M4 inventada x=1",                         // tipo que não existe
+            "PRISMA_M4",                                       // só o marcador
+            "PRISMA_M4 ",                                      // marcador e nada mais
+            "PRISMAM4 vibracao toque=curto",                   // marcador errado
+            "PRISMA_M3 vibracao toque=curto",                  // tipo do M4 com o marcador do M3
+            "PRISMA_M1 intensidade valor=suave",               // tipo do M4 com o marcador do M1
+            "PRISMA_M4 carregado tipo=musica nome=x ms=1",     // tipo do M3 com o marcador do M4
+            "PRISMA_M4 efeito sinal=cascata elevacao=1",       // tipo do M3 com o marcador do M4
+        ];
+        for texto in estranhas {
+            assert_eq!(ler_linha(texto), None, "devia ser ignorada: {texto:?}");
+        }
+        let r = Registro::de(
+            "PRISMA_M4 vibracao toque=forte\r\n  PRISMA_M4   vibracao   toque=curto  \r\nPRISMA_M4 intensidade valor=\r\n",
+        );
+        assert_eq!(r.toques_de_vibracao(), 1);
+        assert_eq!(r.ultimo_valor_de_intensidade(), None);
+    }
+
+    #[test]
+    fn toques_de_vibracao_conta_cada_toque_e_nao_a_recusa() {
+        assert_eq!(Registro::de("").toques_de_vibracao(), 0);
+        let r = Registro::de(
+            "PRISMA_M4 vibracao toque=ligou\n\
+             PRISMA_M4 vibracao toque=curto\n\
+             PRISMA_M4 vibracao toque=curto\n\
+             PRISMA_M4 vibracao recusada\n\
+             PRISMA_M3 efeito sinal=cascata elevacao=1\n",
+        );
+        assert_eq!(r.toques_de_vibracao(), 3);
+    }
+
+    #[test]
+    fn carregando_veio_antes_olha_a_ordem_das_ultimas_linhas_do_tipo() {
+        let antes = Registro::de(
+            "PRISMA_M4 carregando tipo=ambiente\nPRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63\n",
+        );
+        assert_eq!(antes.carregando_veio_antes("ambiente"), Some(true));
+        let depois = Registro::de(
+            "PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63\nPRISMA_M4 carregando tipo=ambiente\n",
+        );
+        assert_eq!(depois.carregando_veio_antes("ambiente"), Some(false), "o aviso saiu depois de a faixa carregar");
+        // Valem as ÚLTIMAS de cada: o `carregado` antigo da fase 10 não atrapalha.
+        let religado = Registro::de(
+            "PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63\n\
+             PRISMA_M4 carregando tipo=ambiente\n\
+             PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=70\n",
+        );
+        assert_eq!(religado.carregando_veio_antes("ambiente"), Some(true));
+        let sem_carregado = Registro::de("PRISMA_M4 carregando tipo=ambiente\n");
+        assert_eq!(sem_carregado.carregando_veio_antes("ambiente"), None);
+        let sem_carregando = Registro::de("PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63\n");
+        assert_eq!(sem_carregando.carregando_veio_antes("ambiente"), None);
+        // Cada tipo olha só as linhas dele.
+        let misturado = Registro::de(
+            "PRISMA_M4 carregando tipo=musica\n\
+             PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63\n\
+             PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=480\n",
+        );
+        assert_eq!(misturado.carregando_veio_antes("musica"), Some(true));
+        assert_eq!(misturado.carregando_veio_antes("ambiente"), None);
+    }
+
+    #[test]
+    fn o_ultimo_valor_de_intensidade_vale_e_sem_linha_nao_ha_resposta() {
+        assert_eq!(Registro::de("PRISMA_M1 pronto modo=zen\n").ultimo_valor_de_intensidade(), None);
+        let r = Registro::de(
+            "PRISMA_M4 intensidade valor=vibrante\nPRISMA_M4 intensidade valor=suave\n",
+        );
+        assert_eq!(r.ultimo_valor_de_intensidade().as_deref(), Some("suave"));
+    }
+
+    #[test]
+    fn as_contagens_do_m4_contam_so_o_que_dizem() {
+        let r = Registro::de(
+            "PRISMA_M1 botao=aba_recordes x=1 y=2\n\
+             PRISMA_M1 botao=aba_creditos x=3 y=4\n\
+             PRISMA_M1 botao=aba_recordes x=1 y=2\n\
+             PRISMA_M4 intensidade valor=vibrante\n\
+             PRISMA_M4 intensidade valor=suave\n\
+             PRISMA_M4 vibracao toque=ligou\n\
+             PRISMA_M4 vibracao toque=curto\n\
+             PRISMA_M4 vibracao recusada\n\
+             PRISMA_M4 vibracao recusada\n\
+             PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=63\n\
+             PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms=70\n\
+             PRISMA_M3 carregado tipo=musica nome=cozy-puzzle ms=480\n",
+        );
+        assert_eq!(r.contar_botoes("aba_recordes"), 2, "cada linha de geometria conta uma vez");
+        assert_eq!(r.contar_botoes("aba_creditos"), 1);
+        assert_eq!(r.contar_botoes("menu"), 0);
+        assert_eq!(r.contar_intensidades(), 2);
+        assert_eq!(r.recusas_de_vibracao(), 2);
+        assert_eq!(r.ultimo_toque_de_vibracao().as_deref(), Some("curto"), "a recusa não é um toque");
+        assert_eq!(r.faixas_carregadas("ambiente"), 2);
+        assert_eq!(r.faixas_carregadas("musica"), 1);
+        assert_eq!(r.faixas_carregadas("efeito"), 0);
+        let vazio = Registro::de("");
+        assert_eq!(vazio.contar_botoes("menu"), 0);
+        assert_eq!(vazio.contar_intensidades(), 0);
+        assert_eq!(vazio.recusas_de_vibracao(), 0);
+        assert_eq!(vazio.ultimo_toque_de_vibracao(), None);
+        assert_eq!(vazio.faixas_carregadas("musica"), 0);
     }
 }
