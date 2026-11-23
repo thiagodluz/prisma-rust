@@ -29,6 +29,17 @@ const ICONES_ANDROID: [(&str, u32); 5] = [
     ("xxhdpi", 144),
     ("xxxhdpi", 192),
 ];
+/// O primeiro plano do ícone adaptativo tem 108 dp de lado: (densidade, lado em pixels).
+const PRIMEIRO_PLANO: [(&str, u32); 5] = [
+    ("mdpi", 108),
+    ("hdpi", 162),
+    ("xhdpi", 216),
+    ("xxhdpi", 324),
+    ("xxxhdpi", 432),
+];
+/// A figura ocupa 61% da altura do primeiro plano: a ponta dela cai a 33 dp do centro (33/108),
+/// dentro da zona segura de 66 dp que o Android nunca corta.
+const ALTURA_DA_FIGURA: f64 = 0.61;
 const TRANSPARENTE: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
 /// Um pedaço de pixels visíveis (alfa > 0) ligados entre si; `x1` e `y1` não entram na caixa.
@@ -194,18 +205,155 @@ pub fn centralizar(pedra: &RgbaImage, fator: f64) -> Result<RgbaImage, String> {
     Ok(tela)
 }
 
+/// Os quatro quadradinhos do ícone de onde sai a cor de fundo: cada um tem 6% do lado e começa a
+/// 12% das bordas (por dentro dos cantos arredondados, que são transparentes). Ordem: em cima à
+/// esquerda, em cima à direita, embaixo à esquerda, embaixo à direita.
+fn cantos_do_icone(icone: &RgbaImage) -> [Vec<[u8; 3]>; 4] {
+    let (largura, altura) = icone.dimensions();
+    let faixa = |total: u32, depois: bool| {
+        let pedaco = (f64::from(total) * 0.06).ceil() as u32;
+        let inicio = (f64::from(total) * 0.12).round() as u32;
+        let inicio = if depois { total.saturating_sub(inicio + pedaco) } else { inicio };
+        inicio..(inicio + pedaco).min(total)
+    };
+    let mut cantos: [Vec<[u8; 3]>; 4] = Default::default();
+    for (numero, canto) in cantos.iter_mut().enumerate() {
+        let (xs, ys) = (faixa(largura, numero % 2 == 1), faixa(altura, numero >= 2));
+        for y in ys {
+            for x in xs.clone() {
+                let pixel = icone.get_pixel(x, y);
+                if pixel[3] == 255 {
+                    canto.push([pixel[0], pixel[1], pixel[2]]);
+                }
+            }
+        }
+    }
+    cantos
+}
+
+/// A cor média de uma lista de pixels, ou `None` se a lista é vazia.
+fn media(pixels: &[[u8; 3]]) -> Option<[f64; 3]> {
+    if pixels.is_empty() {
+        return None;
+    }
+    let mut soma = [0.0; 3];
+    for pixel in pixels {
+        for (canal, valor) in soma.iter_mut().zip(pixel) {
+            *canal += f64::from(*valor);
+        }
+    }
+    Some(soma.map(|canal| canal / pixels.len() as f64))
+}
+
+/// A cor de fundo do ícone (para o fundo do ícone adaptativo): a média dos pixels opacos nos
+/// quatro cantos de dentro. Sem nenhum pixel opaco ali, devolve preto.
+pub fn cor_de_fundo_do_icone(icone: &RgbaImage) -> [u8; 3] {
+    let todos: Vec<[u8; 3]> = cantos_do_icone(icone).into_iter().flatten().collect();
+    media(&todos).unwrap_or([0.0; 3]).map(|canal| canal.round() as u8)
+}
+
+/// Quanto o pixel `cor` se afasta do fundo `fundo` (soma das diferenças dos três canais, de 0 a 765).
+fn distancia_ao_fundo(cor: &Rgba<u8>, fundo: [f64; 3]) -> f64 {
+    (0..3).map(|canal| (f64::from(cor[canal]) - fundo[canal]).abs()).sum()
+}
+
+/// O `smoothstep`: sobe de 0 a 1 entre `de` e `ate`, suave nas pontas.
+fn suavizar(valor: f64, de: f64, ate: f64) -> f64 {
+    let t = ((valor - de) / (ate - de)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// O primeiro plano do ícone adaptativo: só a figura do ícone (o losango), sem o fundo, numa tela
+/// transparente de `lado` x `lado`, centrada e com 61% da altura (ver `ALTURA_DA_FIGURA`).
+///
+/// A figura é achada pela diferença para o fundo: o fundo do ícone é um degradê, então a cor de
+/// fundo de cada pixel vem dos quatro cantos de dentro (interpolados), e a opacidade cresce com a
+/// distância a ela, com suavização nas bordas. Ícone sem figura devolve a tela toda transparente.
+pub fn primeiro_plano_do_icone(icone: &RgbaImage, lado: u32) -> RgbaImage {
+    let lado = lado.max(1);
+    let vazio = RgbaImage::from_pixel(lado, lado, TRANSPARENTE);
+    let (largura, altura) = icone.dimensions();
+    let cantos = cantos_do_icone(icone);
+    let todos: Vec<[u8; 3]> = cantos.iter().flatten().copied().collect();
+    let Some(geral) = media(&todos) else { return vazio };
+    let cor_do_canto: Vec<[f64; 3]> = cantos.iter().map(|canto| media(canto).unwrap_or(geral)).collect();
+    // O centro de cada quadradinho (em fração do lado): 15% e 85%. O degradê é linear, então a
+    // interpolação (e a extrapolação, fora dos 15%..85%) dá o fundo de cada ponto.
+    let fundo_em = |x: u32, y: u32| -> [f64; 3] {
+        let u = (f64::from(x) / f64::from(largura) - 0.15) / 0.70;
+        let v = (f64::from(y) / f64::from(altura) - 0.15) / 0.70;
+        let mut fundo = [0.0; 3];
+        for (canal, valor) in fundo.iter_mut().enumerate() {
+            let (a, b, c, d) = (cor_do_canto[0][canal], cor_do_canto[1][canal], cor_do_canto[2][canal], cor_do_canto[3][canal]);
+            *valor = (a * (1.0 - u) + b * u) * (1.0 - v) + (c * (1.0 - u) + d * u) * v;
+        }
+        fundo
+    };
+    let mut figura = icone.clone();
+    for (x, y, pixel) in figura.enumerate_pixels_mut() {
+        let sua_opacidade = f64::from(pixel[3]) / 255.0;
+        let opacidade = suavizar(distancia_ao_fundo(pixel, fundo_em(x, y)), 30.0, 90.0) * sua_opacidade;
+        pixel[3] = (opacidade * 255.0).round() as u8;
+    }
+    let (mut x0, mut x1, mut y0, mut y1) = (u32::MAX, 0, u32::MAX, 0);
+    for (x, y, pixel) in figura.enumerate_pixels() {
+        if pixel[3] >= 128 {
+            x0 = x0.min(x);
+            x1 = x1.max(x + 1);
+            y0 = y0.min(y);
+            y1 = y1.max(y + 1);
+        }
+    }
+    if x1 == 0 {
+        return vazio;
+    }
+    let recorte = imageops::crop_imm(&figura, x0, y0, x1 - x0, y1 - y0).to_image();
+    let nova_altura = ((f64::from(lado) * ALTURA_DA_FIGURA).round() as u32).max(1);
+    let fator = f64::from(nova_altura) / f64::from(recorte.height());
+    let nova_largura = ((f64::from(recorte.width()) * fator).round() as u32).max(1);
+    let reduzida = redimensionar(&recorte, nova_largura, nova_altura);
+    let mut tela = vazio;
+    let dx = (i64::from(lado) - i64::from(nova_largura)) / 2;
+    let dy = (i64::from(lado) - i64::from(nova_altura)) / 2;
+    imageops::replace(&mut tela, &reduzida, dx, dy);
+    tela
+}
+
+/// O `ic_launcher.xml` do ícone adaptativo (Android 8 em diante): o fundo é a cor
+/// `ic_launcher_background` e o primeiro plano é a imagem `ic_launcher_foreground`.
+pub fn xml_do_icone_adaptativo() -> String {
+    concat!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n",
+        "<adaptive-icon xmlns:android=\"http://schemas.android.com/apk/res/android\">\n",
+        "    <background android:drawable=\"@color/ic_launcher_background\"/>\n",
+        "    <foreground android:drawable=\"@mipmap/ic_launcher_foreground\"/>\n",
+        "</adaptive-icon>\n"
+    )
+    .to_string()
+}
+
+/// O `values/ic_launcher_background.xml`: a cor de fundo do ícone adaptativo, em `#RRGGBB`.
+pub fn xml_da_cor_do_icone(cor: [u8; 3]) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n    <color name=\"ic_launcher_background\">#{:02X}{:02X}{:02X}</color>\n</resources>\n",
+        cor[0], cor[1], cor[2]
+    )
+}
+
 fn abrir(caminho: &Path) -> Result<RgbaImage, String> {
     image::open(caminho)
         .map(|imagem| imagem.to_rgba8())
         .map_err(|erro| format!("{}: {erro}", caminho.display()))
 }
 
-/// Gera as 22 imagens de `<jogo>/assets` (21 pedras e o espectro) e os 5 ícones do Android em
-/// `<jogo>/android_res`, a partir da pasta do Prisma em JS. Só grava depois de ter tudo pronto: se
-/// uma imagem de origem estiver errada, nada muda no jogo. Devolve os arquivos gravados.
+/// Gera as 22 imagens de `<jogo>/assets` (21 pedras e o espectro), os 5 ícones do Android e o
+/// ícone adaptativo (5 primeiros planos e 2 arquivos XML) em `<jogo>/android_res`, a partir da
+/// pasta do Prisma em JS. Só grava depois de ter tudo pronto: se uma imagem de origem estiver
+/// errada, nada muda no jogo. Devolve os arquivos gravados.
 pub fn preparar(origem: &Path, jogo: &Path) -> Result<Vec<PathBuf>, String> {
     let assets = jogo.join("assets");
     let mut prontas: Vec<(PathBuf, RgbaImage)> = Vec::new();
+    let mut textos: Vec<(PathBuf, String)> = Vec::new();
     for prefixo in ["gem", "burst", "cross"] {
         let nome = format!("{prefixo}-atlas.webp");
         let atlas = abrir(&origem.join(&nome))?;
@@ -227,6 +375,15 @@ pub fn preparar(origem: &Path, jogo: &Path) -> Result<Vec<PathBuf>, String> {
         let caminho = jogo.join(format!("android_res/mipmap-{densidade}/ic_launcher.png"));
         prontas.push((caminho, redimensionar(&icone, lado, lado)));
     }
+    for (densidade, lado) in PRIMEIRO_PLANO {
+        let caminho = jogo.join(format!("android_res/mipmap-{densidade}/ic_launcher_foreground.png"));
+        prontas.push((caminho, primeiro_plano_do_icone(&icone, lado)));
+    }
+    textos.push((jogo.join("android_res/mipmap-anydpi-v26/ic_launcher.xml"), xml_do_icone_adaptativo()));
+    textos.push((
+        jogo.join("android_res/values/ic_launcher_background.xml"),
+        xml_da_cor_do_icone(cor_de_fundo_do_icone(&icone)),
+    ));
     for (caminho, imagem) in &prontas {
         if let Some(pasta) = caminho.parent() {
             std::fs::create_dir_all(pasta)
@@ -236,7 +393,18 @@ pub fn preparar(origem: &Path, jogo: &Path) -> Result<Vec<PathBuf>, String> {
             .save(caminho)
             .map_err(|erro| format!("{}: {erro}", caminho.display()))?;
     }
-    Ok(prontas.into_iter().map(|(caminho, _)| caminho).collect())
+    for (caminho, texto) in &textos {
+        if let Some(pasta) = caminho.parent() {
+            std::fs::create_dir_all(pasta)
+                .map_err(|erro| format!("{}: {erro}", pasta.display()))?;
+        }
+        std::fs::write(caminho, texto).map_err(|erro| format!("{}: {erro}", caminho.display()))?;
+    }
+    Ok(prontas
+        .into_iter()
+        .map(|(caminho, _)| caminho)
+        .chain(textos.into_iter().map(|(caminho, _)| caminho))
+        .collect())
 }
 
 #[cfg(test)]
@@ -507,12 +675,159 @@ mod tests {
             Rgba([10, 200, 30, 255]),
         );
         gravar_webp(&espectro, &pasta.0.join("spectrum-gem.webp"));
-        RgbaImage::from_fn(512, 512, |x, y| {
-            Rgba([(x / 2) as u8, (y / 2) as u8, 128, 255])
-        })
-        .save(pasta.0.join("icon-512.png"))
-        .unwrap();
+        icone_de_mentira()
+            .save(pasta.0.join("icon-512.png"))
+            .unwrap();
         pasta
+    }
+
+    /// Um ícone de mentira parecido com o de verdade: fundo em degradê na diagonal, a borda de
+    /// fora transparente (os cantos arredondados) e um losango claro no meio (de 50 a 458 de altura).
+    fn icone_de_mentira() -> RgbaImage {
+        RgbaImage::from_fn(512, 512, |x, y| {
+            if x < 16 || y < 16 || x >= 496 || y >= 496 {
+                return TRANSPARENTE;
+            }
+            let (dx, dy) = ((f64::from(x) - 256.0).abs(), (f64::from(y) - 256.0).abs());
+            if dx / 118.0 + dy / 206.0 <= 1.0 {
+                return Rgba([199, 209, 255, 255]);
+            }
+            let t = f64::from(x + y) / 1022.0;
+            let mistura = |a: f64, b: f64| (a + (b - a) * t).round() as u8;
+            Rgba([mistura(46.0, 21.0), mistura(51.0, 23.0), mistura(92.0, 50.0), 255])
+        })
+    }
+
+    /// Um ícone de quatro quadrantes lisos, com a borda de fora transparente: as cores dos
+    /// quatro cantos são conhecidas.
+    fn icone_de_quadrantes(cores: [[u8; 3]; 4]) -> RgbaImage {
+        RgbaImage::from_fn(512, 512, |x, y| {
+            if x < 16 || y < 16 || x >= 496 || y >= 496 {
+                return TRANSPARENTE;
+            }
+            // Uma moldura magenta logo por dentro da borda: quem tirar a cor perto demais da borda erra.
+            if x < 48 || y < 48 || x >= 464 || y >= 464 {
+                return Rgba([255, 0, 255, 255]);
+            }
+            let c = cores[usize::from(y >= 256) * 2 + usize::from(x >= 256)];
+            Rgba([c[0], c[1], c[2], 255])
+        })
+    }
+
+    const LADOS_DO_PRIMEIRO_PLANO: [u32; 5] = [108, 162, 216, 324, 432];
+
+    #[test]
+    fn primeiro_plano_tem_o_lado_pedido() {
+        let icone = icone_de_mentira();
+        for lado in LADOS_DO_PRIMEIRO_PLANO {
+            assert_eq!(primeiro_plano_do_icone(&icone, lado).dimensions(), (lado, lado));
+        }
+        // Só a figura sobra: o canto e o fundo ficam transparentes.
+        let figura = primeiro_plano_do_icone(&icone, 432);
+        assert_eq!(figura.get_pixel(0, 0)[3], 0);
+        assert_eq!(figura.get_pixel(60, 216)[3], 0, "fundo ao lado do losango");
+        assert!(figura.get_pixel(216, 216)[3] >= 250, "o meio do losango é opaco");
+        assert_eq!(figura.get_pixel(216, 216).0[..3], [199, 209, 255], "e mantém a cor");
+    }
+
+    #[test]
+    fn a_figura_cabe_na_zona_segura_de_66_dp() {
+        let icone = icone_de_mentira();
+        for lado in LADOS_DO_PRIMEIRO_PLANO {
+            let figura = primeiro_plano_do_icone(&icone, lado);
+            let centro = f64::from(lado) / 2.0;
+            let limite = 0.305 * f64::from(lado) + 1.0;
+            let mut maior: f64 = 0.0;
+            for (x, y, pixel) in figura.enumerate_pixels() {
+                if pixel[3] > 25 {
+                    let longe = (f64::from(x) + 0.5 - centro).hypot(f64::from(y) + 0.5 - centro);
+                    maior = maior.max(longe);
+                    assert!(longe <= limite, "lado {lado}: pixel ({x}, {y}) a {longe} > {limite}");
+                }
+            }
+            // E a figura aproveita a zona: a ponta chega perto do limite (61% da altura).
+            assert!(maior >= 0.29 * f64::from(lado), "lado {lado}: a figura ficou pequena ({maior})");
+        }
+    }
+
+    #[test]
+    fn a_figura_fica_centrada() {
+        let icone = icone_de_mentira();
+        for lado in LADOS_DO_PRIMEIRO_PLANO {
+            let (x0, x1, y0, y1) = caixa_visivel(&primeiro_plano_do_icone(&icone, lado));
+            let meio = f64::from(lado) / 2.0;
+            assert!((f64::from(x0 + x1) / 2.0 - meio).abs() <= 1.0, "lado {lado}: x {x0}..{x1}");
+            assert!((f64::from(y0 + y1) / 2.0 - meio).abs() <= 1.0, "lado {lado}: y {y0}..{y1}");
+            let altura = f64::from(y1 - y0) / f64::from(lado);
+            // As pontas do losango são finas e a redução as deixa meio transparentes: a altura
+            // medida pode ficar uns 2 pixels abaixo dos 61%.
+            assert!((altura - 0.61).abs() <= 0.025, "lado {lado}: altura {altura}");
+        }
+    }
+
+    #[test]
+    fn icone_sem_figura_vira_primeiro_plano_vazio() {
+        let liso = RgbaImage::from_fn(512, 512, |x, y| {
+            if x < 16 || y < 16 || x >= 496 || y >= 496 {
+                TRANSPARENTE
+            } else {
+                Rgba([40, 50, 90, 255])
+            }
+        });
+        let figura = primeiro_plano_do_icone(&liso, 108);
+        assert_eq!(figura.dimensions(), (108, 108));
+        assert!(figura.pixels().all(|pixel| pixel[3] == 0));
+    }
+
+    #[test]
+    fn fundo_vem_dos_cantos_do_icone() {
+        let cores = [[10, 20, 30], [50, 60, 70], [90, 100, 110], [130, 140, 150]];
+        assert_eq!(cor_de_fundo_do_icone(&icone_de_quadrantes(cores)), [70, 80, 90]);
+        // O losango do meio e a borda transparente não entram na conta.
+        let com_figura = icone_de_mentira();
+        let fundo = cor_de_fundo_do_icone(&com_figura);
+        assert!((30..=40).contains(&fundo[0]) && (33..=44).contains(&fundo[1]) && (68..=76).contains(&fundo[2]), "{fundo:?}");
+        // Um canto sem nenhum pixel opaco não conta (e o resto ainda dá a média).
+        let mut vazio = icone_de_quadrantes(cores);
+        retangulo(&mut vazio, 0, 0, 200, 200, TRANSPARENTE);
+        assert_eq!(cor_de_fundo_do_icone(&vazio), [90, 100, 110]);
+        // Tudo transparente: nada para tirar a média, devolve preto sem pânico.
+        assert_eq!(cor_de_fundo_do_icone(&RgbaImage::from_pixel(512, 512, TRANSPARENTE)), [0, 0, 0]);
+    }
+
+    #[test]
+    fn xml_adaptativo_cita_o_fundo_e_o_primeiro_plano() {
+        let xml = xml_do_icone_adaptativo();
+        assert!(xml.contains("<adaptive-icon"), "{xml}");
+        assert!(xml.contains(r#"<background android:drawable="@color/ic_launcher_background"/>"#), "{xml}");
+        assert!(xml.contains(r#"<foreground android:drawable="@mipmap/ic_launcher_foreground"/>"#), "{xml}");
+        assert!(xml.contains("http://schemas.android.com/apk/res/android"), "{xml}");
+        let cor = xml_da_cor_do_icone([0x21, 0x25, 0x47]);
+        assert!(cor.contains(r##"<color name="ic_launcher_background">#212547</color>"##), "{cor}");
+        assert!(cor.contains("<resources>") && cor.contains("</resources>"), "{cor}");
+        assert!(xml_da_cor_do_icone([0, 10, 255]).contains("#000AFF"));
+    }
+
+    #[test]
+    fn preparar_grava_tambem_o_icone_adaptativo() {
+        let origem = origem_de_mentira("origem_adaptativo");
+        let jogo = Pasta::nova("jogo_adaptativo");
+        let arquivos = preparar(&origem.0, &jogo.0).unwrap();
+        for (densidade, lado) in [("mdpi", 108), ("hdpi", 162), ("xhdpi", 216), ("xxhdpi", 324), ("xxxhdpi", 432)] {
+            let caminho = jogo.0.join(format!("android_res/mipmap-{densidade}/ic_launcher_foreground.png"));
+            assert!(arquivos.contains(&caminho), "faltou na lista: {}", caminho.display());
+            let figura = image::open(&caminho).unwrap().to_rgba8();
+            assert_eq!(figura.dimensions(), (lado, lado), "{}", caminho.display());
+            assert!(caixa_visivel(&figura).1 > 0, "{}: a figura não pode vir vazia", caminho.display());
+            // Os ícones comuns continuam.
+            assert!(jogo.0.join(format!("android_res/mipmap-{densidade}/ic_launcher.png")).exists());
+        }
+        let xml = jogo.0.join("android_res/mipmap-anydpi-v26/ic_launcher.xml");
+        let cor = jogo.0.join("android_res/values/ic_launcher_background.xml");
+        assert!(arquivos.contains(&xml) && arquivos.contains(&cor));
+        assert_eq!(std::fs::read_to_string(&xml).unwrap(), xml_do_icone_adaptativo());
+        let esperada = cor_de_fundo_do_icone(&icone_de_mentira());
+        assert_eq!(std::fs::read_to_string(&cor).unwrap(), xml_da_cor_do_icone(esperada));
     }
 
     #[test]
@@ -520,7 +835,8 @@ mod tests {
         let origem = origem_de_mentira("origem_ok");
         let jogo = Pasta::nova("jogo_ok");
         let arquivos = preparar(&origem.0, &jogo.0).unwrap();
-        assert_eq!(arquivos.len(), 27);
+        // 22 imagens + 5 ícones + 5 primeiros planos do ícone adaptativo + 2 arquivos de texto.
+        assert_eq!(arquivos.len(), 34);
         for prefixo in ["gem", "burst", "cross"] {
             for i in 0..7 {
                 let caminho = jogo.0.join(format!("assets/{prefixo}-{i}.png"));
@@ -596,10 +912,21 @@ mod tests {
         );
         let novo = Pasta::nova("confere");
         let geradas = preparar(&origem, &novo.0).unwrap();
-        assert_eq!(geradas.len(), 27);
+        assert_eq!(geradas.len(), 34);
         let mut piores = (0.0f64, String::new());
         for gerada in &geradas {
             let relativo = gerada.strip_prefix(&novo.0).unwrap();
+            if gerada.extension().is_some_and(|e| e == "xml") {
+                // Os XML do ícone adaptativo são texto: só confere que são iguais.
+                let de_hoje = Path::new("../game").join(relativo);
+                assert_eq!(
+                    std::fs::read_to_string(gerada).unwrap(),
+                    std::fs::read_to_string(&de_hoje).unwrap(),
+                    "{}",
+                    relativo.display()
+                );
+                continue;
+            }
             let de_hoje = Path::new("../game").join(relativo);
             let (a, b) = (
                 image::open(gerada).unwrap().to_rgba8(),
