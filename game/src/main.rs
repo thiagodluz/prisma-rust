@@ -13,6 +13,7 @@ mod fundo;
 mod input;
 mod layout;
 mod linha;
+mod menu;
 mod plataforma;
 mod preferencias;
 mod render;
