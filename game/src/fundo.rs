@@ -121,6 +121,39 @@ fn planejar_canal(canal: Canal, atual: Option<(Faixa, f32)>, desejado: Option<(F
     }
 }
 
+/// O que o laço faz com a lista de comandos deste quadro (ver [`decidir`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decisao {
+    /// Não há nada a fazer.
+    Nada,
+    /// Executa os comandos agora.
+    Aplicar,
+    /// Vai carregar uma faixa nova (isso trava o quadro por um instante): primeiro avisa na tela
+    /// "Carregando…" deste canal e só aplica no quadro seguinte.
+    Avisar(Canal),
+}
+
+/// Decide o que fazer com os `comandos` do quadro. Carregar uma faixa demora e trava a tela;
+/// por isso, antes de carregar, o laço mostra um quadro com o aviso "Carregando…" e só no
+/// seguinte aplica. `ja_avisado` é o canal cujo aviso já está na tela (veja `App::carregando`).
+///
+/// - sem comandos: `Nada`;
+/// - tem `Carregar` (vale o PRIMEIRO da lista) de um canal ainda não avisado: `Avisar` esse canal;
+/// - o resto (só `Parar`/`Volume`, ou o aviso já está na tela): `Aplicar`.
+pub fn decidir(comandos: &[Comando], ja_avisado: Option<Canal>) -> Decisao {
+    if comandos.is_empty() {
+        return Decisao::Nada;
+    }
+    let primeiro_a_carregar = comandos.iter().find_map(|comando| match comando {
+        Comando::Carregar(faixa, _) => Some(faixa.canal()),
+        _ => None,
+    });
+    match primeiro_a_carregar {
+        Some(canal) if ja_avisado != Some(canal) => Decisao::Avisar(canal),
+        _ => Decisao::Aplicar,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +368,56 @@ mod tests {
         assert_eq!(Faixa::Ambiente(Ambiente::Chuva).caminho(), "ambiente/rain-soft.ogg");
         assert_eq!(Faixa::Ambiente(Ambiente::Floresta).caminho(), "ambiente/forest-cicadas.ogg");
         assert_eq!(Faixa::Ambiente(Ambiente::FlorestaAposChuva).caminho(), "ambiente/rainforest.ogg");
+    }
+
+    // ---- M4: decidir se avisa "Carregando…" antes de aplicar ----
+
+    fn carregar_musica() -> Comando {
+        Comando::Carregar(Faixa::Musica(Musica::CozyPuzzle), 0.7)
+    }
+
+    fn carregar_ambiente() -> Comando {
+        Comando::Carregar(Faixa::Ambiente(Ambiente::Chuva), 0.65)
+    }
+
+    #[test]
+    fn decidir_sem_comandos_e_nada() {
+        assert_eq!(decidir(&[], None), Decisao::Nada);
+        assert_eq!(decidir(&[], Some(Canal::Musica)), Decisao::Nada);
+    }
+
+    #[test]
+    fn decidir_com_carregar_novo_manda_avisar() {
+        assert_eq!(decidir(&[carregar_musica()], None), Decisao::Avisar(Canal::Musica));
+        assert_eq!(decidir(&[carregar_ambiente()], None), Decisao::Avisar(Canal::Ambiente));
+        // Trocar de faixa (parar a antiga e carregar a nova) também avisa.
+        let troca = [Comando::Parar(Canal::Musica), carregar_musica()];
+        assert_eq!(decidir(&troca, None), Decisao::Avisar(Canal::Musica));
+    }
+
+    #[test]
+    fn decidir_depois_do_aviso_manda_aplicar() {
+        assert_eq!(decidir(&[carregar_musica()], Some(Canal::Musica)), Decisao::Aplicar);
+        assert_eq!(decidir(&[carregar_ambiente()], Some(Canal::Ambiente)), Decisao::Aplicar);
+        // O aviso era de outro canal: o canal que vai carregar agora ainda não foi avisado.
+        assert_eq!(decidir(&[carregar_musica()], Some(Canal::Ambiente)), Decisao::Avisar(Canal::Musica));
+    }
+
+    #[test]
+    fn decidir_so_com_volume_ou_parar_aplica_sem_avisar() {
+        let comandos = [Comando::Parar(Canal::Musica), Comando::Volume(Canal::Ambiente, 0.5)];
+        assert_eq!(decidir(&comandos, None), Decisao::Aplicar);
+        assert_eq!(decidir(&[Comando::Volume(Canal::Musica, 0.0)], Some(Canal::Musica)), Decisao::Aplicar);
+    }
+
+    #[test]
+    fn decidir_com_dois_carregar_avisa_o_primeiro_canal() {
+        // A ordem natural do planejador: a música vem antes do ambiente.
+        let desejado = Desejado { musica: musica(Musica::CozyPuzzle, 0.7), ambiente: ambiente(Ambiente::Chuva, 0.65) };
+        let comandos = planejar(&Atual::default(), &desejado);
+        assert_eq!(decidir(&comandos, None), Decisao::Avisar(Canal::Musica));
+        assert_eq!(decidir(&comandos, Some(Canal::Musica)), Decisao::Aplicar, "o aviso de música já está na tela");
+        // Vale o primeiro `Carregar` da lista, qualquer que seja o canal.
+        assert_eq!(decidir(&[carregar_ambiente(), carregar_musica()], None), Decisao::Avisar(Canal::Ambiente));
     }
 }

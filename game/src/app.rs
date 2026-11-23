@@ -299,6 +299,9 @@ pub struct App {
     vibrador: bool,
     /// As vibrações que já "chegaram a hora" e ainda não foram entregues à plataforma.
     toques: Vec<Toque>,
+    /// O canal (Música ou Ambiente) cujo "Carregando…" está na tela agora: o laço mostra o aviso
+    /// por um quadro antes de carregar a faixa, que trava a tela por um instante.
+    carregando: Option<Canal>,
 }
 
 impl App {
@@ -376,6 +379,7 @@ impl App {
             erros_de_audio: [None, None],
             vibrador: false,
             toques: Vec::new(),
+            carregando: None,
         }
     }
 
@@ -1101,8 +1105,37 @@ impl App {
     /// quando ele não está na tela, o erro de áudio. Os avisos do tabuleiro ("Supernova",
     /// "Tabuleiro reorganizado") não entram: o tabuleiro está coberto pela folha.
     pub fn aviso_da_folha(&self) -> Option<&'static str> {
+        // "Carregando…" vem primeiro: é o que está acontecendo agora.
+        if let Some(canal) = self.carregando {
+            return Some(match canal {
+                Canal::Ambiente => "Carregando ambiente…",
+                Canal::Musica | Canal::Efeitos => "Carregando música…",
+            });
+        }
         let do_testar = self.aviso.as_ref().map(|aviso| aviso.valor).filter(|&texto| texto == AVISO_SEM_VOLUME);
         do_testar.or_else(|| self.aviso_de_audio())
+    }
+
+    /// O canal cujo "Carregando…" está na tela (`None` = nenhum).
+    pub fn carregando(&self) -> Option<Canal> {
+        self.carregando
+    }
+
+    /// O laço vai carregar uma faixa de `canal`: o aviso "Carregando…" passa a aparecer na folha
+    /// de Som e a linha vai para o registro. Os efeitos não carregam nada de fundo: não faz nada.
+    pub fn marcar_carregando(&mut self, canal: Canal) {
+        let tipo = match canal {
+            Canal::Musica => "musica",
+            Canal::Ambiente => "ambiente",
+            Canal::Efeitos => return,
+        };
+        self.carregando = Some(canal);
+        self.registros.push(format!("PRISMA_M4 carregando tipo={tipo}"));
+    }
+
+    /// A camada de áudio terminou (ou não havia nada a carregar): o aviso "Carregando…" sai.
+    pub fn fim_do_carregamento(&mut self) {
+        self.carregando = None;
     }
 
     /// A camada de áudio conta que a Música ou o Ambiente falhou (`Some(texto)`) ou está bem
@@ -3368,5 +3401,73 @@ mod tests {
         let tela_c = tela_classico();
         let (cx, cy) = meio(tela_c.som.vibracao.expect("o Clássico também tem a linha"));
         assert_eq!(classico.botao_em(&tela_c, cx, cy), Some(Botao::Vibracao));
+    }
+
+    // ---- M4 Task 3: "Carregando…" ----
+
+    #[test]
+    fn marcar_carregando_mostra_o_aviso_na_folha_e_registra_a_linha() {
+        let mut app = App::com_sementes(7, 9);
+        app.registro();
+        assert_eq!(app.carregando(), None);
+        app.marcar_carregando(Canal::Musica);
+        assert_eq!(app.carregando(), Some(Canal::Musica));
+        assert_eq!(app.aviso_da_folha(), Some("Carregando música…"));
+        assert_eq!(app.registro(), vec!["PRISMA_M4 carregando tipo=musica".to_string()]);
+        app.marcar_carregando(Canal::Ambiente);
+        assert_eq!(app.aviso_da_folha(), Some("Carregando ambiente…"));
+        assert_eq!(app.registro(), vec!["PRISMA_M4 carregando tipo=ambiente".to_string()]);
+        // Os efeitos não carregam nada de fundo: não há o que avisar.
+        app.fim_do_carregamento();
+        app.marcar_carregando(Canal::Efeitos);
+        assert_eq!(app.carregando(), None);
+        assert_eq!(app.registro(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn fim_do_carregamento_tira_o_aviso() {
+        let mut app = App::com_sementes(7, 9);
+        app.marcar_carregando(Canal::Musica);
+        app.fim_do_carregamento();
+        assert_eq!(app.carregando(), None);
+        assert_eq!(app.aviso_da_folha(), None);
+        // Chamar de novo sem nada carregando não faz mal.
+        app.fim_do_carregamento();
+        assert_eq!(app.carregando(), None);
+    }
+
+    #[test]
+    fn o_aviso_de_carregando_vem_antes_do_aviso_de_audio() {
+        let mut app = App::com_sementes(7, 9);
+        app.erro_de_audio(Canal::Musica, Some("arquivo não encontrado".to_string()));
+        assert_eq!(app.aviso_da_folha(), Some(AVISO_DE_AUDIO));
+        app.marcar_carregando(Canal::Ambiente);
+        assert_eq!(app.aviso_da_folha(), Some("Carregando ambiente…"));
+        app.fim_do_carregamento();
+        assert_eq!(app.aviso_da_folha(), Some(AVISO_DE_AUDIO), "o erro de áudio volta quando termina de carregar");
+        // E também vem antes do "Aumente o volume dos efeitos" do Testar.
+        let mut sem_volume = Preferencias::default();
+        sem_volume.volumes.efeitos = 0;
+        let mut app = App::com_sementes(7, 9).com_preferencias(sem_volume);
+        abrir_folha(&mut app);
+        app.apertar(Botao::Testar);
+        assert_eq!(app.aviso_da_folha(), Some(AVISO_SEM_VOLUME));
+        app.marcar_carregando(Canal::Musica);
+        assert_eq!(app.aviso_da_folha(), Some("Carregando música…"));
+    }
+
+    #[test]
+    fn faixa_ja_carregada_nao_marca_nada() {
+        use crate::fundo::{decidir, planejar, Atual, Decisao};
+        let app = App::com_sementes(7, 9).com_preferencias(tudo_ligado());
+        let desejado = app.som_desejado();
+        // O que está tocando já é o que se quer: nenhum comando, nenhum aviso.
+        let atual = Atual { musica: desejado.musica, ambiente: desejado.ambiente };
+        assert_eq!(decidir(&planejar(&atual, &desejado), app.carregando()), Decisao::Nada);
+        // Só o volume mudou: aplica na hora, sem avisar.
+        let baixo = Atual { musica: Some((Musica::CozyPuzzle, 0.1)), ambiente: desejado.ambiente };
+        assert_eq!(decidir(&planejar(&baixo, &desejado), app.carregando()), Decisao::Aplicar);
+        // Nada carregado ainda: aí sim, avisa.
+        assert_eq!(decidir(&planejar(&Atual::default(), &desejado), app.carregando()), Decisao::Avisar(Canal::Musica));
     }
 }

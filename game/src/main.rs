@@ -320,9 +320,15 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
                 }
             }
             let comandos = fundo::planejar(&audio.atual(), &app.som_desejado());
-            if !comandos.is_empty() {
-                // Carregar uma música trava o quadro por um instante; o tempo vai para o registro.
-                audio.aplicar(comandos, &mut app).await;
+            // Carregar uma música trava o quadro por um instante: antes, um quadro com o aviso
+            // "Carregando…" (a carga só começa no quadro seguinte). O tempo vai para o registro.
+            match fundo::decidir(&comandos, app.carregando()) {
+                fundo::Decisao::Avisar(canal) => app.marcar_carregando(canal),
+                fundo::Decisao::Aplicar => {
+                    audio.aplicar(comandos, &mut app).await;
+                    app.fim_do_carregamento();
+                }
+                fundo::Decisao::Nada => app.fim_do_carregamento(),
             }
         }
 
