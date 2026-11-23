@@ -80,7 +80,8 @@ Prisma em JS; as curvas e as cores finas foram ajustadas olhando fotos (cenas `p
 - O botão ≡ fica ao lado do ♪, na linha das abas (o tabuleiro não muda de lugar). Abre uma folha
   do mesmo tamanho e lugar da de Som, com as abas **Recordes** (abre nela) e **Créditos** e o ✕.
   Só uma folha aberta por vez: abrir uma fecha a outra. Código: `game/src/menu.rs`.
-- **Recordes:** dois blocos lidos dos recordes do M2, em tempo real: Zen (maior pontuação, maior
+- **Recordes:** os dois blocos aparecem juntos (Zen em cima, Clássico embaixo), cada um lido dos
+  recordes do seu modo, em tempo real: Zen (maior pontuação, maior
   nível, melhor jogada) e Clássico (os mesmos mais partidas concluídas). Números com separador de
   milhar à brasileira (`12.345`).
 - **Créditos:** 6 itens curtos, sem link (não há internet nem navegador a abrir), que cabem em
@@ -156,5 +157,17 @@ para o Thiago olhar no aparelho dele:
 
 ## Medido no celular virtual (CI)
 
-Ainda não rodou o fluxo do Android para o M4. Esta seção é preenchida com o tamanho do APK, as
-linhas do `badging` e a saída da fase 11 depois da primeira execução.
+Primeira execução do fluxo do Android na branch do M4 (a aba Recordes ainda mostrava só o modo
+ativo; a correção para os dois blocos veio depois e foi conferida só nas fotos do desktop, em
+360×640 e 1080×2400, até o próximo CI):
+
+- **APK:** 48.744.723 bytes (cerca de 46 MB; o limite é 60 MB), assinado com a chave fixa.
+- **`aapt2 dump badging`:** `minSdkVersion` 26, `targetSdkVersion` 34 e o ícone de todas as
+  densidades apontando para `res/mipmap-anydpi-v26/ic_launcher.xml` (ícone adaptativo).
+- **Fase 11 no Android 34 (x86_64):** o menu abriu, mostrou Recordes e Créditos e fechou; ligar a
+  vibração pediu o toque `ligou`; a intensidade passou a `vibrante`; a jogada pediu o toque `curto`;
+  `carregando tipo=musica` e `carregando tipo=ambiente` apareceram antes de cada `carregado`.
+- **Fase 11 no Android 30 (x86):** o mesmo, com a jogada pedindo o toque `nivel`.
+- **Fotos:** Recordes e Créditos legíveis, nada cortado, nas duas versões.
+- O que o celular virtual **não** confirma continua igual: sentir os toques, ver as partículas nas
+  três intensidades e ver o ícone na tela inicial só se faz em um celular de verdade.
