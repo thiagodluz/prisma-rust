@@ -182,6 +182,32 @@ impl TelaSom {
     };
 }
 
+/// A folha do Menu (≡): duas abas, Recordes e Créditos, o ✕ para fechar e, abaixo, a área do
+/// conteúdo. Ocupa o mesmo lugar da folha de Som (só uma das duas abre por vez).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TelaMenu {
+    pub folha: Rect,
+    pub aba_recordes: Rect,
+    pub aba_creditos: Rect,
+    pub fechar: Rect,
+    /// Onde entram as linhas de recordes ou o texto dos créditos.
+    pub conteudo: Rect,
+    /// Tamanho base da letra.
+    pub texto: f32,
+}
+
+impl TelaMenu {
+    /// Tudo vazio: o que devolvemos quando a tela não existe.
+    pub const VAZIA: TelaMenu = TelaMenu {
+        folha: Rect::VAZIO,
+        aba_recordes: Rect::VAZIO,
+        aba_creditos: Rect::VAZIO,
+        fechar: Rect::VAZIO,
+        conteudo: Rect::VAZIO,
+        texto: 0.0,
+    };
+}
+
 /// Onde fica cada peça da tela de jogo (abas, painel, tabuleiro, botões, cartão de fim e
 /// diálogo). Tudo em pixels, calculado a partir do tamanho da tela.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -191,6 +217,8 @@ pub struct TelaJogo {
     pub aba_classico: Rect,
     /// O botão ♪ (Som): quadrado, na linha das abas, à direita delas.
     pub botao_som: Rect,
+    /// O botão ≡ (Menu): quadrado, no fim da linha das abas, logo depois do ♪.
+    pub botao_menu: Rect,
     /// As três colunas do painel: PONTOS, NÍVEL, MELHOR.
     pub pontos: Rect,
     pub nivel: Rect,
@@ -209,6 +237,8 @@ pub struct TelaJogo {
     pub guia_respiracao: Rect,
     /// A folha de Som, que abre por cima do tabuleiro e dos botões.
     pub som: TelaSom,
+    /// A folha do Menu (Recordes e Créditos), que abre no mesmo lugar.
+    pub menu: TelaMenu,
     /// O cartão de "Fim de partida", por cima do tabuleiro, e o botão dele.
     pub cartao_fim: Rect,
     pub botao_jogar_novamente: Rect,
@@ -226,6 +256,7 @@ impl TelaJogo {
         aba_zen: Rect::VAZIO,
         aba_classico: Rect::VAZIO,
         botao_som: Rect::VAZIO,
+        botao_menu: Rect::VAZIO,
         pontos: Rect::VAZIO,
         nivel: Rect::VAZIO,
         melhor: Rect::VAZIO,
@@ -237,6 +268,7 @@ impl TelaJogo {
         botao_novo_jogo: Rect::VAZIO,
         guia_respiracao: Rect::VAZIO,
         som: TelaSom::VAZIA,
+        menu: TelaMenu::VAZIA,
         cartao_fim: Rect::VAZIO,
         botao_jogar_novamente: Rect::VAZIO,
         dialogo: Rect::VAZIO,
@@ -307,8 +339,8 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     y += botoes_h + espaco;
     let guia_y = y;
 
-    // Abas: duas metades com um espaço no meio, e o botão ♪ (quadrado) no fim da linha.
-    let aba_w = (lado - abas_h - 2.0 * espaco) / 2.0;
+    // Abas: duas metades com um espaço no meio, e os botões ♪ e ≡ (quadrados) no fim da linha.
+    let aba_w = (lado - 2.0 * abas_h - 3.0 * espaco) / 2.0;
     // Painel: três colunas, a dos pontos mais larga (os números crescem).
     let util = lado - 2.0 * espaco;
     let (pontos_w, nivel_w, melhor_w) = (0.40 * util, 0.24 * util, 0.36 * util);
@@ -355,7 +387,8 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     TelaJogo {
         aba_zen: faixa(esquerda, abas_y, aba_w, abas_h),
         aba_classico: faixa(esquerda + aba_w + espaco, abas_y, aba_w, abas_h),
-        botao_som: faixa(esquerda + lado - abas_h, abas_y, abas_h, abas_h),
+        botao_som: faixa(esquerda + lado - 2.0 * abas_h - espaco, abas_y, abas_h, abas_h),
+        botao_menu: faixa(esquerda + lado - abas_h, abas_y, abas_h, abas_h),
         pontos: faixa(esquerda, painel_y, pontos_w, painel_h),
         nivel: faixa(nivel_x, painel_y, nivel_w, painel_h),
         melhor: faixa(melhor_x, painel_y, melhor_w, painel_h),
@@ -367,6 +400,7 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
         botao_novo_jogo: faixa(botao_dica_x + passo, botoes_y, botao_w, botoes_h),
         guia_respiracao,
         som: folha_de_som(folha, unidade, com_embaralhar, vibrador),
+        menu: folha_do_menu(folha, unidade),
         cartao_fim,
         botao_jogar_novamente,
         dialogo,
@@ -438,6 +472,29 @@ fn folha_de_som(folha: Rect, unidade: f32, zen: bool, vibrador: bool) -> TelaSom
         respiracao,
         vibracao,
         fechar,
+        texto: TEXTO * unidade,
+    }
+}
+
+/// Posição dos controles da folha do Menu dentro de `folha`: no alto, as abas Recordes e
+/// Créditos e o ✕ (quadrado, no canto direito), todos da altura das abas da tela; abaixo deles,
+/// a área do conteúdo, até o fim da folha.
+fn folha_do_menu(folha: Rect, unidade: f32) -> TelaMenu {
+    let espaco = ESPACO * unidade;
+    let borda = 1.5 * espaco;
+    let altura = ABAS_ALTURA * unidade;
+    let largura = folha.w - 2.0 * borda;
+    let topo = folha.y + borda;
+    let aba_w = (largura - altura - 2.0 * espaco) / 2.0;
+    let faixa = |x: f32, y: f32, w: f32, h: f32| Rect { x, y, w, h };
+    let x = folha.x + borda;
+    let conteudo_y = topo + altura + espaco;
+    TelaMenu {
+        folha,
+        aba_recordes: faixa(x, topo, aba_w, altura),
+        aba_creditos: faixa(x + aba_w + espaco, topo, aba_w, altura),
+        fechar: faixa(x + largura - altura, topo, altura, altura),
+        conteudo: faixa(x, conteudo_y, largura, (folha.y + folha.h - borda - conteudo_y).max(0.0)),
         texto: TEXTO * unidade,
     }
 }
@@ -653,6 +710,7 @@ mod tests_tela_jogo {
             ("botao_dica", tela.botao_dica),
             ("botao_novo_jogo", tela.botao_novo_jogo),
             ("botao_som", tela.botao_som),
+            ("botao_menu", tela.botao_menu),
         ];
         if let Some(embaralhar) = tela.botao_embaralhar {
             pecas.push(("botao_embaralhar", embaralhar));
@@ -908,6 +966,8 @@ mod tests_tela_jogo {
                 }
                 let tela = tela_jogo(largura, altura, zen);
                 assert_eq!(tela.botao_som, Rect::VAZIO);
+                assert_eq!(tela.botao_menu, Rect::VAZIO);
+                assert_eq!(tela.menu, TelaMenu::VAZIA, "{largura}x{altura}");
                 assert_eq!(tela.guia_respiracao, Rect::VAZIO);
             }
         }
@@ -925,7 +985,7 @@ mod tests_tela_jogo {
                 // À direita das duas abas, sem cobri-las, e no fim da largura do tabuleiro.
                 assert!(som.x >= tela.aba_classico.x + tela.aba_classico.w, "{largura}x{altura}: ♪ cobre a aba do Clássico");
                 assert!(!se_cruzam(som, tela.aba_zen) && !se_cruzam(som, tela.aba_classico));
-                assert!((som.x + som.w - (tela.tabuleiro.x + tela.tabuleiro.w)).abs() < 1e-2, "{largura}x{altura}");
+                assert!(som.x + som.w <= tela.botao_menu.x + 1e-3, "{largura}x{altura}: o ♪ fica antes do ≡");
                 // As abas continuam do mesmo tamanho uma da outra, com largura de verdade.
                 assert!((tela.aba_zen.w - tela.aba_classico.w).abs() < 1e-3 && tela.aba_zen.w > 0.0);
             }
@@ -1046,5 +1106,103 @@ mod tests_tela_jogo {
         }
         // Tela impossível continua vazia, com ou sem vibrador.
         assert_eq!(tela_jogo_com(f32::NAN, 10.0, true, true).som, TelaSom::VAZIA);
+    }
+
+    // ---- Botão ≡ e a folha do Menu (M4) ----
+
+    #[test]
+    fn botao_menu_fica_ao_lado_do_som_sem_cobrir_as_abas() {
+        for (largura, altura) in CELULARES.into_iter().chain(TELAS) {
+            for zen in [true, false] {
+                let tela = tela_jogo(largura, altura, zen);
+                let (menu, som) = (tela.botao_menu, tela.botao_som);
+                assert!(menu.w > 0.0 && menu.h > 0.0, "{largura}x{altura}");
+                // Quadrado, na linha das abas e do mesmo tamanho do ♪.
+                assert!((menu.w - menu.h).abs() < 1e-3, "{largura}x{altura}: o ≡ é quadrado");
+                assert!((menu.y - tela.aba_zen.y).abs() < 1e-3 && (menu.h - tela.aba_zen.h).abs() < 1e-3, "{largura}x{altura}");
+                assert!((menu.w - som.w).abs() < 1e-3 && (menu.y - som.y).abs() < 1e-3, "{largura}x{altura}");
+                // À direita do ♪, no fim da largura do tabuleiro, sem cruzar nada.
+                assert!(menu.x >= som.x + som.w, "{largura}x{altura}: o ≡ vem depois do ♪");
+                assert!((menu.x + menu.w - (tela.tabuleiro.x + tela.tabuleiro.w)).abs() < 1e-2, "{largura}x{altura}");
+                for (nome, outro) in [("aba_zen", tela.aba_zen), ("aba_classico", tela.aba_classico), ("botao_som", som)] {
+                    assert!(!se_cruzam(menu, outro), "o ≡ cruza {nome} em {largura}x{altura}");
+                }
+                assert!(!se_cruzam(som, tela.aba_zen) && !se_cruzam(som, tela.aba_classico), "{largura}x{altura}");
+                // As abas ficam do mesmo tamanho uma da outra, com largura de verdade.
+                assert!((tela.aba_zen.w - tela.aba_classico.w).abs() < 1e-3 && tela.aba_zen.w > 0.0, "{largura}x{altura}");
+                // Nada da linha de cima passa do tabuleiro: abas, ♪ e ≡ somam a largura dele.
+                assert!(tela.aba_classico.x + tela.aba_classico.w <= som.x + 1e-3, "{largura}x{altura}");
+            }
+        }
+    }
+
+    #[test]
+    fn tela_menu_cabe_e_nao_se_sobrepoe() {
+        for (largura, altura) in CELULARES {
+            for zen in [true, false] {
+                let tela = tela_jogo(largura, altura, zen);
+                let menu = tela.menu;
+                let unidade = largura.min(altura);
+                let janela = Rect { x: 0.0, y: 0.0, w: largura, h: altura };
+                assert_eq!(menu.folha, tela.som.folha, "a folha do menu é a mesma da de Som");
+                assert!(dentro(menu.folha, janela));
+                let todos = [("aba_recordes", menu.aba_recordes), ("aba_creditos", menu.aba_creditos), ("fechar", menu.fechar), ("conteudo", menu.conteudo)];
+                for (nome, retangulo) in todos {
+                    assert!(retangulo.w > 0.0 && retangulo.h > 0.0, "{nome} sem tamanho em {largura}x{altura} zen={zen}");
+                    assert!(dentro(retangulo, menu.folha), "{nome} fora da folha em {largura}x{altura} zen={zen}");
+                }
+                for (nome, retangulo) in &todos[..3] {
+                    assert!(retangulo.h >= 0.07 * unidade, "{nome} baixo demais em {largura}x{altura}: {} < {}", retangulo.h, 0.07 * unidade);
+                }
+                for (i, (nome_a, a)) in todos.iter().enumerate() {
+                    for (nome_b, b) in &todos[i + 1..] {
+                        assert!(!se_cruzam(*a, *b), "{nome_a} e {nome_b} se cruzam em {largura}x{altura} zen={zen}");
+                    }
+                }
+                // As abas ficam no alto da folha e o ✕ no canto direito; o conteúdo, abaixo de tudo.
+                assert!(menu.aba_recordes.x < menu.aba_creditos.x && menu.aba_creditos.x < menu.fechar.x);
+                assert!(menu.conteudo.y >= menu.fechar.y + menu.fechar.h && menu.conteudo.y >= menu.aba_recordes.y + menu.aba_recordes.h);
+                // Sobra espaço de verdade para as linhas de recordes e os créditos.
+                assert!(menu.conteudo.h >= 0.4 * unidade, "conteúdo baixo em {largura}x{altura}: {}", menu.conteudo.h);
+                assert!(menu.texto > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn tela_menu_existe_e_cabe_em_qualquer_tela_possivel() {
+        for (largura, altura) in TELAS {
+            for zen in [true, false] {
+                let menu = tela_jogo(largura, altura, zen).menu;
+                let janela = Rect { x: 0.0, y: 0.0, w: largura, h: altura };
+                let todos = [("aba_recordes", menu.aba_recordes), ("aba_creditos", menu.aba_creditos), ("fechar", menu.fechar), ("conteudo", menu.conteudo)];
+                for (nome, retangulo) in todos {
+                    assert!(retangulo.w > 0.0 && retangulo.h > 0.0, "{nome} sem tamanho em {largura}x{altura}");
+                    assert!(dentro(retangulo, janela) && dentro(retangulo, menu.folha), "{nome} fora em {largura}x{altura}");
+                }
+                for (i, (nome_a, a)) in todos.iter().enumerate() {
+                    for (nome_b, b) in &todos[i + 1..] {
+                        assert!(!se_cruzam(*a, *b), "{nome_a} e {nome_b} se cruzam em {largura}x{altura}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn o_tabuleiro_nao_muda_com_o_botao_menu() {
+        // Posições do M3 (antes do botão ≡), calculadas à mão: o tabuleiro não se mexe.
+        for ((largura, altura), (x, y, lado)) in [((540.0, 960.0), (16.2, 263.19, 507.6)), ((720.0, 1280.0), (21.6, 350.92, 676.8))] {
+            let tabuleiro = tela_jogo(largura, altura, true).tabuleiro;
+            for (obtido, esperado, nome) in [(tabuleiro.x, x, "x"), (tabuleiro.y, y, "y"), (tabuleiro.w, lado, "lado")] {
+                assert!((obtido - esperado).abs() < 0.01, "{largura}x{altura}: {nome} = {obtido}, esperado {esperado}");
+            }
+        }
+        for (largura, altura) in CELULARES {
+            let zen = tela_jogo(largura, altura, true);
+            let classico = tela_jogo(largura, altura, false);
+            assert_eq!(zen.tabuleiro, classico.tabuleiro, "{largura}x{altura}");
+            assert!((zen.tabuleiro.w - 0.94 * largura).abs() < 1e-2, "{largura}x{altura}: o tabuleiro continua no tamanho máximo");
+        }
     }
 }

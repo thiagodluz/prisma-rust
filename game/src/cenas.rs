@@ -5,6 +5,7 @@
 //! direto nas cenas `nivel` e `fim` (para chegar logo ao nível 2 e ao fim de partida).
 
 use crate::app::{App, Botao};
+use crate::formato::Recordes;
 use crate::input::Evento;
 use crate::layout::{cell_rect, tela_jogo, TelaJogo};
 use crate::linha::{duracao_ms, Passo};
@@ -69,9 +70,14 @@ fn preferencias_da_cena() -> Preferencias {
     Preferencias { musica_ligada: true, respiracao: Respiracao::Equilibrada, vibracao: true, ..Preferencias::default() }
 }
 
+/// Recordes de mentira para a foto da folha de Recordes: números grandes, com ponto de milhar.
+fn recordes_da_cena() -> Recordes {
+    Recordes { pontuacao: 1_234_567, nivel: 14, jogada: 8_900, terminadas: 23 }
+}
+
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
 /// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
-/// `som-classico`, `som-aviso` e `respiracao`.
+/// `som-classico`, `som-aviso`, `respiracao`, `recordes` e `creditos`.
 pub fn cena(nome: &str) -> Option<App> {
     let mut app = App::com_sementes(7, 9);
     match nome {
@@ -134,6 +140,17 @@ pub fn cena(nome: &str) -> Option<App> {
             app.apertar(Botao::Som);
             app.erro_de_audio(Canal::Musica, Some("arquivo não encontrado".to_string()));
         }
+        // A folha do Menu em Recordes, no Clássico (que tem as quatro linhas), com números de verdade.
+        "recordes" => {
+            app = app.com_recordes(recordes_da_cena(), recordes_da_cena());
+            app.apertar(Botao::Classico);
+            app.apertar(Botao::Menu);
+        }
+        // A folha do Menu em Créditos.
+        "creditos" => {
+            app.apertar(Botao::Menu);
+            app.apertar(Botao::AbaCreditos);
+        }
         // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).
         "respiracao" => {
             app = app.com_preferencias(preferencias_da_cena());
@@ -147,11 +164,12 @@ pub fn cena(nome: &str) -> Option<App> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Folha;
     use crate::linha::Passo;
     use crate::preferencias::Fase;
     use prisma_engine::Mode;
 
-    const NOMES: [&str; 14] = [
+    const NOMES: [&str; 16] = [
         "inicio",
         "selecionada",
         "dica",
@@ -166,6 +184,8 @@ mod tests {
         "som-classico",
         "respiracao",
         "som-aviso",
+        "recordes",
+        "creditos",
     ];
 
     fn passo_da_cena(nome: &str) -> &'static str {
@@ -239,6 +259,12 @@ mod tests {
         let aviso = cena("som-aviso").expect("a cena som-aviso existe");
         assert!(aviso.folha_aberta());
         assert!(aviso.aviso_da_folha().is_some());
+
+        // O Menu em Recordes (no Clássico, com números) e em Créditos.
+        let recordes = cena("recordes").expect("a cena recordes existe");
+        assert_eq!((recordes.folha(), recordes.modo()), (Some(Folha::Recordes), Mode::Classic));
+        assert_eq!(recordes.recordes(Mode::Classic).pontuacao, 1_234_567);
+        assert_eq!(cena("creditos").expect("a cena creditos existe").folha(), Some(Folha::Creditos));
 
         // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).
         let respiracao = cena("respiracao").expect("a cena respiracao existe");

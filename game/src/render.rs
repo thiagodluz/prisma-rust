@@ -8,13 +8,14 @@ use std::collections::HashMap;
 use macroquad::prelude::*;
 use prisma_engine::{position, Board, Tile, SIZE};
 
-use crate::app::{App, Painel};
+use crate::app::{App, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
 use crate::linha::{
     deslocamento_troca, embaralhar_alfa, limpeza_da_casa, linhas_de_queda, nivel_faixa, queda_deslocamento,
     queda_ms, resgate_da_casa,
 };
+use crate::menu::{creditos, linhas_de_recordes};
 use crate::preferencias::{orbe, segundos_restantes};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
@@ -318,15 +319,23 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
     let zen = app.modo() == prisma_engine::Mode::Zen;
     botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
     botao_da_tela(tela.aba_classico, "Clássico", 1.05 * t, if zen { ABA_INATIVA } else { ABA_ATIVA }, true);
-    // O ♪ vira ✕ com a folha aberta. Os dois são desenhados com formas, não com letras: assim não
-    // dependem de a fonte embutida ter esses símbolos.
-    let folha = app.folha_aberta();
-    botao_da_tela(tela.botao_som, "", t, if folha { ABA_ATIVA } else { ABA_INATIVA }, true);
+    // O ♪ vira ✕ com a folha de Som aberta, e o ≡ vira ✕ com a do Menu aberta. Os quatro são
+    // desenhados com formas, não com letras: assim não dependem de a fonte embutida ter esses símbolos.
+    let som_aberto = app.folha() == Some(Folha::Som);
+    botao_da_tela(tela.botao_som, "", t, if som_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
     let icone = encolher(tela.botao_som, 0.2 * tela.botao_som.h);
-    if folha {
+    if som_aberto {
         desenhar_xis(icone, WHITE);
     } else {
         desenhar_nota(icone, WHITE);
+    }
+    let menu_aberto = app.folha().is_some_and(Folha::e_do_menu);
+    botao_da_tela(tela.botao_menu, "", t, if menu_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
+    let icone = encolher(tela.botao_menu, 0.2 * tela.botao_menu.h);
+    if menu_aberto {
+        desenhar_xis(icone, WHITE);
+    } else {
+        desenhar_hamburguer(icone, WHITE);
     }
 
     for (rotulo, valor, area) in [
@@ -444,6 +453,15 @@ fn desenhar_nota(area: Rect, cor: Color) {
     draw_circle(cx, cy, raio, cor);
     draw_line(haste_x, cy, haste_x, topo, 0.08 * lado, cor);
     draw_triangle(vec2(haste_x, topo), vec2(haste_x + 0.30 * lado, topo + 0.26 * lado), vec2(haste_x, topo + 0.30 * lado), cor);
+}
+
+/// Três traços (≡) dentro do quadrado `area`.
+fn desenhar_hamburguer(area: Rect, cor: Color) {
+    let grossura = 0.14 * area.w.min(area.h);
+    for i in 0..3 {
+        let y = area.y + area.h * (0.12 + 0.38 * i as f32);
+        draw_line(area.x, y, area.x + area.w, y, grossura, cor);
+    }
 }
 
 /// Um X (✕) dentro do quadrado `area`.
@@ -602,6 +620,74 @@ fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
     }
 }
 
+/// Escreve `paragrafos` um abaixo do outro, de cima para baixo, quebrando cada um em linhas dentro
+/// de `area`; a letra começa em `tamanho` e encolhe até tudo caber (largura e altura), sem rolagem.
+/// O primeiro parágrafo sai em branco e os outros em `cor`.
+fn escrever_paragrafos(paragrafos: &[String], area: Rect, tamanho: f32, cor: Color) {
+    let medir = |tamanho: f32| -> (Vec<Vec<String>>, f32) {
+        let blocos: Vec<Vec<String>> = paragrafos.iter().map(|texto| quebrar_em_linhas(texto, area.w, tamanho)).collect();
+        let linhas: usize = blocos.iter().map(Vec::len).sum();
+        let vaos = blocos.len().saturating_sub(1) as f32 * 0.5 * tamanho;
+        (blocos, linhas as f32 * 1.2 * tamanho + vaos)
+    };
+    let mut tamanho = tamanho;
+    let (mut blocos, mut altura) = medir(tamanho);
+    while tamanho > 6.0 && altura > area.h {
+        tamanho *= 0.94;
+        (blocos, altura) = medir(tamanho);
+    }
+    let mut y = area.y;
+    for (i, bloco) in blocos.iter().enumerate() {
+        for linha in bloco {
+            let faixa = Rect { y, h: 1.2 * tamanho, ..area };
+            escrever(linha, faixa, tamanho, if i == 0 { WHITE } else { cor }, Alinhamento::Esquerda);
+            y += 1.2 * tamanho;
+        }
+        y += 0.5 * tamanho;
+    }
+}
+
+/// A folha do Menu, no mesmo lugar da de Som: as abas Recordes e Créditos, o ✕ e, embaixo, o
+/// conteúdo da aba aberta (`aba`). Os Recordes são os do modo em que o jogador está.
+fn desenhar_folha_do_menu(app: &App, aba: Folha, tela: &TelaJogo) {
+    let menu = &tela.menu;
+    if menu.folha.w <= 0.0 || menu.folha.h <= 0.0 {
+        return;
+    }
+    let t = menu.texto;
+    let folha = menu.folha;
+    draw_rectangle(folha.x, folha.y, folha.w, folha.h, FOLHA);
+    draw_rectangle_lines(folha.x, folha.y, folha.w, folha.h, 2.0, BORDA);
+
+    let recordes_ativos = aba == Folha::Recordes;
+    botao_da_tela(menu.aba_recordes, "Recordes", 1.05 * t, if recordes_ativos { ABA_ATIVA } else { ABA_INATIVA }, true);
+    botao_da_tela(menu.aba_creditos, "Créditos", 1.05 * t, if recordes_ativos { ABA_INATIVA } else { ABA_ATIVA }, true);
+    botao_da_tela(menu.fechar, "", t, ABA_INATIVA, true);
+    desenhar_xis(encolher(menu.fechar, 0.3 * menu.fechar.h), WHITE);
+
+    let conteudo = menu.conteudo;
+    if recordes_ativos {
+        let modo = app.modo();
+        let nome_do_modo = if modo == prisma_engine::Mode::Zen { "Modo Zen" } else { "Modo Clássico" };
+        let linhas = linhas_de_recordes(modo, app.recordes(modo));
+        let legenda = Rect { h: 1.6 * t, ..conteudo };
+        escrever(nome_do_modo, legenda, 0.95 * t, TEXTO_SUAVE, Alinhamento::Esquerda);
+        let vao = 0.5 * t;
+        let resto = conteudo.h - legenda.h - vao;
+        let altura = ((resto - (linhas.len() as f32 - 1.0) * vao) / linhas.len() as f32).min(3.0 * t);
+        for (i, linha) in linhas.iter().enumerate() {
+            let area = Rect { y: conteudo.y + legenda.h + vao + i as f32 * (altura + vao), h: altura, ..conteudo };
+            desenhar_cartao(area);
+            let margem = 0.5 * t;
+            let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area };
+            escrever(linha.rotulo, Rect { w: 0.62 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
+            escrever(&linha.valor, Rect { x: dentro.x + 0.64 * dentro.w, w: 0.36 * dentro.w, ..dentro }, 1.1 * t, DESTAQUE, Alinhamento::Direita);
+        }
+    } else {
+        escrever_paragrafos(&creditos(env!("CARGO_PKG_VERSION")), conteudo, 0.95 * t, TEXTO_SUAVE);
+    }
+}
+
 /// O guia de respiração, na linha abaixo dos botões: a bolinha que cresce e encolhe, a palavra
 /// ("Inspire" ou "Expire") e os segundos que faltam. Desligado (ou no Clássico), não desenha nada.
 fn desenhar_guia_de_respiracao(app: &App, tela: &TelaJogo) {
@@ -661,8 +747,10 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     if let Some((nivel, pontos)) = &painel.fim {
         desenhar_fim(nivel, pontos, tela);
     }
-    if app.folha_aberta() {
-        desenhar_folha_de_som(app, tela);
+    match app.folha() {
+        Some(Folha::Som) => desenhar_folha_de_som(app, tela),
+        Some(aba) => desenhar_folha_do_menu(app, aba, tela),
+        None => {}
     }
     if painel.dialogo {
         desenhar_dialogo(tela);
