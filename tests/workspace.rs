@@ -165,3 +165,32 @@ fn o_fluxo_do_android_prepara_os_sons_e_confere_o_apk() {
         assert!(texto.contains(som), ".github/workflows/android.yml não confere o som {som} dentro do APK.");
     }
 }
+
+/// O Android mínimo e o alvo ficam fixos: 26 (o ícone adaptativo e o vibrador novo valem a partir
+/// daí) e 34. As duas chaves têm de estar na seção do gerador de APK, senão ele as ignora.
+#[test]
+fn as_versoes_do_android_estao_fixadas() {
+    let texto = ler("game/Cargo.toml");
+    let android = secao(&texto, "[package.metadata.android]");
+    for linha in ["min_sdk_version = 26", "target_sdk_version = 34"] {
+        assert!(
+            android.lines().any(|atual| atual.trim() == linha),
+            "game/Cargo.toml não tem \"{linha}\" dentro de [package.metadata.android]."
+        );
+    }
+}
+
+/// Depois de gerar o APK, o fluxo confere o que o Android vai ler dele: o mínimo, o alvo e o
+/// ícone adaptativo. Aqui só se confere que o passo existe e cita as três coisas; quem o executa
+/// é o CI.
+#[test]
+fn o_fluxo_do_android_confere_versoes_e_icone() {
+    let texto = ler(".github/workflows/android.yml");
+    for trecho in ["Conferir versões e ícone do APK", "minSdkVersion", "targetSdkVersion", "anydpi"] {
+        assert!(texto.contains(trecho), ".github/workflows/android.yml não tem \"{trecho}\".");
+    }
+    // O mínimo e o alvo esperados aparecem na conferência.
+    for trecho in ["'26'", "'34'"] {
+        assert!(texto.contains(trecho), ".github/workflows/android.yml não confere o valor {trecho}.");
+    }
+}
