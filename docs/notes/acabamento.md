@@ -157,9 +157,9 @@ para o Thiago olhar no aparelho dele:
 
 ## Medido no celular virtual (CI)
 
-Primeira execução do fluxo do Android na branch do M4 (a aba Recordes ainda mostrava só o modo
-ativo; a correção para os dois blocos veio depois e foi conferida só nas fotos do desktop, em
-360×640 e 1080×2400, até o próximo CI):
+Fluxo do Android na branch do M4. A primeira execução ainda mostrava só um modo na aba Recordes;
+a segunda, já com a correção dos dois blocos (Zen e Clássico), passou nos 3 jobs e a foto do
+Android 34 mostra os dois blocos, cada um com os seus números e nada cortado:
 
 - **APK:** 48.744.723 bytes (cerca de 46 MB; o limite é 60 MB), assinado com a chave fixa.
 - **`aapt2 dump badging`:** `minSdkVersion` 26, `targetSdkVersion` 34 e o ícone de todas as
