@@ -63,9 +63,10 @@ fn avancar_ate_a_fracao(app: &mut App, fracao: f32) {
 }
 
 /// As escolhas de som das cenas de som: volumes de fábrica, música ligada, ambiente desligado
-/// (assim a foto mostra os dois estados) e respiração no ritmo "4 s inspirar · 4 s expirar".
+/// (assim a foto mostra os dois estados), respiração no ritmo "4 s inspirar · 4 s expirar" e
+/// vibração ligada (as cenas de som são de um aparelho com vibrador: ver `com_vibrador`).
 fn preferencias_da_cena() -> Preferencias {
-    Preferencias { musica_ligada: true, respiracao: Respiracao::Equilibrada, ..Preferencias::default() }
+    Preferencias { musica_ligada: true, respiracao: Respiracao::Equilibrada, vibracao: true, ..Preferencias::default() }
 }
 
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
@@ -118,18 +119,18 @@ pub fn cena(nome: &str) -> Option<App> {
         "classico" => app.apertar(Botao::Classico),
         // A folha de Som no Zen: música ligada, ambiente desligado, respiração no ritmo 4-4.
         "som" => {
-            app = app.com_preferencias(preferencias_da_cena());
+            app = app.com_preferencias(preferencias_da_cena()).com_vibrador(true);
             app.apertar(Botao::Som);
         }
         // A folha de Som no Clássico: só os efeitos.
         "som-classico" => {
-            app = app.com_preferencias(preferencias_da_cena());
+            app = app.com_preferencias(preferencias_da_cena()).com_vibrador(true);
             app.apertar(Botao::Classico);
             app.apertar(Botao::Som);
         }
         // A folha de Som com o aviso de que a música não começou (um erro de áudio de mentira).
         "som-aviso" => {
-            app = app.com_preferencias(preferencias_da_cena());
+            app = app.com_preferencias(preferencias_da_cena()).com_vibrador(true);
             app.apertar(Botao::Som);
             app.erro_de_audio(Canal::Musica, Some("arquivo não encontrado".to_string()));
         }
@@ -223,6 +224,8 @@ mod tests {
         assert!(preferencias.musica_ligada && !preferencias.ambiente_ligado);
         assert_eq!(preferencias.respiracao, Respiracao::Equilibrada);
         assert!(som.guia_respiracao().is_some());
+        // O aparelho da cena tem vibrador, com a vibração ligada: a foto mostra a linha nova.
+        assert!(som.tem_vibrador() && preferencias.vibracao);
 
         // No Clássico a folha só tem os efeitos, e nada de música ou ambiente.
         let classico = cena("som-classico").expect("a cena som-classico existe");
@@ -230,6 +233,7 @@ mod tests {
         assert!(classico.folha_aberta());
         assert!(classico.guia_respiracao().is_none());
         assert_eq!(classico.som_desejado(), Default::default());
+        assert!(classico.tem_vibrador(), "a linha de vibração também existe no Clássico");
 
         // A folha com o aviso de que a música não começou.
         let aviso = cena("som-aviso").expect("a cena som-aviso existe");

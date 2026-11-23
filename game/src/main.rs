@@ -23,6 +23,7 @@ mod vibracao;
 use crate::app::App;
 use crate::input::Evento;
 use crate::salvar::Salvador;
+use crate::vibracao::Toque;
 use macroquad::audio::{load_sound_from_bytes, play_sound_once, Sound};
 // Atenção: o `info!` do miniquad não aceita `{nome}` dentro do texto; os valores vão como
 // argumentos (`info!("x={}", x)`), senão a chave aparece escrita no registro.
@@ -201,8 +202,9 @@ fn linha_de_toque(x: f32, y: f32, escala: f32) -> String {
 /// (posição lógica × `escala`): o teste do celular virtual lê estas linhas para saber onde
 /// tocar. `jogar_novamente`, `cancelar` e `confirmar` são sempre registrados, mesmo quando
 /// estão escondidos; `embaralhar` só existe no Zen. O ♪ (`som`) está sempre lá; com a folha de Som
-/// aberta (`folha_aberta`) entram também os botões dela: `fechar_som` e, no Zen, `liga_musica` e
-/// `liga_ambiente` (o teste do celular virtual os usa para ligar a música e o ambiente).
+/// aberta (`folha_aberta`) entram também os botões dela: `fechar_som`, `liga_vibracao` (só em
+/// aparelho com vibrador) e, no Zen, `liga_musica` e `liga_ambiente` (o teste do celular virtual
+/// os usa para ligar a vibração, a música e o ambiente).
 fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha_aberta: bool) -> Vec<String> {
     let tabuleiro = tela.tabuleiro;
     let mut linhas = vec![format!(
@@ -225,7 +227,11 @@ fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha_aberta: bool)
     ]);
     if folha_aberta {
         botoes.push(("fechar_som", tela.som.fechar));
-        for (nome, interruptor) in [("liga_musica", tela.som.liga_musica), ("liga_ambiente", tela.som.liga_ambiente)] {
+        for (nome, interruptor) in [
+            ("liga_vibracao", tela.som.vibracao),
+            ("liga_musica", tela.som.liga_musica),
+            ("liga_ambiente", tela.som.liga_ambiente),
+        ] {
             if let Some(area) = interruptor {
                 botoes.push((nome, area));
             }
@@ -256,12 +262,13 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
             eprintln!("cena desconhecida: {nome}");
             std::process::exit(2);
         }),
-        None if com_arquivos => abrir_com_arquivos(dados),
-        None => App::novo(),
+        None if com_arquivos => abrir_com_arquivos(dados).com_vibrador(tem_vibrador_sem_risco()),
+        None => App::novo().com_vibrador(tem_vibrador_sem_risco()),
     };
     let sprites = render::Sprites::load();
     let mut audio_do_jogo = com_audio.then(audio::Audio::novo);
-    let calcular_tela = |app: &App| layout::tela_jogo(screen_width(), screen_height(), app.modo() == Mode::Zen);
+    let calcular_tela =
+        |app: &App| layout::tela_jogo_com(screen_width(), screen_height(), app.modo() == Mode::Zen, app.tem_vibrador());
 
     let mut quadro = 0u32;
     // Tamanho, modo e folha de Som (aberta ou fechada) para os quais a posição dos botões já foi
@@ -292,6 +299,19 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
         // Sons: os efeitos que chegaram a hora de tocar e o que a música e o ambiente do Zen
         // deveriam estar fazendo agora (o planejador compara com o que está carregado).
         let efeitos = app.sons();
+        // Vibrações pedidas neste quadro (só com vibrador). Se o aparelho recusar o toque de
+        // "ligou", o interruptor volta a desligado, para não mentir.
+        for toque in app.vibracoes() {
+            if !app.tem_vibrador() {
+                continue;
+            }
+            if let Err(erro) = vibrar_sem_risco(toque) {
+                info!("PRISMA_M4 vibracao erro texto={}", erro);
+                if toque == Toque::Ligou {
+                    app.vibracao_recusada();
+                }
+            }
+        }
         if let Some(audio) = audio_do_jogo.as_mut() {
             if !efeitos.is_empty() {
                 let volumes = app.preferencias().volumes;
@@ -324,6 +344,19 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
         quadro += 1;
         next_frame().await;
     }
+}
+
+/// O aparelho tem vibrador? Qualquer falha (até um pânico da ponte com o Android) vale "não":
+/// o interruptor some e o jogo segue.
+fn tem_vibrador_sem_risco() -> bool {
+    std::panic::catch_unwind(plataforma::tem_vibrador).unwrap_or(false)
+}
+
+/// Vibra com o padrão do `toque`. O `catch_unwind` segura um pânico da ponte com o Android (como
+/// em `tocar_som`): o pior que pode acontecer é o toque não sair.
+fn vibrar_sem_risco(toque: Toque) -> Result<(), String> {
+    std::panic::catch_unwind(|| plataforma::vibrar_padrao(toque.padrao_ms()))
+        .unwrap_or_else(|_| Err("a vibração não respondeu".to_string()))
 }
 
 /// Toca o som de teste. Se o áudio estiver morto (por exemplo, um PC sem placa de som), o
@@ -599,6 +632,27 @@ mod tests {
         let aberta = linhas_de_geometria(&classico, 2.0, true);
         assert!(aberta.contains(&format!("PRISMA_M1 botao=fechar_som {}", centro(classico.som.fechar))));
         assert!(!tem(&aberta, "liga_musica") && !tem(&aberta, "liga_ambiente"), "o Clássico não tem os interruptores");
+    }
+
+    #[test]
+    fn o_registro_de_geometria_leva_liga_vibracao_com_a_folha_aberta() {
+        let tem = |linhas: &[String], nome: &str| linhas.iter().any(|linha| linha.starts_with(&format!("PRISMA_M1 botao={nome} ")));
+        for zen in [true, false] {
+            let com_vibrador = layout::tela_jogo_com(540.0, 960.0, zen, true);
+            // Fechada: não aparece.
+            assert!(!tem(&linhas_de_geometria(&com_vibrador, 2.0, false), "liga_vibracao"), "zen={zen}");
+            // Aberta: aparece, no centro da linha.
+            let area = com_vibrador.som.vibracao.expect("tem a linha");
+            let esperado = format!(
+                "PRISMA_M1 botao=liga_vibracao x={:.0} y={:.0}",
+                (area.x + area.w / 2.0) * 2.0,
+                (area.y + area.h / 2.0) * 2.0
+            );
+            assert!(linhas_de_geometria(&com_vibrador, 2.0, true).contains(&esperado), "zen={zen}: faltou {esperado}");
+            // Sem vibrador: nunca aparece.
+            let sem_vibrador = layout::tela_jogo_com(540.0, 960.0, zen, false);
+            assert!(!tem(&linhas_de_geometria(&sem_vibrador, 2.0, true), "liga_vibracao"), "zen={zen}");
+        }
     }
 
     #[test]

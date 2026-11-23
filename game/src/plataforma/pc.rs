@@ -22,6 +22,17 @@ pub fn vibrar(_milissegundos: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// No PC o vibrador é de mentira, mas "existe": assim dá para ver e testar o interruptor de
+/// vibração na janela.
+pub fn tem_vibrador() -> bool {
+    true
+}
+
+/// Vibrar com um padrão (milissegundos: espera, vibra, para, vibra...). No PC finge que deu certo.
+pub fn vibrar_padrao(_padrao_ms: &[u32]) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -29,5 +40,14 @@ mod tests {
     #[test]
     fn vibrar_no_pc_nao_da_erro() {
         assert_eq!(vibrar(200), Ok(()));
+    }
+
+    #[test]
+    fn tem_vibrador_e_vibrar_padrao_no_pc() {
+        // No PC o vibrador é de mentira: existe, e qualquer padrão "dá certo".
+        assert!(tem_vibrador());
+        assert_eq!(vibrar_padrao(&[0, 28]), Ok(()));
+        assert_eq!(vibrar_padrao(&[0, 28, 55, 35]), Ok(()));
+        assert_eq!(vibrar_padrao(&[]), Ok(()));
     }
 }

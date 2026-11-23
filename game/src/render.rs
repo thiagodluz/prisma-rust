@@ -574,6 +574,10 @@ fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
 
     desenhar_linha_de_volume(som.barra_efeitos, "Volume dos efeitos", preferencias.volumes.efeitos, t);
 
+    if let Some(area) = som.vibracao {
+        desenhar_linha_com_interruptor(area, "Vibração", preferencias.vibracao, t);
+    }
+
     if let (Some(liga), Some(escolhe)) = (som.liga_musica, som.escolhe_musica) {
         desenhar_linha_com_interruptor(liga, "Música", preferencias.musica_ligada, t);
         desenhar_botao_de_escolha(escolhe, preferencias.musica.texto(), t);

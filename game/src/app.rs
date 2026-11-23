@@ -537,6 +537,10 @@ impl App {
                 (Botao::SonsDoJogo, som.sons_do_jogo),
                 (Botao::Testar, som.testar),
             ];
+            // A linha de vibração só vale em aparelho com vibrador (a tela também a omite).
+            if let (true, Some(vibracao)) = (self.vibrador, som.vibracao) {
+                botoes.push((Botao::Vibracao, vibracao));
+            }
             if self.modo == Mode::Zen {
                 let do_zen = [
                     (Botao::LigaMusica, som.liga_musica),
@@ -3340,5 +3344,29 @@ mod tests {
         let posicao = registro.iter().position(|linha| linha.starts_with("PRISMA_M4")).expect("a linha de vibração");
         assert_eq!(registro[posicao], "PRISMA_M4 vibracao toque=curto");
         assert!(registro[posicao - 1].starts_with("PRISMA_M1 jogada valida=true"), "logo depois da linha da jogada");
+    }
+
+    #[test]
+    fn botao_vibracao_so_existe_com_folha_aberta_e_vibrador() {
+        let tela = tela();
+        let alvo = tela.som.vibracao.expect("tela_jogo tem a linha de vibração");
+        let (x, y) = meio(alvo);
+        // Folha fechada: o ponto nunca é o botão de vibração.
+        let mut app = App::com_sementes(7, 9).com_vibrador(true);
+        assert_ne!(app.botao_em(&tela, x, y), Some(Botao::Vibracao));
+        // Folha aberta e com vibrador: é ele.
+        abrir_folha(&mut app);
+        assert_eq!(app.botao_em(&tela, x, y), Some(Botao::Vibracao));
+        // Sem vibrador, mesmo que a tela tenha a linha: o botão não existe.
+        let mut sem = App::com_sementes(7, 9);
+        abrir_folha(&mut sem);
+        assert_ne!(sem.botao_em(&tela, x, y), Some(Botao::Vibracao));
+        // No Clássico também existe.
+        let mut classico = App::com_sementes(7, 9).com_vibrador(true);
+        classico.apertar(Botao::Classico);
+        abrir_folha(&mut classico);
+        let tela_c = tela_classico();
+        let (cx, cy) = meio(tela_c.som.vibracao.expect("o Clássico também tem a linha"));
+        assert_eq!(classico.botao_em(&tela_c, cx, cy), Some(Botao::Vibracao));
     }
 }
