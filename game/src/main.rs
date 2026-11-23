@@ -14,6 +14,7 @@ mod input;
 mod layout;
 mod linha;
 mod menu;
+mod particulas;
 mod plataforma;
 mod preferencias;
 mod render;

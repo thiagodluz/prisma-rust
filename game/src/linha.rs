@@ -24,13 +24,13 @@ const LIMPEZA_MS: f32 = 270.0;
 /// Pedra que some numa limpeza em que uma pedra especial foi ativada (dura um pouco mais).
 const LIMPEZA_ESPECIAL_MS: f32 = 340.0;
 /// As animações dos efeitos, em escala 1 (as do JS). O passo de limpeza dura até a mais longa.
-const FAISCA_MS: f32 = 380.0;
-const ONDA_MS: f32 = 360.0;
-const FEIXE_MS: f32 = 330.0;
-const VEU_MS: f32 = 370.0;
-const SUPERNOVA_MS: f32 = 480.0;
+pub(crate) const FAISCA_MS: f32 = 380.0;
+pub(crate) const ONDA_MS: f32 = 360.0;
+pub(crate) const FEIXE_MS: f32 = 330.0;
+pub(crate) const VEU_MS: f32 = 370.0;
+pub(crate) const SUPERNOVA_MS: f32 = 480.0;
 /// A fusão das pedras de origem de uma Supernova, antes da explosão.
-const FUSAO_MS: f32 = 240.0;
+pub(crate) const FUSAO_MS: f32 = 240.0;
 /// O maior "filtro de brilho" do JS (o do Vibrante). O brilho que sai daqui vai de 0 (sem brilho,
 /// filtro 1) a 1 (filtro 2,1): `(filtro − 1) / (2,1 − 1)`.
 const BRILHO_MAXIMO: f32 = 2.1;
@@ -76,7 +76,7 @@ pub struct Visual {
 impl Intensidade {
     /// Quanto as animações esticam (ou encolhem) nesta intensidade: Suave 0,82, Padrão 1, Vibrante 1,1.
     /// (Uma função solta de `linha.rs`: só quem mexe com tempo precisa dela.)
-    fn escala_de_duracao(self) -> f32 {
+    pub(crate) fn escala_de_duracao(self) -> f32 {
         match self {
             Intensidade::Suave => 0.82,
             Intensidade::Padrao => 1.0,
@@ -85,7 +85,7 @@ impl Intensidade {
     }
 
     /// O tamanho máximo que a pedra chega a ter ao sumir (1 é o tamanho normal).
-    fn pico_da_pedra(self) -> f32 {
+    pub(crate) fn pico_da_pedra(self) -> f32 {
         match self {
             Intensidade::Suave | Intensidade::Padrao => 1.1,
             Intensidade::Vibrante => 1.18,
@@ -93,7 +93,7 @@ impl Intensidade {
     }
 
     /// O filtro de brilho que a pedra chega a ter ao sumir (1 é sem brilho), como no JS.
-    fn brilho_da_pedra(self) -> f32 {
+    pub(crate) fn brilho_da_pedra(self) -> f32 {
         match self {
             Intensidade::Suave => 1.35,
             Intensidade::Padrao => 1.8,
@@ -264,12 +264,17 @@ fn duracao_do_efeito(tipo: TipoVisual) -> f32 {
 /// limpeza (0 se o passo não tem Supernova com pedras fundidas).
 pub fn fusao_ms(passo: &Passo) -> f32 {
     match passo {
-        Passo::Limpeza { visuais, intensidade, .. }
-            if visuais.iter().any(|visual| visual.tipo == TipoVisual::Supernova && !visual.origens.is_empty()) =>
-        {
-            FUSAO_MS * intensidade.escala_de_duracao()
-        }
+        Passo::Limpeza { visuais, intensidade, .. } => fusao_dos_visuais(visuais, *intensidade),
         _ => 0.0,
+    }
+}
+
+/// O mesmo de [`fusao_ms`], para quem só tem os `visuais` e a intensidade do passo (as partículas).
+pub fn fusao_dos_visuais<'a>(visuais: impl IntoIterator<Item = &'a Visual>, intensidade: Intensidade) -> f32 {
+    if visuais.into_iter().any(|visual| visual.tipo == TipoVisual::Supernova && !visual.origens.is_empty()) {
+        FUSAO_MS * intensidade.escala_de_duracao()
+    } else {
+        0.0
     }
 }
 
