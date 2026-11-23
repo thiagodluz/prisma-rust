@@ -15,7 +15,7 @@ use crate::linha::{
     deslocamento_troca, embaralhar_alfa, fusao_da_casa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa,
     queda_deslocamento, queda_ms, resgate_da_casa, Passo, TipoVisual,
 };
-use crate::menu::{creditos, linhas_de_recordes};
+use crate::menu::{blocos_de_recordes, creditos};
 use crate::particulas::{ajustar, particulas, realce_da_faixa, Forma};
 use crate::preferencias::{orbe, segundos_restantes, Intensidade};
 
@@ -764,21 +764,19 @@ fn desenhar_folha_do_menu(app: &App, aba: Folha, tela: &TelaJogo) {
 
     let conteudo = menu.conteudo;
     if recordes_ativos {
-        let modo = app.modo();
-        let nome_do_modo = if modo == prisma_engine::Mode::Zen { "Modo Zen" } else { "Modo Clássico" };
-        let linhas = linhas_de_recordes(modo, app.recordes(modo));
-        let legenda = Rect { h: 1.6 * t, ..conteudo };
-        escrever(nome_do_modo, legenda, 0.95 * t, TEXTO_SUAVE, Alinhamento::Esquerda);
-        let vao = 0.5 * t;
-        let resto = conteudo.h - legenda.h - vao;
-        let altura = ((resto - (linhas.len() as f32 - 1.0) * vao) / linhas.len() as f32).min(3.0 * t);
-        for (i, linha) in linhas.iter().enumerate() {
-            let area = Rect { y: conteudo.y + legenda.h + vao + i as f32 * (altura + vao), h: altura, ..conteudo };
-            desenhar_cartao(area);
-            let margem = 0.5 * t;
-            let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area };
-            escrever(linha.rotulo, Rect { w: 0.62 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
-            escrever(&linha.valor, Rect { x: dentro.x + 0.64 * dentro.w, w: 0.36 * dentro.w, ..dentro }, 1.1 * t, DESTAQUE, Alinhamento::Direita);
+        // Os dois modos de uma vez (como a lista "Ver recordes" do JS): Zen e depois Clássico.
+        let blocos = blocos_de_recordes(app.recordes(prisma_engine::Mode::Zen), app.recordes(prisma_engine::Mode::Classic));
+        let linhas_por_bloco: Vec<usize> = blocos.iter().map(|bloco| bloco.linhas.len()).collect();
+        let lugares = layout::repartir_recordes(conteudo, t, &linhas_por_bloco);
+        for (bloco, lugar) in blocos.iter().zip(&lugares) {
+            escrever(bloco.titulo, lugar.legenda, 0.95 * t, TEXTO_SUAVE, Alinhamento::Esquerda);
+            for (linha, area) in bloco.linhas.iter().zip(&lugar.cartoes) {
+                desenhar_cartao(*area);
+                let margem = 0.5 * t;
+                let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..*area };
+                escrever(linha.rotulo, Rect { w: 0.62 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
+                escrever(&linha.valor, Rect { x: dentro.x + 0.64 * dentro.w, w: 0.36 * dentro.w, ..dentro }, 1.1 * t, DESTAQUE, Alinhamento::Direita);
+            }
         }
     } else {
         escrever_paragrafos(&creditos(env!("CARGO_PKG_VERSION")), conteudo, 0.95 * t, TEXTO_SUAVE);

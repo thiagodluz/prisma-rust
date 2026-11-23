@@ -103,6 +103,11 @@ fn recordes_da_cena() -> Recordes {
     Recordes { pontuacao: 1_234_567, nivel: 14, jogada: 8_900, terminadas: 23 }
 }
 
+/// Os do Zen na mesma foto: diferentes dos do Clássico, para a foto mostrar que cada bloco lê o seu.
+fn recordes_do_zen_da_cena() -> Recordes {
+    Recordes { pontuacao: 98_765, nivel: 6, jogada: 3_200, terminadas: 0 }
+}
+
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
 /// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
 /// `som-classico`, `som-aviso`, `respiracao`, `recordes`, `creditos`, `particulas-pulso`,
@@ -172,7 +177,7 @@ pub fn cena(nome: &str) -> Option<App> {
         }
         // A folha do Menu em Recordes, no Clássico (que tem as quatro linhas), com números de verdade.
         "recordes" => {
-            app = app.com_recordes(recordes_da_cena(), recordes_da_cena());
+            app = app.com_recordes(recordes_do_zen_da_cena(), recordes_da_cena());
             app.apertar(Botao::Classico);
             app.apertar(Botao::Menu);
         }
@@ -330,6 +335,7 @@ mod tests {
         let recordes = cena("recordes").expect("a cena recordes existe");
         assert_eq!((recordes.folha(), recordes.modo()), (Some(Folha::Recordes), Mode::Classic));
         assert_eq!(recordes.recordes(Mode::Classic).pontuacao, 1_234_567);
+        assert_eq!(recordes.recordes(Mode::Zen).pontuacao, 98_765, "a foto mostra números diferentes em cada bloco");
         assert_eq!(cena("creditos").expect("a cena creditos existe").folha(), Some(Folha::Creditos));
 
         // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).

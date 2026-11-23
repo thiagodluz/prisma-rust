@@ -29,6 +29,22 @@ pub fn linhas_de_recordes(modo: Mode, recordes: Recordes) -> Vec<LinhaDeRecorde>
     linhas
 }
 
+/// Um bloco da folha de Recordes: o título ("Zen" ou "Clássico") e as linhas daquele modo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlocoDeRecordes {
+    pub titulo: &'static str,
+    pub linhas: Vec<LinhaDeRecorde>,
+}
+
+/// Os dois blocos da folha de Recordes, o do Zen e depois o do Clássico, cada um com os recordes do
+/// seu modo (como a lista "Ver recordes" do Prisma em JS, que mostra os dois ao mesmo tempo).
+pub fn blocos_de_recordes(zen: Recordes, classico: Recordes) -> Vec<BlocoDeRecordes> {
+    vec![
+        BlocoDeRecordes { titulo: "Zen", linhas: linhas_de_recordes(Mode::Zen, zen) },
+        BlocoDeRecordes { titulo: "Clássico", linhas: linhas_de_recordes(Mode::Classic, classico) },
+    ]
+}
+
 /// O texto dos créditos, uma linha (ou frase) por item, sem links (não há navegador a abrir).
 /// `versao` é a versão do pacote (`CARGO_PKG_VERSION`).
 pub fn creditos(versao: &str) -> Vec<String> {
@@ -56,6 +72,20 @@ mod tests {
         assert_eq!(rotulos(&zen), vec!["Maior pontuação", "Maior nível", "Melhor jogada"]);
         let classico = linhas_de_recordes(Mode::Classic, Recordes::zerados());
         assert_eq!(rotulos(&classico), vec!["Maior pontuação", "Maior nível", "Melhor jogada", "Partidas concluídas"]);
+    }
+
+    #[test]
+    fn a_folha_de_recordes_tem_os_dois_blocos_cada_um_com_os_seus_numeros() {
+        let zen = Recordes { pontuacao: 2_025, nivel: 2, jogada: 718, terminadas: 0 };
+        let classico = Recordes { pontuacao: 9_000, nivel: 7, jogada: 450, terminadas: 3 };
+        let blocos = blocos_de_recordes(zen, classico);
+        let titulos: Vec<&str> = blocos.iter().map(|bloco| bloco.titulo).collect();
+        assert_eq!(titulos, vec!["Zen", "Clássico"], "os dois modos aparecem, o Zen primeiro");
+        let valores = |i: usize| blocos[i].linhas.iter().map(|linha| linha.valor.clone()).collect::<Vec<_>>();
+        assert_eq!(valores(0), vec!["2.025", "2", "718"], "o bloco do Zen lê os recordes do Zen");
+        assert_eq!(valores(1), vec!["9.000", "7", "450", "3"], "o bloco do Clássico lê os do Clássico");
+        assert_eq!(blocos[0].linhas.len(), 3);
+        assert_eq!(blocos[1].linhas.len(), 4);
     }
 
     #[test]

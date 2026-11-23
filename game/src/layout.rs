@@ -506,6 +506,44 @@ fn folha_do_menu(folha: Rect, unidade: f32) -> TelaMenu {
     }
 }
 
+/// Um bloco da folha de Recordes já com o lugar de cada coisa: a legenda ("Zen") e um cartão por linha.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlocoDaFolha {
+    pub legenda: Rect,
+    pub cartoes: Vec<Rect>,
+}
+
+/// Reparte a área `conteudo` da folha entre os blocos de recordes (um por modo, de cima para baixo).
+/// `linhas_por_bloco` diz quantas linhas cada bloco tem e `texto` é o tamanho base da letra. Cada
+/// bloco é uma legenda seguida dos cartões; os cartões dividem igualmente o que sobra, sem passar
+/// de 3 tamanhos de letra de altura. Área pequena demais dá alturas zero, nunca negativas nem `NaN`.
+pub fn repartir_recordes(conteudo: Rect, texto: f32, linhas_por_bloco: &[usize]) -> Vec<BlocoDaFolha> {
+    let legenda = 1.6 * texto;
+    let vao = 0.5 * texto;
+    let entre_blocos = texto;
+    let total_de_linhas: usize = linhas_por_bloco.iter().sum();
+    let fixo = linhas_por_bloco.len() as f32 * legenda
+        + total_de_linhas as f32 * vao
+        + linhas_por_bloco.len().saturating_sub(1) as f32 * entre_blocos;
+    let altura = if total_de_linhas == 0 { 0.0 } else { ((conteudo.h - fixo) / total_de_linhas as f32).clamp(0.0, 3.0 * texto) };
+    let legenda = legenda.min(conteudo.h.max(0.0));
+    let mut y = conteudo.y;
+    let mut blocos = Vec::with_capacity(linhas_por_bloco.len());
+    for &linhas in linhas_por_bloco {
+        let rotulo = Rect { y, h: legenda, ..conteudo };
+        y += legenda;
+        let mut cartoes = Vec::with_capacity(linhas);
+        for _ in 0..linhas {
+            y += vao;
+            cartoes.push(Rect { y, h: altura, ..conteudo });
+            y += altura;
+        }
+        y += entre_blocos;
+        blocos.push(BlocoDaFolha { legenda: rotulo, cartoes });
+    }
+    blocos
+}
+
 /// A folha de Som para uma tela e um modo (`zen` falso é o Clássico). É a mesma que
 /// `tela_jogo` guarda em `som`. Tela "impossível" devolve tudo vazio.
 #[cfg(test)]
@@ -1222,6 +1260,55 @@ mod tests_tela_jogo {
                 assert!(menu.texto > 0.0);
             }
         }
+    }
+
+    #[test]
+    fn os_dois_blocos_de_recordes_cabem_na_folha_em_qualquer_celular() {
+        for (largura, altura) in CELULARES {
+            for zen in [true, false] {
+                let menu = tela_jogo(largura, altura, zen).menu;
+                let blocos = repartir_recordes(menu.conteudo, menu.texto, &[3, 4]);
+                assert_eq!(blocos.len(), 2, "{largura}x{altura}");
+                assert_eq!((blocos[0].cartoes.len(), blocos[1].cartoes.len()), (3, 4));
+                // Tudo dentro do conteúdo, em ordem de cima para baixo e sem cruzar nada.
+                let mut todos = Vec::new();
+                for bloco in &blocos {
+                    todos.push(bloco.legenda);
+                    todos.extend(bloco.cartoes.iter().copied());
+                }
+                for retangulo in &todos {
+                    assert!(retangulo.w > 0.0 && retangulo.h > 0.0, "retângulo sem tamanho em {largura}x{altura}");
+                    assert!(dentro(*retangulo, menu.conteudo), "retângulo fora do conteúdo em {largura}x{altura}: {retangulo:?} / {:?}", menu.conteudo);
+                }
+                for (i, a) in todos.iter().enumerate() {
+                    for b in &todos[i + 1..] {
+                        assert!(!se_cruzam(*a, *b), "retângulos se cruzam em {largura}x{altura}: {a:?} e {b:?}");
+                        assert!(a.y < b.y, "fora de ordem em {largura}x{altura}");
+                    }
+                }
+                // Os cartões têm de ser grandes o bastante para a letra (e nunca passam de 3 letras).
+                for retangulo in blocos.iter().flat_map(|bloco| bloco.cartoes.iter()) {
+                    assert!(retangulo.h >= 1.5 * menu.texto, "cartão baixo em {largura}x{altura}: {} < {}", retangulo.h, 1.5 * menu.texto);
+                    assert!(retangulo.h <= 3.0 * menu.texto + 1e-3);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repartir_recordes_nao_da_pane_com_area_vazia_ou_sem_linhas() {
+        for conteudo in [Rect::VAZIO, Rect { x: 5.0, y: 5.0, w: 100.0, h: 0.0 }, Rect { x: 5.0, y: 5.0, w: 100.0, h: 10.0 }] {
+            let blocos = repartir_recordes(conteudo, 20.0, &[3, 4]);
+            assert_eq!(blocos.len(), 2);
+            for retangulo in blocos.iter().flat_map(|bloco| std::iter::once(&bloco.legenda).chain(bloco.cartoes.iter())) {
+                assert!(retangulo.h.is_finite() && retangulo.h >= 0.0, "altura {} em {conteudo:?}", retangulo.h);
+                assert!(retangulo.y.is_finite() && retangulo.w.is_finite());
+            }
+        }
+        assert_eq!(repartir_recordes(Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 }, 10.0, &[]).len(), 0);
+        let sem_linhas = repartir_recordes(Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 }, 10.0, &[0, 0]);
+        assert_eq!(sem_linhas.len(), 2);
+        assert!(sem_linhas.iter().all(|bloco| bloco.cartoes.is_empty()));
     }
 
     #[test]
