@@ -1,4 +1,4 @@
-//! Preferências de som e guia de respiração: tudo "puro" (só números e textos), sem tocar nada.
+//! Preferências de som, vibração e guia de respiração: tudo "puro" (só números e textos), sem tocar nada.
 //!
 //! O arquivo `som.json` guarda, com os mesmos nomes do jogo em JS (`soundOn`, `audio`, `zen`),
 //! os volumes, o que está ligado e as escolhas do Zen. A leitura é por campo, como as funções
@@ -183,6 +183,55 @@ impl Respiracao {
     }
 }
 
+/// A intensidade dos efeitos visuais do Zen (as partículas das limpezas), a "Efeitos" do JS.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Intensidade {
+    Suave,
+    #[default]
+    Padrao,
+    Vibrante,
+}
+
+impl Intensidade {
+    pub const TODAS: [Intensidade; 3] = [Intensidade::Suave, Intensidade::Padrao, Intensidade::Vibrante];
+
+    pub fn proximo(self) -> Intensidade {
+        let posicao = Intensidade::TODAS.iter().position(|&i| i == self).unwrap_or(0);
+        Intensidade::TODAS[(posicao + 1) % Intensidade::TODAS.len()]
+    }
+
+    /// O nome que o jogador lê no botão.
+    pub fn texto(self) -> &'static str {
+        match self {
+            Intensidade::Suave => "Suave",
+            Intensidade::Padrao => "Padrão",
+            Intensidade::Vibrante => "Vibrante",
+        }
+    }
+
+    /// O valor gravado em `som.json` (`zen.effects`), o mesmo do jogo em JS.
+    pub fn id_js(self) -> &'static str {
+        match self {
+            Intensidade::Suave => "soft",
+            Intensidade::Padrao => "normal",
+            Intensidade::Vibrante => "vivid",
+        }
+    }
+
+    /// O nome que entra nas linhas `PRISMA_M4 intensidade valor=...` do registro.
+    pub fn nome_do_registro(self) -> &'static str {
+        match self {
+            Intensidade::Suave => "suave",
+            Intensidade::Padrao => "padrao",
+            Intensidade::Vibrante => "vibrante",
+        }
+    }
+
+    fn pelo_id_js(id: &str) -> Option<Intensidade> {
+        Intensidade::TODAS.into_iter().find(|i| i.id_js() == id)
+    }
+}
+
 /// Tudo o que o jogador escolhe na folha de Som.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preferencias {
@@ -194,6 +243,10 @@ pub struct Preferencias {
     pub musica: Musica,
     pub ambiente: Ambiente,
     pub respiracao: Respiracao,
+    /// O interruptor "Vibração" (padrão: desligada, como no JS).
+    pub vibracao: bool,
+    /// A intensidade das partículas do Zen (padrão: Padrão, como no JS).
+    pub intensidade: Intensidade,
 }
 
 impl Default for Preferencias {
@@ -206,6 +259,8 @@ impl Default for Preferencias {
             musica: Musica::CozyPuzzle,
             ambiente: Ambiente::Chuva,
             respiracao: Respiracao::Desligada,
+            vibracao: false,
+            intensidade: Intensidade::Padrao,
         }
     }
 }
@@ -214,6 +269,7 @@ impl Default for Preferencias {
 pub fn preferencias_para_json(preferencias: &Preferencias) -> String {
     json!({
         "soundOn": preferencias.sons_do_jogo,
+        "vibration": preferencias.vibracao,
         "audio": {
             "effects": preferencias.volumes.efeitos,
             "music": preferencias.volumes.musica,
@@ -225,6 +281,7 @@ pub fn preferencias_para_json(preferencias: &Preferencias) -> String {
             "musicTrack": preferencias.musica.id_js(),
             "ambienceSound": preferencias.ambiente.id_js(),
             "breath": preferencias.respiracao.id_js(),
+            "effects": preferencias.intensidade.id_js(),
         },
     })
     .to_string()
@@ -272,6 +329,10 @@ pub fn json_para_preferencias(texto: &str) -> Result<Preferencias, String> {
         musica: texto_do_zen("musicTrack").and_then(Musica::pelo_id_js).unwrap_or(padrao.musica),
         ambiente: texto_do_zen("ambienceSound").and_then(Ambiente::pelo_id_js).unwrap_or(padrao.ambiente),
         respiracao: texto_do_zen("breath").and_then(Respiracao::pelo_id_js).unwrap_or(padrao.respiracao),
+        // Como a música e o ambiente: só `true` de verdade liga; o arquivo do M3 não tem o campo.
+        vibracao: booleano(Some(&raiz), "vibration", padrao.vibracao),
+        // Texto fora da lista, outro tipo ou campo ausente (o arquivo do M3): Padrão.
+        intensidade: texto_do_zen("effects").and_then(Intensidade::pelo_id_js).unwrap_or(padrao.intensidade),
     })
 }
 
@@ -369,6 +430,7 @@ mod tests {
         assert_eq!(padrao.musica, Musica::CozyPuzzle);
         assert_eq!(padrao.ambiente, Ambiente::Chuva);
         assert_eq!(padrao.respiracao, Respiracao::Desligada);
+        assert_eq!(padrao.intensidade, Intensidade::Padrao);
         // Um objeto vazio vale o mesmo que o padrão.
         assert_eq!(ler("{}"), padrao);
     }
@@ -439,17 +501,23 @@ mod tests {
                         for musica in Musica::TODAS {
                             for ambiente in Ambiente::TODOS {
                                 for respiracao in Respiracao::TODAS {
-                                    let original = Preferencias {
-                                        sons_do_jogo,
-                                        volumes: Volumes { efeitos, musica: musica_v, ambiente: ambiente_v },
-                                        musica_ligada,
-                                        ambiente_ligado,
-                                        musica,
-                                        ambiente,
-                                        respiracao,
-                                    };
-                                    assert_eq!(ler(&preferencias_para_json(&original)), original);
-                                    quantas += 1;
+                                    for vibracao in [true, false] {
+                                        for intensidade in Intensidade::TODAS {
+                                            let original = Preferencias {
+                                                sons_do_jogo,
+                                                volumes: Volumes { efeitos, musica: musica_v, ambiente: ambiente_v },
+                                                musica_ligada,
+                                                ambiente_ligado,
+                                                musica,
+                                                ambiente,
+                                                respiracao,
+                                                vibracao,
+                                                intensidade,
+                                            };
+                                            assert_eq!(ler(&preferencias_para_json(&original)), original);
+                                            quantas += 1;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -457,7 +525,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(quantas, 2 * 4 * 2 * 2 * 3 * 6 * 3);
+        assert_eq!(quantas, 2 * 4 * 2 * 2 * 3 * 6 * 3 * 2 * 3);
     }
 
     #[test]
@@ -470,14 +538,24 @@ mod tests {
             musica: Musica::SpaceCity,
             ambiente: Ambiente::FlorestaAposChuva,
             respiracao: Respiracao::Lenta,
+            vibracao: true,
+            intensidade: Intensidade::Vibrante,
         };
         let gravado: serde_json::Value = serde_json::from_str(&preferencias_para_json(&preferencias)).unwrap();
         assert_eq!(
             gravado,
             json!({
                 "soundOn": false,
+                "vibration": true,
                 "audio": {"effects": 10, "music": 20, "ambience": 30},
-                "zen": {"music": true, "ambience": false, "musicTrack": "spaceCity", "ambienceSound": "rainforest", "breath": "slow"}
+                "zen": {
+                    "music": true,
+                    "ambience": false,
+                    "musicTrack": "spaceCity",
+                    "ambienceSound": "rainforest",
+                    "breath": "slow",
+                    "effects": "vivid"
+                }
             })
         );
         // O arquivo do padrão é exatamente o do plano.
@@ -486,10 +564,53 @@ mod tests {
             padrao,
             json!({
                 "soundOn": true,
+                "vibration": false,
                 "audio": {"effects": 80, "music": 70, "ambience": 65},
-                "zen": {"music": false, "ambience": false, "musicTrack": "cozyPuzzle", "ambienceSound": "rain", "breath": "off"}
+                "zen": {
+                    "music": false,
+                    "ambience": false,
+                    "musicTrack": "cozyPuzzle",
+                    "ambienceSound": "rain",
+                    "breath": "off",
+                    "effects": "normal"
+                }
             })
         );
+    }
+
+    #[test]
+    fn vibracao_comeca_desligada() {
+        assert!(!Preferencias::default().vibracao);
+    }
+
+    #[test]
+    fn vibracao_vai_e_volta_no_json() {
+        for ligada in [true, false] {
+            let preferencias = Preferencias { vibracao: ligada, ..Preferencias::default() };
+            let texto = preferencias_para_json(&preferencias);
+            let gravado: serde_json::Value = serde_json::from_str(&texto).unwrap();
+            assert_eq!(gravado["vibration"], json!(ligada), "o nome no arquivo é o do JS");
+            assert_eq!(ler(&texto).vibracao, ligada);
+        }
+    }
+
+    #[test]
+    fn json_do_m3_sem_vibration_carrega_desligada() {
+        // O arquivo que a versão do M3 gravava não tem o campo novo.
+        let lidas = ler(r#"{"soundOn":false,"audio":{"effects":10,"music":20,"ambience":30},"zen":{"music":true,"breath":"slow"}}"#);
+        assert!(!lidas.vibracao);
+        assert!(!lidas.sons_do_jogo, "o resto continua valendo");
+        assert_eq!(lidas.volumes.efeitos, 10);
+    }
+
+    #[test]
+    fn vibration_so_vale_com_booleano_de_verdade() {
+        for estranho in [r#""on""#, "1", "null", r#""true""#, "[]", "{}", "0.5"] {
+            let lidas = ler(&format!(r#"{{"vibration":{estranho}}}"#));
+            assert!(!lidas.vibracao, "{estranho} devia valer desligada");
+        }
+        assert!(ler(r#"{"vibration":true}"#).vibracao);
+        assert!(!ler(r#"{"vibration":false}"#).vibracao);
     }
 
     #[test]
@@ -538,6 +659,60 @@ mod tests {
         }
         assert_eq!(vistas, Respiracao::TODAS);
         assert_eq!(respiracao, Respiracao::Desligada);
+
+        let mut intensidade = Intensidade::Suave;
+        let mut vistas = Vec::new();
+        for _ in 0..Intensidade::TODAS.len() {
+            vistas.push(intensidade);
+            intensidade = intensidade.proximo();
+        }
+        assert_eq!(vistas, Intensidade::TODAS, "percorre as três, na ordem");
+        assert_eq!(intensidade, Intensidade::Suave, "depois de Vibrante volta a Suave");
+        assert_eq!(Intensidade::Padrao.proximo(), Intensidade::Vibrante);
+    }
+
+    #[test]
+    fn intensidade_padrao_e_padrao() {
+        assert_eq!(Intensidade::default(), Intensidade::Padrao);
+        assert_eq!(Preferencias::default().intensidade, Intensidade::Padrao);
+    }
+
+    #[test]
+    fn ida_e_volta_do_json_com_effects() {
+        for intensidade in Intensidade::TODAS {
+            let preferencias = Preferencias { intensidade, ..Preferencias::default() };
+            let texto = preferencias_para_json(&preferencias);
+            let gravado: serde_json::Value = serde_json::from_str(&texto).unwrap();
+            assert_eq!(gravado["zen"]["effects"], json!(intensidade.id_js()), "o campo mora em zen, com o nome do JS");
+            assert_eq!(ler(&texto).intensidade, intensidade);
+        }
+    }
+
+    #[test]
+    fn effects_desconhecido_vira_padrao() {
+        // Texto fora da lista (e maiúscula diferente), número, null e campo ausente: tudo vira Padrão.
+        for estranho in [r#""neon""#, r#""Vivid""#, r#""""#, "1", "null", "true", "[]", r#"{"a":1}"#] {
+            let lidas = ler(&format!(r#"{{"zen":{{"effects":{estranho}}}}}"#));
+            assert_eq!(lidas.intensidade, Intensidade::Padrao, "{estranho}");
+        }
+        assert_eq!(ler(r#"{"zen":{}}"#).intensidade, Intensidade::Padrao, "ausente");
+        assert_eq!(ler(r#"{"zen":"x"}"#).intensidade, Intensidade::Padrao, "zen não é objeto");
+        // Os três valores de verdade valem.
+        assert_eq!(ler(r#"{"zen":{"effects":"soft"}}"#).intensidade, Intensidade::Suave);
+        assert_eq!(ler(r#"{"zen":{"effects":"normal"}}"#).intensidade, Intensidade::Padrao);
+        assert_eq!(ler(r#"{"zen":{"effects":"vivid"}}"#).intensidade, Intensidade::Vibrante);
+        // Um campo ruim não leva os outros.
+        let lidas = ler(r#"{"zen":{"effects":"neon","breath":"slow"}}"#);
+        assert_eq!((lidas.intensidade, lidas.respiracao), (Intensidade::Padrao, Respiracao::Lenta));
+    }
+
+    #[test]
+    fn json_do_m3_sem_effects_carrega_com_padrao() {
+        // O arquivo que a versão do M3 gravava (com `vibration`, sem `effects`).
+        let lidas = ler(r#"{"soundOn":false,"vibration":true,"audio":{"effects":10},"zen":{"music":true,"breath":"slow"}}"#);
+        assert_eq!(lidas.intensidade, Intensidade::Padrao);
+        assert!(lidas.vibracao && !lidas.sons_do_jogo, "o resto continua valendo");
+        assert_eq!(lidas.volumes.efeitos, 10, "o `effects` de dentro de audio é o volume, não a intensidade");
     }
 
     #[test]
@@ -560,6 +735,12 @@ mod tests {
         assert_eq!(
             respiracoes,
             [("off", "Desligada"), ("balanced", "4 s inspirar · 4 s expirar"), ("slow", "4 s inspirar · 6 s expirar")]
+        );
+        let intensidades: Vec<(&str, &str, &str)> =
+            Intensidade::TODAS.iter().map(|i| (i.id_js(), i.texto(), i.nome_do_registro())).collect();
+        assert_eq!(
+            intensidades,
+            [("soft", "Suave", "suave"), ("normal", "Padrão", "padrao"), ("vivid", "Vibrante", "vibrante")]
         );
     }
 

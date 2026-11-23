@@ -8,14 +8,16 @@ use std::collections::HashMap;
 use macroquad::prelude::*;
 use prisma_engine::{position, Board, Tile, SIZE};
 
-use crate::app::{App, Painel};
+use crate::app::{App, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
 use crate::linha::{
-    deslocamento_troca, embaralhar_alfa, limpeza_da_casa, linhas_de_queda, nivel_faixa, queda_deslocamento,
-    queda_ms, resgate_da_casa,
+    deslocamento_troca, embaralhar_alfa, fusao_da_casa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa,
+    queda_deslocamento, queda_ms, resgate_da_casa, Passo, TipoVisual,
 };
-use crate::preferencias::{orbe, segundos_restantes};
+use crate::menu::{blocos_de_recordes, creditos};
+use crate::particulas::{ajustar, particulas, realce_da_faixa, Forma};
+use crate::preferencias::{orbe, segundos_restantes, Intensidade};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
 const FUNDO: Color = Color::from_hex(0x101229);
@@ -206,7 +208,6 @@ fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
         desenhar_casas(sprites, &app.jogo().board, area, parada);
         return;
     };
-    use crate::linha::Passo;
     match passo {
         Passo::Troca { antes, a, b, valida } => {
             let (a, b) = (*a, *b);
@@ -220,15 +221,44 @@ fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
             desenhar_pedra(sprites, &antes[linha_a][coluna_a], casa_a, 1.0, 1.0, (dx, dy));
             desenhar_pedra(sprites, &antes[linha_b][coluna_b], casa_b, 1.0, 1.0, (-dx, -dy));
         }
-        Passo::Limpeza { tabuleiro, celulas, ativadas, .. } => {
-            desenhar_casas(sprites, tabuleiro, area, |indice, _| {
-                if celulas.contains(&indice) {
-                    let (escala, alfa) = limpeza_da_casa(ativadas, indice, t);
-                    Some((escala, alfa, (0.0, 0.0)))
+        Passo::Limpeza { tabuleiro, celulas, ativadas, intensidade, visuais, .. } => {
+            // Primeiro a fusão da Supernova (as pedras de origem pulsam), depois as pedras somem.
+            let fusao = fusao_ms(passo);
+            let t_da_limpeza = t - fusao;
+            let origens: Vec<usize> = visuais
+                .iter()
+                .filter(|visual| visual.tipo == TipoVisual::Supernova)
+                .flat_map(|visual| visual.origens.iter().copied())
+                .collect();
+            // Cada casa: (escala, opacidade, brilho de 0 a 1).
+            let estado = |indice: usize| -> (f32, f32, f32) {
+                if t < fusao && origens.contains(&indice) {
+                    let (escala, brilho) = fusao_da_casa(t, *intensidade);
+                    (escala, 1.0, brilho)
+                } else if celulas.contains(&indice) {
+                    limpeza_da_casa(ativadas, indice, t_da_limpeza, *intensidade)
                 } else {
-                    Some((1.0, 1.0, (0.0, 0.0)))
+                    (1.0, 1.0, 0.0)
                 }
+            };
+            desenhar_casas(sprites, tabuleiro, area, |indice, _| {
+                let (escala, alfa, _) = estado(indice);
+                Some((escala, alfa, (0.0, 0.0)))
             });
+            // O brilho da pedra: uma luz branca translúcida por cima dela (`0,33 × brilho × opacidade`).
+            for indice in (0..SIZE * SIZE).filter(|indice| celulas.contains(indice) || origens.contains(indice)) {
+                let (escala, alfa, brilho) = estado(indice);
+                if brilho <= 0.0 || alfa <= 0.0 {
+                    continue;
+                }
+                // Três círculos, do maior e mais fraco ao menor e mais forte: um brilho sem borda dura.
+                let casa = casa_de(area, indice);
+                let raio = casa.w * SPRITE_RATIO * escala * 0.5;
+                for (fator, forca) in [(1.0, 0.18), (0.72, 0.3), (0.45, 0.5)] {
+                    let cor = com_alfa(WHITE, 0.33 * brilho * alfa * forca * 2.0);
+                    draw_circle(casa.x + casa.w / 2.0, casa.y + casa.h / 2.0, raio * fator, cor);
+                }
+            }
         }
         Passo::Queda { tabuleiro, origens } => {
             desenhar_casas(sprites, tabuleiro, area, |indice, casa| {
@@ -258,6 +288,54 @@ fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
         }
         // Na faixa de nível o tabuleiro já está no estado final.
         Passo::Nivel { .. } => desenhar_casas(sprites, &app.jogo().board, area, parada),
+    }
+}
+
+/// As partículas da limpeza (faíscas, ondas, feixes, véu, anel da Supernova e linhas de fusão),
+/// por cima das pedras. A conta é de `particulas::particulas`; aqui só se pinta: as medidas
+/// vêm em casas e viram pixels pelo lado de uma casa, e a intensidade escolhida (Suave, Padrão,
+/// Vibrante) ajusta cor e opacidade.
+fn desenhar_particulas(passo: &Passo, t_ms: f32, area: Rect) {
+    let Passo::Limpeza { celulas, visuais, intensidade, .. } = passo else { return };
+    let lado = area.w / SIZE as f32;
+    for particula in particulas(visuais, celulas, t_ms, *intensidade) {
+        let (cor, alfa) = ajustar(particula.cor, particula.alfa, *intensidade);
+        if alfa <= 0.0 {
+            continue;
+        }
+        let cor = Color::new(cor[0], cor[1], cor[2], alfa.clamp(0.0, 1.0));
+        let (x, y) = (area.x + particula.x * lado, area.y + particula.y * lado);
+        let tamanho = particula.tamanho * lado;
+        match particula.forma {
+            Forma::Faisca => {
+                // Um quadrado girado, com um maior e mais fraco por baixo (o "brilho").
+                // O miolo usa a raiz do alfa: acende mais cedo e a faísca continua bem visível.
+                for (fator, fraqueza) in [(2.4, 0.3), (1.0, 1.0)] {
+                    let lado_da_faisca = tamanho * fator;
+                    let cor = if fator > 1.0 { cor } else { Color::new(cor.r, cor.g, cor.b, cor.a.sqrt()) };
+                    draw_rectangle_ex(
+                        x,
+                        y,
+                        lado_da_faisca,
+                        lado_da_faisca,
+                        DrawRectangleParams {
+                            offset: vec2(0.5, 0.5),
+                            rotation: particula.angulo,
+                            color: com_alfa(cor, fraqueza),
+                        },
+                    );
+                }
+            }
+            Forma::Anel => draw_circle_lines(x, y, tamanho / 2.0, (particula.espessura * lado).max(1.0), cor),
+            Forma::Linha => draw_rectangle_ex(
+                x,
+                y,
+                tamanho,
+                particula.espessura * lado,
+                DrawRectangleParams { offset: vec2(0.0, 0.5), rotation: particula.angulo, color: cor },
+            ),
+            Forma::Veu => draw_rectangle(area.x, area.y, area.w, area.h, cor),
+        }
     }
 }
 
@@ -318,15 +396,23 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
     let zen = app.modo() == prisma_engine::Mode::Zen;
     botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
     botao_da_tela(tela.aba_classico, "Clássico", 1.05 * t, if zen { ABA_INATIVA } else { ABA_ATIVA }, true);
-    // O ♪ vira ✕ com a folha aberta. Os dois são desenhados com formas, não com letras: assim não
-    // dependem de a fonte embutida ter esses símbolos.
-    let folha = app.folha_aberta();
-    botao_da_tela(tela.botao_som, "", t, if folha { ABA_ATIVA } else { ABA_INATIVA }, true);
+    // O ♪ vira ✕ com a folha de Som aberta, e o ≡ vira ✕ com a do Menu aberta. Os quatro são
+    // desenhados com formas, não com letras: assim não dependem de a fonte embutida ter esses símbolos.
+    let som_aberto = app.folha() == Some(Folha::Som);
+    botao_da_tela(tela.botao_som, "", t, if som_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
     let icone = encolher(tela.botao_som, 0.2 * tela.botao_som.h);
-    if folha {
+    if som_aberto {
         desenhar_xis(icone, WHITE);
     } else {
         desenhar_nota(icone, WHITE);
+    }
+    let menu_aberto = app.folha().is_some_and(Folha::e_do_menu);
+    botao_da_tela(tela.botao_menu, "", t, if menu_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
+    let icone = encolher(tela.botao_menu, 0.2 * tela.botao_menu.h);
+    if menu_aberto {
+        desenhar_xis(icone, WHITE);
+    } else {
+        desenhar_hamburguer(icone, WHITE);
     }
 
     for (rotulo, valor, area) in [
@@ -372,7 +458,7 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
 }
 
 /// A faixa "Nível N" no meio do tabuleiro, crescendo e sumindo conforme `t` (ms).
-fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo) {
+fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo, intensidade: Intensidade) {
     let (escala, alfa) = nivel_faixa(t);
     let tabuleiro = tela.tabuleiro;
     let largura = 0.8 * tabuleiro.w * escala;
@@ -383,6 +469,16 @@ fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo) {
         w: largura,
         h: altura,
     };
+    // A sombra e o brilho roxo em volta da faixa mudam com a intensidade (Suave, Padrão, Vibrante).
+    let (sombra, brilho) = realce_da_faixa(intensidade);
+    let passo = 0.012 * tabuleiro.w;
+    for camada in 1..=4 {
+        let folga = camada as f32 * passo;
+        let cor = Color::new(0.71, 0.64, 1.0, 0.11 * brilho * alfa);
+        draw_rectangle(area.x - folga, area.y - folga, area.w + 2.0 * folga, area.h + 2.0 * folga, cor);
+    }
+    let desce = 0.025 * tabuleiro.h * sombra;
+    draw_rectangle(area.x, area.y + desce, area.w, area.h, Color::new(0.1, 0.09, 0.25, 0.45 * sombra * alfa));
     draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.95 * alfa));
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 3.0, com_alfa(DESTAQUE, alfa));
     escrever(&format!("Nível {nivel}"), area, 2.4 * tela.texto * escala, com_alfa(DESTAQUE, alfa), Alinhamento::Centro);
@@ -444,6 +540,15 @@ fn desenhar_nota(area: Rect, cor: Color) {
     draw_circle(cx, cy, raio, cor);
     draw_line(haste_x, cy, haste_x, topo, 0.08 * lado, cor);
     draw_triangle(vec2(haste_x, topo), vec2(haste_x + 0.30 * lado, topo + 0.26 * lado), vec2(haste_x, topo + 0.30 * lado), cor);
+}
+
+/// Três traços (≡) dentro do quadrado `area`.
+fn desenhar_hamburguer(area: Rect, cor: Color) {
+    let grossura = 0.14 * area.w.min(area.h);
+    for i in 0..3 {
+        let y = area.y + area.h * (0.12 + 0.38 * i as f32);
+        draw_line(area.x, y, area.x + area.w, y, grossura, cor);
+    }
 }
 
 /// Um X (✕) dentro do quadrado `area`.
@@ -574,6 +679,10 @@ fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
 
     desenhar_linha_de_volume(som.barra_efeitos, "Volume dos efeitos", preferencias.volumes.efeitos, t);
 
+    if let Some(area) = som.vibracao {
+        desenhar_linha_com_interruptor(area, "Vibração", preferencias.vibracao, t);
+    }
+
     if let (Some(liga), Some(escolhe)) = (som.liga_musica, som.escolhe_musica) {
         desenhar_linha_com_interruptor(liga, "Música", preferencias.musica_ligada, t);
         desenhar_botao_de_escolha(escolhe, preferencias.musica.texto(), t);
@@ -595,6 +704,82 @@ fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
         escrever("Respiração", Rect { w: 0.36 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
         let cor = if ligada { DESTAQUE } else { TEXTO_SUAVE };
         escrever(valor, Rect { x: dentro.x + 0.38 * dentro.w, w: 0.62 * dentro.w, ..dentro }, 0.95 * t, cor, Alinhamento::Direita);
+    }
+
+    // A intensidade dos efeitos visuais (só no Zen): o nome à esquerda e o valor escolhido à direita.
+    if let Some(area) = som.efeitos {
+        desenhar_cartao(area);
+        let margem = 0.18 * area.h;
+        let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area };
+        escrever("Intensidade", Rect { w: 0.45 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
+        let valor = preferencias.intensidade.texto();
+        escrever(valor, Rect { x: dentro.x + 0.47 * dentro.w, w: 0.53 * dentro.w, ..dentro }, 0.95 * t, DESTAQUE, Alinhamento::Direita);
+    }
+}
+
+/// Escreve `paragrafos` um abaixo do outro, de cima para baixo, quebrando cada um em linhas dentro
+/// de `area`; a letra começa em `tamanho` e encolhe até tudo caber (largura e altura), sem rolagem.
+/// O primeiro parágrafo sai em branco e os outros em `cor`.
+fn escrever_paragrafos(paragrafos: &[String], area: Rect, tamanho: f32, cor: Color) {
+    let medir = |tamanho: f32| -> (Vec<Vec<String>>, f32) {
+        let blocos: Vec<Vec<String>> = paragrafos.iter().map(|texto| quebrar_em_linhas(texto, area.w, tamanho)).collect();
+        let linhas: usize = blocos.iter().map(Vec::len).sum();
+        let vaos = blocos.len().saturating_sub(1) as f32 * 0.5 * tamanho;
+        (blocos, linhas as f32 * 1.2 * tamanho + vaos)
+    };
+    let mut tamanho = tamanho;
+    let (mut blocos, mut altura) = medir(tamanho);
+    while tamanho > 6.0 && altura > area.h {
+        tamanho *= 0.94;
+        (blocos, altura) = medir(tamanho);
+    }
+    let mut y = area.y;
+    for (i, bloco) in blocos.iter().enumerate() {
+        for linha in bloco {
+            let faixa = Rect { y, h: 1.2 * tamanho, ..area };
+            escrever(linha, faixa, tamanho, if i == 0 { WHITE } else { cor }, Alinhamento::Esquerda);
+            y += 1.2 * tamanho;
+        }
+        y += 0.5 * tamanho;
+    }
+}
+
+/// A folha do Menu, no mesmo lugar da de Som: as abas Recordes e Créditos, o ✕ e, embaixo, o
+/// conteúdo da aba aberta (`aba`). Os Recordes são os do modo em que o jogador está.
+fn desenhar_folha_do_menu(app: &App, aba: Folha, tela: &TelaJogo) {
+    let menu = &tela.menu;
+    if menu.folha.w <= 0.0 || menu.folha.h <= 0.0 {
+        return;
+    }
+    let t = menu.texto;
+    let folha = menu.folha;
+    draw_rectangle(folha.x, folha.y, folha.w, folha.h, FOLHA);
+    draw_rectangle_lines(folha.x, folha.y, folha.w, folha.h, 2.0, BORDA);
+
+    let recordes_ativos = aba == Folha::Recordes;
+    botao_da_tela(menu.aba_recordes, "Recordes", 1.05 * t, if recordes_ativos { ABA_ATIVA } else { ABA_INATIVA }, true);
+    botao_da_tela(menu.aba_creditos, "Créditos", 1.05 * t, if recordes_ativos { ABA_INATIVA } else { ABA_ATIVA }, true);
+    botao_da_tela(menu.fechar, "", t, ABA_INATIVA, true);
+    desenhar_xis(encolher(menu.fechar, 0.3 * menu.fechar.h), WHITE);
+
+    let conteudo = menu.conteudo;
+    if recordes_ativos {
+        // Os dois modos de uma vez (como a lista "Ver recordes" do JS): Zen e depois Clássico.
+        let blocos = blocos_de_recordes(app.recordes(prisma_engine::Mode::Zen), app.recordes(prisma_engine::Mode::Classic));
+        let linhas_por_bloco: Vec<usize> = blocos.iter().map(|bloco| bloco.linhas.len()).collect();
+        let lugares = layout::repartir_recordes(conteudo, t, &linhas_por_bloco);
+        for (bloco, lugar) in blocos.iter().zip(&lugares) {
+            escrever(bloco.titulo, lugar.legenda, 0.95 * t, TEXTO_SUAVE, Alinhamento::Esquerda);
+            for (linha, area) in bloco.linhas.iter().zip(&lugar.cartoes) {
+                desenhar_cartao(*area);
+                let margem = 0.5 * t;
+                let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..*area };
+                escrever(linha.rotulo, Rect { w: 0.62 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
+                escrever(&linha.valor, Rect { x: dentro.x + 0.64 * dentro.w, w: 0.36 * dentro.w, ..dentro }, 1.1 * t, DESTAQUE, Alinhamento::Direita);
+            }
+        }
+    } else {
+        escrever_paragrafos(&creditos(env!("CARGO_PKG_VERSION")), conteudo, 0.95 * t, TEXTO_SUAVE);
     }
 }
 
@@ -636,12 +821,15 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, PAINEL);
     desenhar_fundos_de_realce(app, tabuleiro);
     desenhar_pedras(app, sprites, tabuleiro);
+    if let Some((passo, t)) = app.passo_atual() {
+        desenhar_particulas(passo, t, tabuleiro);
+    }
     desenhar_contornos_de_realce(app, tabuleiro);
     if let Some(aviso) = &painel.aviso {
         desenhar_aviso(aviso, tela);
     }
     if let Some((crate::linha::Passo::Nivel { nivel }, t)) = app.passo_atual() {
-        desenhar_faixa_de_nivel(*nivel, t, tela);
+        desenhar_faixa_de_nivel(*nivel, t, tela, app.intensidade());
     }
 
     // Os botões de baixo. Com a partida acabada, a Dica fica apagada.
@@ -657,8 +845,10 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     if let Some((nivel, pontos)) = &painel.fim {
         desenhar_fim(nivel, pontos, tela);
     }
-    if app.folha_aberta() {
-        desenhar_folha_de_som(app, tela);
+    match app.folha() {
+        Some(Folha::Som) => desenhar_folha_de_som(app, tela),
+        Some(aba) => desenhar_folha_do_menu(app, aba, tela),
+        None => {}
     }
     if painel.dialogo {
         desenhar_dialogo(tela);

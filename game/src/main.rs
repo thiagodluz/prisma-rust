@@ -13,15 +13,19 @@ mod fundo;
 mod input;
 mod layout;
 mod linha;
+mod menu;
+mod particulas;
 mod plataforma;
 mod preferencias;
 mod render;
 mod salvar;
 mod tom;
+mod vibracao;
 
-use crate::app::App;
+use crate::app::{App, Folha};
 use crate::input::Evento;
 use crate::salvar::Salvador;
+use crate::vibracao::Toque;
 use macroquad::audio::{load_sound_from_bytes, play_sound_once, Sound};
 // Atenção: o `info!` do miniquad não aceita `{nome}` dentro do texto; os valores vão como
 // argumentos (`info!("x={}", x)`), senão a chave aparece escrita no registro.
@@ -199,10 +203,13 @@ fn linha_de_toque(x: f32, y: f32, escala: f32) -> String {
 /// As linhas de registro com a posição do tabuleiro e dos botões, em PIXELS REAIS da tela
 /// (posição lógica × `escala`): o teste do celular virtual lê estas linhas para saber onde
 /// tocar. `jogar_novamente`, `cancelar` e `confirmar` são sempre registrados, mesmo quando
-/// estão escondidos; `embaralhar` só existe no Zen. O ♪ (`som`) está sempre lá; com a folha de Som
-/// aberta (`folha_aberta`) entram também os botões dela: `fechar_som` e, no Zen, `liga_musica` e
-/// `liga_ambiente` (o teste do celular virtual os usa para ligar a música e o ambiente).
-fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha_aberta: bool) -> Vec<String> {
+/// estão escondidos; `embaralhar` só existe no Zen. O ♪ (`som`) e o ≡ (`menu`) estão sempre lá;
+/// com a folha de Som aberta entram também os botões dela: `fechar_som`, `liga_vibracao` (só em
+/// aparelho com vibrador) e, no Zen, `liga_musica`, `liga_ambiente` e `escolhe_efeitos` (o teste
+/// do celular virtual os usa para ligar a vibração, a música e o ambiente e para mudar a
+/// intensidade dos efeitos). Com a folha do Menu aberta entram
+/// `fechar_menu`, `aba_recordes` e `aba_creditos`.
+fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha: Option<Folha>) -> Vec<String> {
     let tabuleiro = tela.tabuleiro;
     let mut linhas = vec![format!(
         "PRISMA_M1 tabuleiro x={:.0} y={:.0} lado={:.0}",
@@ -221,10 +228,23 @@ fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha_aberta: bool)
         ("cancelar", tela.dialogo_cancelar),
         ("confirmar", tela.dialogo_confirmar),
         ("som", tela.botao_som),
+        ("menu", tela.botao_menu),
     ]);
-    if folha_aberta {
+    if folha.is_some_and(Folha::e_do_menu) {
+        botoes.extend([
+            ("fechar_menu", tela.menu.fechar),
+            ("aba_recordes", tela.menu.aba_recordes),
+            ("aba_creditos", tela.menu.aba_creditos),
+        ]);
+    }
+    if folha == Some(Folha::Som) {
         botoes.push(("fechar_som", tela.som.fechar));
-        for (nome, interruptor) in [("liga_musica", tela.som.liga_musica), ("liga_ambiente", tela.som.liga_ambiente)] {
+        for (nome, interruptor) in [
+            ("liga_vibracao", tela.som.vibracao),
+            ("liga_musica", tela.som.liga_musica),
+            ("liga_ambiente", tela.som.liga_ambiente),
+            ("escolhe_efeitos", tela.som.efeitos),
+        ] {
             if let Some(area) = interruptor {
                 botoes.push((nome, area));
             }
@@ -255,17 +275,18 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
             eprintln!("cena desconhecida: {nome}");
             std::process::exit(2);
         }),
-        None if com_arquivos => abrir_com_arquivos(dados),
-        None => App::novo(),
+        None if com_arquivos => abrir_com_arquivos(dados).com_vibrador(tem_vibrador_sem_risco()),
+        None => App::novo().com_vibrador(tem_vibrador_sem_risco()),
     };
     let sprites = render::Sprites::load();
     let mut audio_do_jogo = com_audio.then(audio::Audio::novo);
-    let calcular_tela = |app: &App| layout::tela_jogo(screen_width(), screen_height(), app.modo() == Mode::Zen);
+    let calcular_tela =
+        |app: &App| layout::tela_jogo_com(screen_width(), screen_height(), app.modo() == Mode::Zen, app.tem_vibrador());
 
     let mut quadro = 0u32;
     // Tamanho, modo e folha de Som (aberta ou fechada) para os quais a posição dos botões já foi
     // escrita no registro.
-    let mut geometria_registrada: Option<(f32, f32, Mode, bool)> = None;
+    let mut geometria_registrada: Option<(f32, f32, Mode, Option<Folha>)> = None;
     let mut ultima_posicao = (-1.0f32, -1.0f32);
     loop {
         // No celular o toque vira clique do mouse (o Macroquad faz isso sozinho, como no M0b).
@@ -291,6 +312,19 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
         // Sons: os efeitos que chegaram a hora de tocar e o que a música e o ambiente do Zen
         // deveriam estar fazendo agora (o planejador compara com o que está carregado).
         let efeitos = app.sons();
+        // Vibrações pedidas neste quadro (só com vibrador). Se o aparelho recusar o toque de
+        // "ligou", o interruptor volta a desligado, para não mentir.
+        for toque in app.vibracoes() {
+            if !app.tem_vibrador() {
+                continue;
+            }
+            if let Err(erro) = vibrar_sem_risco(toque) {
+                info!("PRISMA_M4 vibracao erro texto={}", erro);
+                if toque == Toque::Ligou {
+                    app.vibracao_recusada();
+                }
+            }
+        }
         if let Some(audio) = audio_do_jogo.as_mut() {
             if !efeitos.is_empty() {
                 let volumes = app.preferencias().volumes;
@@ -299,18 +333,24 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
                 }
             }
             let comandos = fundo::planejar(&audio.atual(), &app.som_desejado());
-            if !comandos.is_empty() {
-                // Carregar uma música trava o quadro por um instante; o tempo vai para o registro.
-                audio.aplicar(comandos, &mut app).await;
+            // Carregar uma música trava o quadro por um instante: antes, um quadro com o aviso
+            // "Carregando…" (a carga só começa no quadro seguinte). O tempo vai para o registro.
+            match fundo::decidir(&comandos, app.carregando()) {
+                fundo::Decisao::Avisar(canal) => app.marcar_carregando(canal),
+                fundo::Decisao::Aplicar => {
+                    audio.aplicar(comandos, &mut app).await;
+                    app.fim_do_carregamento();
+                }
+                fundo::Decisao::Nada => app.fim_do_carregamento(),
             }
         }
 
         // O modo pode ter mudado com o toque: o desenho e o registro usam o layout novo.
         let tela = calcular_tela(&app);
-        let situacao = (screen_width(), screen_height(), app.modo(), app.folha_aberta());
+        let situacao = (screen_width(), screen_height(), app.modo(), app.folha());
         if geometria_registrada != Some(situacao) {
             geometria_registrada = Some(situacao);
-            for linha in linhas_de_geometria(&tela, screen_dpi_scale(), app.folha_aberta()) {
+            for linha in linhas_de_geometria(&tela, screen_dpi_scale(), app.folha()) {
                 info!("{}", linha);
             }
         }
@@ -323,6 +363,19 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
         quadro += 1;
         next_frame().await;
     }
+}
+
+/// O aparelho tem vibrador? Qualquer falha (até um pânico da ponte com o Android) vale "não":
+/// o interruptor some e o jogo segue.
+fn tem_vibrador_sem_risco() -> bool {
+    std::panic::catch_unwind(plataforma::tem_vibrador).unwrap_or(false)
+}
+
+/// Vibra com o padrão do `toque`. O `catch_unwind` segura um pânico da ponte com o Android (como
+/// em `tocar_som`): o pior que pode acontecer é o toque não sair.
+fn vibrar_sem_risco(toque: Toque) -> Result<(), String> {
+    std::panic::catch_unwind(|| plataforma::vibrar_padrao(toque.padrao_ms()))
+        .unwrap_or_else(|_| Err("a vibração não respondeu".to_string()))
 }
 
 /// Toca o som de teste. Se o áudio estiver morto (por exemplo, um PC sem placa de som), o
@@ -529,7 +582,7 @@ mod tests {
     #[test]
     fn registro_de_geometria_usa_pixels_reais() {
         let tela = layout::tela_jogo(540.0, 960.0, true);
-        let linhas = linhas_de_geometria(&tela, 2.0, false);
+        let linhas = linhas_de_geometria(&tela, 2.0, None);
         assert_eq!(
             linhas[0],
             format!(
@@ -551,7 +604,8 @@ mod tests {
                 "botao=jogar_novamente",
                 "botao=cancelar",
                 "botao=confirmar",
-                "botao=som"
+                "botao=som",
+                "botao=menu"
             ]
         );
         // O centro do botão Dica, em pixels reais (lógico x 2).
@@ -564,7 +618,7 @@ mod tests {
         assert!(linhas.contains(&esperado), "faltou: {esperado}");
         // No Clássico não há Embaralhar, mas os botões escondidos continuam registrados.
         let classico = layout::tela_jogo(540.0, 960.0, false);
-        let linhas = linhas_de_geometria(&classico, 2.0, false);
+        let linhas = linhas_de_geometria(&classico, 2.0, None);
         assert!(!linhas.iter().any(|linha| linha.contains("botao=embaralhar")));
         for escondido in ["botao=jogar_novamente", "botao=cancelar", "botao=confirmar"] {
             assert!(linhas.iter().any(|linha| linha.contains(escondido)), "faltou {escondido}");
@@ -577,13 +631,13 @@ mod tests {
         let tem = |linhas: &[String], nome: &str| linhas.iter().any(|linha| linha.starts_with(&format!("PRISMA_M1 botao={nome} ")));
         let zen = layout::tela_jogo(540.0, 960.0, true);
         // Fechada: o ♪ está lá (é por ele que o teste abre a folha), os botões da folha não.
-        let fechada = linhas_de_geometria(&zen, 2.0, false);
+        let fechada = linhas_de_geometria(&zen, 2.0, None);
         assert!(fechada.contains(&format!("PRISMA_M1 botao=som {}", centro(zen.botao_som))));
         for nome in ["fechar_som", "liga_musica", "liga_ambiente"] {
             assert!(!tem(&fechada, nome), "{nome} só é registrado com a folha aberta");
         }
         // Aberta no Zen: o ♪ e mais o ✕ e os dois interruptores, no centro de cada um.
-        let aberta = linhas_de_geometria(&zen, 2.0, true);
+        let aberta = linhas_de_geometria(&zen, 2.0, Some(Folha::Som));
         for (nome, area) in [
             ("som", zen.botao_som),
             ("fechar_som", zen.som.fechar),
@@ -595,9 +649,79 @@ mod tests {
         }
         // Aberta no Clássico: só o ✕, porque música e ambiente são do Zen.
         let classico = layout::tela_jogo(540.0, 960.0, false);
-        let aberta = linhas_de_geometria(&classico, 2.0, true);
+        let aberta = linhas_de_geometria(&classico, 2.0, Some(Folha::Som));
         assert!(aberta.contains(&format!("PRISMA_M1 botao=fechar_som {}", centro(classico.som.fechar))));
         assert!(!tem(&aberta, "liga_musica") && !tem(&aberta, "liga_ambiente"), "o Clássico não tem os interruptores");
+    }
+
+    #[test]
+    fn o_registro_de_geometria_leva_liga_vibracao_com_a_folha_aberta() {
+        let tem = |linhas: &[String], nome: &str| linhas.iter().any(|linha| linha.starts_with(&format!("PRISMA_M1 botao={nome} ")));
+        for zen in [true, false] {
+            let com_vibrador = layout::tela_jogo_com(540.0, 960.0, zen, true);
+            // Fechada: não aparece.
+            assert!(!tem(&linhas_de_geometria(&com_vibrador, 2.0, None), "liga_vibracao"), "zen={zen}");
+            // Aberta: aparece, no centro da linha.
+            let area = com_vibrador.som.vibracao.expect("tem a linha");
+            let esperado = format!(
+                "PRISMA_M1 botao=liga_vibracao x={:.0} y={:.0}",
+                (area.x + area.w / 2.0) * 2.0,
+                (area.y + area.h / 2.0) * 2.0
+            );
+            assert!(linhas_de_geometria(&com_vibrador, 2.0, Some(Folha::Som)).contains(&esperado), "zen={zen}: faltou {esperado}");
+            // Sem vibrador: nunca aparece.
+            let sem_vibrador = layout::tela_jogo_com(540.0, 960.0, zen, false);
+            assert!(!tem(&linhas_de_geometria(&sem_vibrador, 2.0, Some(Folha::Som)), "liga_vibracao"), "zen={zen}");
+        }
+    }
+
+
+    #[test]
+    fn a_geometria_leva_escolhe_efeitos_so_no_zen_com_a_folha_aberta() {
+        let tem = |linhas: &[String], nome: &str| linhas.iter().any(|linha| linha.starts_with(&format!("PRISMA_M1 botao={nome} ")));
+        let zen = layout::tela_jogo(540.0, 960.0, true);
+        let area = zen.som.efeitos.expect("o Zen tem a linha");
+        let esperado = format!(
+            "PRISMA_M1 botao=escolhe_efeitos x={:.0} y={:.0}",
+            (area.x + area.w / 2.0) * 2.0,
+            (area.y + area.h / 2.0) * 2.0
+        );
+        assert!(linhas_de_geometria(&zen, 2.0, Some(Folha::Som)).contains(&esperado), "faltou {esperado}");
+        for folha in [None, Some(Folha::Recordes), Some(Folha::Creditos)] {
+            assert!(!tem(&linhas_de_geometria(&zen, 2.0, folha), "escolhe_efeitos"), "{folha:?}");
+        }
+        let classico = layout::tela_jogo(540.0, 960.0, false);
+        assert!(!tem(&linhas_de_geometria(&classico, 2.0, Some(Folha::Som)), "escolhe_efeitos"));
+    }
+
+    #[test]
+    fn o_registro_de_geometria_leva_menu_e_os_botoes_do_menu_so_com_ele_aberto() {
+        let centro = |area: layout::Rect| format!("x={:.0} y={:.0}", (area.x + area.w / 2.0) * 2.0, (area.y + area.h / 2.0) * 2.0);
+        let tem = |linhas: &[String], nome: &str| linhas.iter().any(|linha| linha.starts_with(&format!("PRISMA_M1 botao={nome} ")));
+        for zen in [true, false] {
+            let tela = layout::tela_jogo(540.0, 960.0, zen);
+            let menu = [("fechar_menu", tela.menu.fechar), ("aba_recordes", tela.menu.aba_recordes), ("aba_creditos", tela.menu.aba_creditos)];
+            // O ≡ está sempre lá (é por ele que o teste do celular virtual abre o Menu) ...
+            for folha in [None, Some(Folha::Som), Some(Folha::Recordes), Some(Folha::Creditos)] {
+                let linhas = linhas_de_geometria(&tela, 2.0, folha);
+                assert!(linhas.contains(&format!("PRISMA_M1 botao=menu {}", centro(tela.botao_menu))), "{folha:?}");
+            }
+            // ... e os botões do Menu só entram com ele aberto (em qualquer aba), no centro de cada um.
+            for folha in [None, Some(Folha::Som)] {
+                let linhas = linhas_de_geometria(&tela, 2.0, folha);
+                for (nome, _) in menu {
+                    assert!(!tem(&linhas, nome), "{nome} só é registrado com o Menu aberto ({folha:?})");
+                }
+            }
+            for folha in [Folha::Recordes, Folha::Creditos] {
+                let linhas = linhas_de_geometria(&tela, 2.0, Some(folha));
+                for (nome, area) in menu {
+                    assert!(linhas.contains(&format!("PRISMA_M1 botao={nome} {}", centro(area))), "faltou {nome} ({folha:?})");
+                }
+                // Com o Menu aberto, os botões da folha de Som não aparecem.
+                assert!(!tem(&linhas, "fechar_som") && !tem(&linhas, "liga_vibracao"), "{folha:?}");
+            }
+        }
     }
 
     #[test]

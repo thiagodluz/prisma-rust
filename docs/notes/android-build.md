@@ -140,7 +140,20 @@ Prisma** num emulador do Android (versões 30 e 34), como um dedo de verdade:
     `PRISMA_M3 erro` ou o app fechando nesse meio-tempo reprova na hora); tira a foto
     `10-som` (com a folha aberta); **mede a memória** do app (`adb shell dumpsys meminfo`: imprime
     as linhas `TOTAL` e guarda `meminfo.txt`; só informa, nunca reprova); fecha a folha e faz mais
-    uma jogada, que tem de terminar com a música e o ambiente tocando.
+    uma jogada, que tem de terminar com a música e o ambiente tocando;
+11. **acabamento (M4):** toca no **≡** e espera os Recordes e Créditos abrirem (até 10 s: só
+    então o app escreve a posição de `aba_recordes`, `aba_creditos` e `fechar_menu`; conta a
+    geometria **nova**, porque a de uma abertura anterior continua no registro); tira as fotos
+    `11-recordes` e `11-creditos` e fecha. Abre a folha de Som de novo e **liga a vibração**
+    (`liga_vibracao`, que só existe se o aparelho tem vibrador): tem de aparecer
+    `PRISMA_M4 vibracao toque=ligou`. Um celular virtual sem vibrador só imprime um `AVISO` e
+    segue; se o aparelho recusar o toque (`PRISMA_M4 vibracao recusada`) também só avisa. Toca em
+    `escolhe_efeitos` (só no Zen) e exige uma linha **nova** `PRISMA_M4 intensidade valor=..`.
+    **Desliga e liga o ambiente** e exige o `PRISMA_M3 carregado tipo=ambiente` **novo** (o da fase
+    10 continua no registro e não vale; por isso a espera conta quantos `carregado` já existiam) e
+    que o `PRISMA_M4 carregando tipo=ambiente` tenha vindo **antes** dele. Fecha a folha e, se a
+    vibração ficou ligada, faz uma jogada que tem de pedir um toque (`PRISMA_M4 vibracao toque=..`).
+    No fim o app tem de estar aberto e sem nenhum `PRISMA_M3 erro`.
 
 Se o app avisar no registro que não conseguiu gravar (`PRISMA_M2 erro_ao_gravar <motivo>`), o
 teste para na hora com esse motivo. Como o `logcat -c` de cada reabertura apaga o registro, o de
@@ -159,8 +172,10 @@ começam com `PRISMA_M2`: `aberto modo=.. zen=<novo|arquivo|estragado>:<pontos> 
 melhor_zen=.. melhor_classico=..` (o que ele leu ao abrir), `gravado modo=.. pontos=..` e
 `erro_ao_gravar <motivo>`. Desde o M3 há também as linhas `PRISMA_M3` do som (`pronto`, `efeito`,
 `carregado`, `erro`: veja `docs/notes/audio.md`) e os botões `som`, `fechar_som`, `liga_musica` e
-`liga_ambiente` na lista de posições (os três últimos só enquanto a folha de Som está aberta). O
-teste lê essas linhas. Ele guarda o registro de erros
+`liga_ambiente` na lista de posições (os três últimos só enquanto a folha de Som está aberta).
+Desde o M4 há as linhas `PRISMA_M4` (`vibracao toque=..`, `vibracao recusada`, `carregando tipo=..`,
+`intensidade valor=..`: veja `docs/notes/acabamento.md`) e os botões `menu`, `fechar_menu`,
+`aba_recordes`, `aba_creditos`, `liga_vibracao` e `escolhe_efeitos`. O teste lê essas linhas. Ele guarda o registro de erros
 (`logcat.txt`) e uma foto da tela de cada etapa como artefato `emulador-android-<versão>`, e
 imprime um resumo no próprio registro da execução (as fotos saem em texto, entre
 `TELA_BASE64_INICIO` e `TELA_BASE64_FIM`).
@@ -197,6 +212,22 @@ de trabalho ele só gera o APK e roda o emulador (dá para disparar à mão:
 
 Limites: o emulador usa a biblioteca de PC (x86), não a do celular (arm64); um erro que só
 existe no arm64 não aparece nele. Serve para pegar erros de programa e de montagem do APK.
+
+## Versões do Android e ícone adaptativo (M4)
+
+- `game/Cargo.toml` fixa `min_sdk_version = 26` e `target_sdk_version = 34` (por que 34 e não 35:
+  `docs/notes/acabamento.md`). O teste `as_versoes_do_android_estao_fixadas` guarda as duas linhas.
+- Depois de gerar o APK, o passo **"Conferir versões e ícone do APK"** lê o `aapt2 dump badging`
+  inteiro e reprova se `minSdkVersion` não for 26, se `targetSdkVersion` não for 34 ou se os
+  `application-icon-*` não apontarem para `mipmap-anydpi-v26/ic_launcher.xml`. Os três valores
+  aparecem no registro do passo.
+- O ícone é o **adaptativo**: `game/android_res/mipmap-anydpi-v26/ic_launcher.xml`, a figura em 5
+  tamanhos (`ic_launcher_foreground.png`) e a cor de fundo (`values/ic_launcher_background.xml`),
+  tudo gerado por `prisma_tools imagens` (veja "Imagens do jogo" acima). Os ícones quadrados comuns
+  ficam como reserva.
+- Se o gerador de APK não aceitar as chaves ou a imagem Docker não tiver a plataforma 34, a saída
+  é voltar às versões de antes (o pedaço está em commits só dele) e anotar aqui o motivo, sem
+  mexer na imagem Docker.
 
 ## Por que o `package_name` termina em `prisma_game`
 

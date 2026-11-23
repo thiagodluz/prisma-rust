@@ -5,11 +5,12 @@
 //! direto nas cenas `nivel` e `fim` (para chegar logo ao nível 2 e ao fim de partida).
 
 use crate::app::{App, Botao};
+use crate::formato::Recordes;
 use crate::input::Evento;
 use crate::layout::{cell_rect, tela_jogo, TelaJogo};
-use crate::linha::{duracao_ms, Passo};
-use crate::preferencias::{Canal, Preferencias, Respiracao};
-use prisma_engine::SIZE;
+use crate::linha::{duracao_ms, Passo, TipoVisual};
+use crate::preferencias::{Canal, Intensidade, Preferencias, Respiracao};
+use prisma_engine::{MoveResult, TileKind, SIZE};
 
 /// A tela de referência das cenas. Os toques são montados a partir dela; como o resultado
 /// (qual casa foi tocada) não depende do tamanho da tela, a cena serve para qualquer tamanho.
@@ -43,7 +44,7 @@ fn jogada_boa(app: &mut App) {
 }
 
 /// Deixa a animação andar (de 1 em 1 ms) até o passo atual ser do tipo procurado.
-fn avancar_ate(app: &mut App, procurado: fn(&Passo) -> bool) {
+fn avancar_ate(app: &mut App, procurado: impl Fn(&Passo) -> bool) {
     for _ in 0..20_000 {
         if app.passo_atual().is_some_and(|(passo, _)| procurado(passo)) {
             return;
@@ -62,15 +63,56 @@ fn avancar_ate_a_fracao(app: &mut App, fracao: f32) {
     app.avancar((fracao * duracao - decorrido).max(0.0));
 }
 
+/// Prepara uma cena de partículas: `atalho` mexe no motor (um atalho `cheat_*`) e devolve o
+/// resultado, que a cena anima; depois a animação anda até uma limpeza em que o efeito
+/// `procurado` aparece. A foto fica `ms` milissegundos depois do começo desse passo.
+fn cena_de_particulas(
+    app: &mut App,
+    atalho: impl FnOnce(&mut prisma_engine::Game) -> MoveResult,
+    procurado: TipoVisual,
+    ms: f32,
+) {
+    let antes = app.jogo().board;
+    let resultado = atalho(app.jogo_mut());
+    app.animar_atalho(antes, &resultado);
+    let tem_o_efeito = |passo: &Passo| match passo {
+        Passo::Limpeza { visuais, .. } => visuais.iter().any(|visual| visual.tipo == procurado),
+        _ => false,
+    };
+    avancar_ate(app, tem_o_efeito);
+    let decorrido = app.passo_atual().map_or(0.0, |(_, decorrido)| decorrido);
+    app.avancar((ms - decorrido).max(0.0));
+}
+
+/// Troca a pedra da casa 27 por uma especial de `tipo` e explode o tabuleiro (cada especial
+/// dispara uma vez), do jeito que o atalho de testes do motor faz.
+fn explodir_com_especial(jogo: &mut prisma_engine::Game, tipo: TileKind) -> MoveResult {
+    assert!(jogo.cheat_spawn_special(27, tipo), "a casa 27 aceita a pedra especial");
+    jogo.cheat_explode()
+}
+
 /// As escolhas de som das cenas de som: volumes de fábrica, música ligada, ambiente desligado
-/// (assim a foto mostra os dois estados) e respiração no ritmo "4 s inspirar · 4 s expirar".
+/// (assim a foto mostra os dois estados), respiração no ritmo "4 s inspirar · 4 s expirar" e
+/// vibração ligada (as cenas de som são de um aparelho com vibrador: ver `com_vibrador`).
 fn preferencias_da_cena() -> Preferencias {
-    Preferencias { musica_ligada: true, respiracao: Respiracao::Equilibrada, ..Preferencias::default() }
+    Preferencias { musica_ligada: true, respiracao: Respiracao::Equilibrada, vibracao: true, ..Preferencias::default() }
+}
+
+/// Recordes de mentira para a foto da folha de Recordes: números grandes, com ponto de milhar.
+fn recordes_da_cena() -> Recordes {
+    Recordes { pontuacao: 1_234_567, nivel: 14, jogada: 8_900, terminadas: 23 }
+}
+
+/// Os do Zen na mesma foto: diferentes dos do Clássico, para a foto mostrar que cada bloco lê o seu.
+fn recordes_do_zen_da_cena() -> Recordes {
+    Recordes { pontuacao: 98_765, nivel: 6, jogada: 3_200, terminadas: 0 }
 }
 
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
 /// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
-/// `som-classico`, `som-aviso` e `respiracao`.
+/// `som-classico`, `som-aviso`, `respiracao`, `recordes`, `creditos`, `particulas-pulso`,
+/// `particulas-raio`, `particulas-espectro`, `particulas-espectro-suave`,
+/// `particulas-espectro-vibrante` e `particulas-supernova`.
 pub fn cena(nome: &str) -> Option<App> {
     let mut app = App::com_sementes(7, 9);
     match nome {
@@ -118,25 +160,66 @@ pub fn cena(nome: &str) -> Option<App> {
         "classico" => app.apertar(Botao::Classico),
         // A folha de Som no Zen: música ligada, ambiente desligado, respiração no ritmo 4-4.
         "som" => {
-            app = app.com_preferencias(preferencias_da_cena());
+            app = app.com_preferencias(preferencias_da_cena()).com_vibrador(true);
             app.apertar(Botao::Som);
         }
         // A folha de Som no Clássico: só os efeitos.
         "som-classico" => {
-            app = app.com_preferencias(preferencias_da_cena());
+            app = app.com_preferencias(preferencias_da_cena()).com_vibrador(true);
             app.apertar(Botao::Classico);
             app.apertar(Botao::Som);
         }
         // A folha de Som com o aviso de que a música não começou (um erro de áudio de mentira).
         "som-aviso" => {
-            app = app.com_preferencias(preferencias_da_cena());
+            app = app.com_preferencias(preferencias_da_cena()).com_vibrador(true);
             app.apertar(Botao::Som);
             app.erro_de_audio(Canal::Musica, Some("arquivo não encontrado".to_string()));
+        }
+        // A folha do Menu em Recordes, no Clássico (que tem as quatro linhas), com números de verdade.
+        "recordes" => {
+            app = app.com_recordes(recordes_do_zen_da_cena(), recordes_da_cena());
+            app.apertar(Botao::Classico);
+            app.apertar(Botao::Menu);
+        }
+        // A folha do Menu em Créditos.
+        "creditos" => {
+            app.apertar(Botao::Menu);
+            app.apertar(Botao::AbaCreditos);
         }
         // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).
         "respiracao" => {
             app = app.com_preferencias(preferencias_da_cena());
             app.avancar(2000.0);
+        }
+        // As partículas de cada especial, no meio da limpeza em que ela dispara. As cenas usam os
+        // atalhos do motor (como `nivel` e `fim`), porque achar jogadas reais que façam cada uma
+        // dependeria da sorte; o que se vê na tela é o mesmo.
+        "particulas-pulso" => {
+            cena_de_particulas(&mut app, |jogo| explodir_com_especial(jogo, TileKind::Burst), TipoVisual::Pulso, 60.0)
+        }
+        "particulas-raio" => {
+            cena_de_particulas(&mut app, |jogo| explodir_com_especial(jogo, TileKind::Cross), TipoVisual::Raio, 60.0)
+        }
+        "particulas-espectro" => cena_de_particulas(
+            &mut app,
+            |jogo| explodir_com_especial(jogo, TileKind::Spectrum),
+            TipoVisual::Espectro,
+            60.0,
+        ),
+        // O mesmo Espectro nas outras duas intensidades do Zen (para comparar com a de cima).
+        "particulas-espectro-suave" | "particulas-espectro-vibrante" => {
+            let intensidade =
+                if nome == "particulas-espectro-suave" { Intensidade::Suave } else { Intensidade::Vibrante };
+            app = app.com_preferencias(Preferencias { intensidade, ..Preferencias::default() });
+            cena_de_particulas(
+                &mut app,
+                |jogo| explodir_com_especial(jogo, TileKind::Spectrum),
+                TipoVisual::Espectro,
+                60.0,
+            );
+        }
+        "particulas-supernova" => {
+            cena_de_particulas(&mut app, |jogo| jogo.cheat_supernova(27), TipoVisual::Supernova, 330.0)
         }
         _ => return None,
     }
@@ -146,11 +229,12 @@ pub fn cena(nome: &str) -> Option<App> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Folha;
     use crate::linha::Passo;
     use crate::preferencias::Fase;
     use prisma_engine::Mode;
 
-    const NOMES: [&str; 14] = [
+    const NOMES: [&str; 22] = [
         "inicio",
         "selecionada",
         "dica",
@@ -165,6 +249,14 @@ mod tests {
         "som-classico",
         "respiracao",
         "som-aviso",
+        "recordes",
+        "creditos",
+        "particulas-pulso",
+        "particulas-raio",
+        "particulas-espectro",
+        "particulas-supernova",
+        "particulas-espectro-suave",
+        "particulas-espectro-vibrante",
     ];
 
     fn passo_da_cena(nome: &str) -> &'static str {
@@ -223,6 +315,8 @@ mod tests {
         assert!(preferencias.musica_ligada && !preferencias.ambiente_ligado);
         assert_eq!(preferencias.respiracao, Respiracao::Equilibrada);
         assert!(som.guia_respiracao().is_some());
+        // O aparelho da cena tem vibrador, com a vibração ligada: a foto mostra a linha nova.
+        assert!(som.tem_vibrador() && preferencias.vibracao);
 
         // No Clássico a folha só tem os efeitos, e nada de música ou ambiente.
         let classico = cena("som-classico").expect("a cena som-classico existe");
@@ -230,11 +324,19 @@ mod tests {
         assert!(classico.folha_aberta());
         assert!(classico.guia_respiracao().is_none());
         assert_eq!(classico.som_desejado(), Default::default());
+        assert!(classico.tem_vibrador(), "a linha de vibração também existe no Clássico");
 
         // A folha com o aviso de que a música não começou.
         let aviso = cena("som-aviso").expect("a cena som-aviso existe");
         assert!(aviso.folha_aberta());
         assert!(aviso.aviso_da_folha().is_some());
+
+        // O Menu em Recordes (no Clássico, com números) e em Créditos.
+        let recordes = cena("recordes").expect("a cena recordes existe");
+        assert_eq!((recordes.folha(), recordes.modo()), (Some(Folha::Recordes), Mode::Classic));
+        assert_eq!(recordes.recordes(Mode::Classic).pontuacao, 1_234_567);
+        assert_eq!(recordes.recordes(Mode::Zen).pontuacao, 98_765, "a foto mostra números diferentes em cada bloco");
+        assert_eq!(cena("creditos").expect("a cena creditos existe").folha(), Some(Folha::Creditos));
 
         // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).
         let respiracao = cena("respiracao").expect("a cena respiracao existe");
@@ -262,6 +364,51 @@ mod tests {
             let (passo, decorrido) = app.passo_atual().expect("em andamento");
             let duracao = crate::linha::duracao_ms(passo);
             assert!(decorrido > 0.1 * duracao && decorrido < 0.9 * duracao, "cena {nome}: {decorrido} de {duracao}");
+        }
+    }
+
+    #[test]
+    fn cenas_de_particulas_existem_e_estao_no_passo_de_limpeza_certo() {
+        use crate::linha::TipoVisual;
+
+        let esperadas = [
+            ("particulas-pulso", TipoVisual::Pulso),
+            ("particulas-raio", TipoVisual::Raio),
+            ("particulas-espectro", TipoVisual::Espectro),
+            ("particulas-supernova", TipoVisual::Supernova),
+        ];
+        for (nome, tipo) in esperadas {
+            let app = cena(nome).unwrap_or_else(|| panic!("a cena {nome} existe"));
+            let (passo, decorrido) = app.passo_atual().unwrap_or_else(|| panic!("{nome}: há um passo em andamento"));
+            let Passo::Limpeza { visuais, .. } = passo else { panic!("{nome}: o passo é de limpeza") };
+            assert!(visuais.iter().any(|visual| visual.tipo == tipo), "{nome}: falta o visual {tipo:?} em {visuais:?}");
+            // No meio do passo: as partículas já saíram e ainda não sumiram.
+            let duracao = crate::linha::duracao_ms(passo);
+            assert!(decorrido > 0.1 * duracao && decorrido < 0.9 * duracao, "{nome}: {decorrido} de {duracao}");
+            let (celulas, intensidade) = match passo {
+                Passo::Limpeza { celulas, intensidade, .. } => (celulas, *intensidade),
+                _ => unreachable!(),
+            };
+            let lista = crate::particulas::particulas(visuais, celulas, decorrido, intensidade);
+            assert!(lista.iter().any(|particula| particula.alfa > 0.2), "{nome}: tem partícula bem visível");
+        }
+    }
+
+    #[test]
+    fn as_cenas_do_espectro_mostram_cada_intensidade() {
+        use crate::preferencias::Intensidade;
+
+        for (nome, esperada) in [
+            ("particulas-espectro-suave", Intensidade::Suave),
+            ("particulas-espectro", Intensidade::Padrao),
+            ("particulas-espectro-vibrante", Intensidade::Vibrante),
+        ] {
+            let app = cena(nome).unwrap_or_else(|| panic!("a cena {nome} existe"));
+            assert_eq!(app.intensidade(), esperada, "{nome}");
+            let (passo, _) = app.passo_atual().expect("em andamento");
+            let Passo::Limpeza { visuais, intensidade, .. } = passo else { panic!("{nome}: o passo é de limpeza") };
+            assert_eq!(*intensidade, esperada, "{nome}: a limpeza leva a intensidade da cena");
+            assert!(visuais.iter().any(|visual| visual.tipo == TipoVisual::Espectro), "{nome}");
         }
     }
 

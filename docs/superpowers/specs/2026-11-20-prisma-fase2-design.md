@@ -117,8 +117,8 @@ JSON em arquivo no diretório privado do app (Android: `getFilesDir()` via JNI; 
 ### 5.7 Android
 
 - Pacote `com.thiagodluz.prisma.rust`, **diferente** do `com.thiagodluz.prisma` do JS, para os dois conviverem no celular.
-- Retrato fixo; minSdk 26 e targetSdk 35, como o JS, se a ferramenta permitir; sem permissão de internet; `VIBRATE` só entra no M4.
-- Ícone a partir de `icon-512.png`.
+- Retrato fixo; **minSdk 26 e targetSdk 34** (o JS usa 35; o M4 ficou em 34 porque com alvo 35 o Android 15 desenha o app até as bordas e o CI só tem celulares virtuais com Android 30 e 34; veja `docs/notes/acabamento.md`); sem permissão de internet; `VIBRATE` entrou no M0b e é usada pela vibração do M4.
+- Ícone a partir de `icon-512.png`; no M4 vira o ícone **adaptativo** (figura sobre fundo liso `#222547`, dentro da zona segura), gerado por `prisma_tools imagens`.
 - **Assinatura:** uma chave nova só para este app, guardada como segredo do GitHub (como o JS faz com `PRISMA_KEYSTORE_BASE64`). Do M2 em diante isso é obrigatório (os saves dependem de atualizar por cima); no M0 e no M1 reinstalar é aceitável.
 - Instalação: baixar o APK do resultado (artefato) do GitHub Actions no próprio celular.
 
@@ -140,7 +140,7 @@ Dois fluxos pequenos: (1) testes (`cargo test --workspace`); (2) Android (Docker
 - **M1 · Jogar.** Toque e arrasto, animações na ordem dos eventos, Zen e Clássico, Dica, Embaralhar, Novo jogo, painel (pontos, nível, progresso, melhor), subida de nível e fim de jogo no Clássico. *Pronto quando:* uma partida completa de cada modo roda no celular sem erro visual evidente.
 - **M2 · Salvar.** Retomar a partida de cada modo e guardar recordes, com a chave fixa de assinatura. *Pronto quando:* fechar e abrir o app (e atualizar o APK por cima) mantém partida e recordes.
 - **M3 · Som.** Efeitos sintetizados, depois música, ambientes do Zen, respiração e volumes. *Pronto quando:* o Zen tem os três canais ajustáveis e o APK continua num tamanho razoável.
-- **M4 · Acabamento.** Vibração, partículas, intensidade de efeitos do Zen, ícone final.
+- **M4 · Acabamento.** Vibração, partículas, intensidade de efeitos do Zen, ícone final. Feito: além dos quatro itens, o aviso "Carregando…", o botão ≡ com Recordes e Créditos e as versões do Android (minSdk 26, targetSdk 34). Detalhes no design `2026-11-22-prisma-fase2-m4-design.md` e em `docs/notes/acabamento.md`; o celular virtual ganhou a fase 11.
 - **Depois, se ele quiser:** estilo "Anterior", menu de desenvolvedor (os cheats já existem no motor), release assinada, Play Store.
 
 Cada marco recebe o seu plano de implementação só quando o anterior termina, para aproveitar o que foi aprendido.

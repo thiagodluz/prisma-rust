@@ -209,7 +209,7 @@ impl Salvador {
 mod tests {
     use super::*;
     use crate::formato::{partida_para_json, recordes_para_json};
-    use crate::preferencias::{Ambiente, Musica, Respiracao, Volumes};
+    use crate::preferencias::{Ambiente, Intensidade, Musica, Respiracao, Volumes};
     use prisma_engine::lcg_random;
     use serde_json::Value;
     use std::fs;
@@ -475,6 +475,8 @@ mod tests {
             musica: Musica::SpaceCity,
             ambiente: Ambiente::Trovoada,
             respiracao: Respiracao::Lenta,
+            vibracao: true,
+            intensidade: Intensidade::Vibrante,
         }
     }
 

@@ -14,7 +14,11 @@
 //!   9. confere que os recordes nunca diminuíram;
 //!  10. som (M3): confere que os efeitos ficaram prontos e que uma jogada válida pede efeito, vai
 //!      para o Zen, abre a folha do ♪, liga a música e o ambiente (cada um tem 20 s para carregar),
-//!      tira a foto, mede a memória do app (`dumpsys meminfo`), fecha a folha e joga mais uma vez.
+//!      tira a foto, mede a memória do app (`dumpsys meminfo`), fecha a folha e joga mais uma vez;
+//!  11. acabamento (M4): abre o menu de Recordes e Créditos (uma foto de cada aba) e fecha; liga a
+//!      vibração (sem vibrador só avisa) e exige o toque `ligou`; troca a intensidade dos efeitos e
+//!      exige a linha `intensidade`; desliga e liga o ambiente e exige o aviso "Carregando…" ANTES de
+//!      ele carregar de novo; com a vibração ligada, uma jogada tem de pedir uma vibração.
 //!
 //! Guarda o registro de erros (logcat) e uma foto da tela de cada etapa numa pasta. Foi escrito
 //! primeiro em shell (o antigo `tools/teste-emulador.sh`, que ficou no histórico do git); aqui faz
@@ -25,7 +29,9 @@
 //! em `game/src/app.rs`): a posição do tabuleiro e dos botões, cada toque que recebe e o que
 //! acontece no jogo; e, desde o M2, linhas `PRISMA_M2`: o que ele leu ao abrir (`aberto`) e o que
 //! gravou (`gravado`, `erro_ao_gravar`); e, desde o M3, linhas `PRISMA_M3`: o som (`pronto`, `efeito`,
-//! `carregado`, `erro`). O módulo `registro` lê essas linhas.
+//! `carregado`, `erro`); e, desde o M4, linhas `PRISMA_M4`: a vibração (`vibracao`), o aviso
+//! "Carregando…" (`carregando`) e a intensidade dos efeitos (`intensidade`). O módulo `registro` lê
+//! essas linhas.
 
 use crate::base64;
 use crate::registro::{centro_da_casa, deslocamento, Aberto, Origem, Registro};
@@ -195,10 +201,11 @@ fn achar_apk(pasta: &Path) -> Result<PathBuf, String> {
 
 /// As linhas do registro que mais ajudam a achar um erro (sem ligar para maiúsculas), no máximo 200.
 pub fn resumo(logcat: &str) -> String {
-    const PADROES: [&str; 14] = [
+    const PADROES: [&str; 15] = [
         "prisma_m1",
         "prisma_m2",
         "prisma_m3",
+        "prisma_m4",
         "fatal",
         "androidruntime",
         "panicked",
@@ -749,38 +756,54 @@ impl Teste<'_> {
         self.conferir_jogada("Zen", rodada, anteriores)
     }
 
-    /// Toca no ♪ e espera (até 10 s) a folha de Som aparecer: o app só escreve a posição dos botões
-    /// dela (`liga_musica`...) quando ela abre.
-    fn abrir_a_folha_de_som(&mut self) -> Result<(), String> {
-        self.tocar_botao("som")?;
-        let mut esperou_ms = 1_000; // o `tocar_botao` já esperou 1 s e leu o registro
-        while self.registro.ultimo_botao("liga_musica").is_none() {
+    /// Espera (até 10 s) o app escrever a posição do botão `nome` DE NOVO, isto é, o registro ter mais
+    /// linhas dele do que `antes`. O app só escreve a posição dos botões de uma folha quando ela abre,
+    /// e a linha da abertura anterior continua no registro: sem comparar a contagem uma folha que não
+    /// abriu passaria por aberta. Devolve `false` se o prazo acabou.
+    fn esperar_o_botao(&mut self, nome: &str, antes: usize) -> Result<bool, String> {
+        let mut esperou_ms = 1_000; // o `tocar_botao` que abriu já esperou 1 s e leu o registro
+        while self.registro.contar_botoes(nome) <= antes {
             if esperou_ms >= PRAZO_DA_FOLHA_MS {
-                return Err(format!(
-                    "o toque no ♪ não abriu a folha de Som em {} s: o registro não tem a posição do botão 'liga_musica'",
-                    PRAZO_DA_FOLHA_MS / 1000
-                ));
+                return Ok(false);
             }
             self.celular.dormir(500);
             esperou_ms += 500;
             self.ler_registro()?;
+        }
+        Ok(true)
+    }
+
+    /// Toca no ♪ e espera (até 10 s) a folha de Som abrir: o app escreve a posição dos botões dela
+    /// (`liga_musica`...) de novo cada vez que ela abre.
+    fn abrir_a_folha_de_som(&mut self) -> Result<(), String> {
+        let antes = self.registro.contar_botoes("liga_musica");
+        self.tocar_botao("som")?;
+        if !self.esperar_o_botao("liga_musica", antes)? {
+            return Err(format!(
+                "o toque no ♪ não abriu a folha de Som em {} s: o registro não tem a posição do botão 'liga_musica'",
+                PRAZO_DA_FOLHA_MS / 1000
+            ));
         }
         println!("OK: a folha de Som abriu.");
         Ok(())
     }
 
     /// Espera (até 20 s, de meio em meio segundo) o app avisar que terminou de carregar a música
-    /// (`tipo` = "musica") ou o ambiente (`tipo` = "ambiente") que acabou de ser ligado. Enquanto
+    /// (`tipo` = "musica") ou o ambiente (`tipo` = "ambiente") que acabou de ser ligado. Só vale uma
+    /// linha `carregado` NOVA: `ja_existiam` é quantas do tipo já estavam no registro antes de ligar
+    /// (a fase do som deixa uma, e ela não prova nada sobre o ambiente ligado de novo). Enquanto
     /// espera, o app não pode fechar nem avisar de um erro de som.
-    fn esperar_faixa(&mut self, tipo: &str) -> Result<(), String> {
+    fn esperar_faixa(&mut self, tipo: &str, ja_existiam: usize) -> Result<(), String> {
         let faixa = if tipo == "musica" { "a música" } else { "o ambiente" };
         let mut esperou_ms = 1_000; // o `tocar_botao` que ligou já esperou 1 s e leu o registro
         loop {
             self.continua_aberto(&format!("enquanto esperava {faixa} carregar"))?;
             self.sem_erro_de_som()?;
-            if let Some((nome, ms)) = self.registro.faixa_carregada(tipo) {
-                println!("OK: {faixa} '{nome}' carregou em {ms} ms (o teste esperou {esperou_ms} ms).");
-                return Ok(());
+            if self.registro.faixas_carregadas(tipo) > ja_existiam {
+                if let Some((nome, ms)) = self.registro.faixa_carregada(tipo) {
+                    println!("OK: {faixa} '{nome}' carregou em {ms} ms (o teste esperou {esperou_ms} ms).");
+                    return Ok(());
+                }
             }
             if esperou_ms >= PRAZO_DA_FAIXA_MS {
                 return Err(format!(
@@ -840,10 +863,12 @@ impl Teste<'_> {
         }
         println!("OK: a jogada pediu {} efeito(s) sonoro(s).", self.registro.efeitos_tocados() - efeitos_antes);
         self.abrir_a_folha_de_som()?;
+        let carregadas = self.registro.faixas_carregadas("musica");
         self.tocar_botao("liga_musica")?;
-        self.esperar_faixa("musica")?;
+        self.esperar_faixa("musica", carregadas)?;
+        let carregadas = self.registro.faixas_carregadas("ambiente");
         self.tocar_botao("liga_ambiente")?;
-        self.esperar_faixa("ambiente")?;
+        self.esperar_faixa("ambiente", carregadas)?;
         self.foto("10-som");
         self.medir_memoria();
         self.tocar_botao("fechar_som")?;
@@ -852,6 +877,99 @@ impl Teste<'_> {
             .map_err(|erro| format!("depois de ligar a música e o ambiente: {erro}"))?;
         self.pontos_zen = pontos;
         println!("OK: com a música e o ambiente ligados o jogo continua jogando (Zen em {pontos} pontos).");
+        Ok(())
+    }
+
+    /// Fase 11: o acabamento (M4). O app está no Zen, com a música e o ambiente ligados. Abre o menu
+    /// e confere as duas abas; liga a vibração (o celular virtual pode não ter vibrador: só avisa);
+    /// troca a intensidade dos efeitos; desliga e liga o ambiente e confere o aviso "Carregando…"
+    /// ANTES de ele carregar de novo; e, com a vibração ligada, uma jogada tem de pedir uma vibração.
+    fn acabamento(&mut self) -> Result<(), String> {
+        // (1) O menu de Recordes e Créditos.
+        let abas = self.registro.contar_botoes("aba_recordes");
+        self.tocar_botao("menu")?;
+        if !self.esperar_o_botao("aba_recordes", abas)? {
+            return Err(format!(
+                "o toque no menu não abriu os Recordes e Créditos em {} s: o registro não tem a posição do botão 'aba_recordes'",
+                PRAZO_DA_FOLHA_MS / 1000
+            ));
+        }
+        self.continua_aberto("ao abrir o menu")?;
+        self.foto("11-recordes");
+        self.tocar_botao("aba_creditos")?;
+        self.continua_aberto("ao passar para a aba Créditos")?;
+        self.foto("11-creditos");
+        self.tocar_botao("fechar_menu")?;
+        self.continua_aberto("ao fechar o menu")?;
+        println!("OK: o menu abriu, mostrou Recordes e Créditos e fechou.");
+
+        // (2) A vibração.
+        self.abrir_a_folha_de_som()?;
+        let mut vibracao_ligada = false;
+        if self.registro.ultimo_botao("liga_vibracao").is_some() {
+            let toques = self.registro.toques_de_vibracao();
+            let recusas = self.registro.recusas_de_vibracao();
+            self.tocar_botao("liga_vibracao")?;
+            self.continua_aberto("ao ligar a vibração")?;
+            let toque = self.registro.ultimo_toque_de_vibracao();
+            if self.registro.toques_de_vibracao() <= toques || toque.as_deref() != Some("ligou") {
+                return Err(format!(
+                    "ligar a vibração não pediu o toque 'ligou': faltou uma linha nova 'PRISMA_M4 vibracao toque=ligou' (o último toque no registro é {})",
+                    toque.map_or("nenhum".to_string(), |nome| format!("'toque={nome}'"))
+                ));
+            }
+            if self.registro.recusas_de_vibracao() > recusas {
+                println!("AVISO: o aparelho recusou a vibração; o app a desligou e a jogada com vibração não será conferida.");
+            } else {
+                println!("OK: ligar a vibração pediu o toque 'ligou'.");
+                vibracao_ligada = true;
+            }
+        } else {
+            println!("AVISO: o celular virtual não tem vibrador (a folha de Som não tem 'liga_vibracao'): a vibração não foi conferida.");
+        }
+
+        // (3) A intensidade dos efeitos (só o Zen tem).
+        let intensidades = self.registro.contar_intensidades();
+        self.tocar_botao("escolhe_efeitos")?;
+        self.continua_aberto("ao trocar a intensidade dos efeitos")?;
+        if self.registro.contar_intensidades() <= intensidades {
+            return Err("trocar a intensidade dos efeitos não deixou a linha 'PRISMA_M4 intensidade valor=' no registro".to_string());
+        }
+        if let Some(valor) = self.registro.ultimo_valor_de_intensidade() {
+            println!("OK: a intensidade dos efeitos passou a '{valor}'.");
+        }
+
+        // (4) O ambiente desligado e ligado de novo: o "Carregando…" vem antes de ele carregar.
+        let carregadas = self.registro.faixas_carregadas("ambiente");
+        self.tocar_botao("liga_ambiente")?;
+        self.continua_aberto("ao desligar o ambiente")?;
+        self.tocar_botao("liga_ambiente")?;
+        self.esperar_faixa("ambiente", carregadas)?;
+        match self.registro.carregando_veio_antes("ambiente") {
+            Some(true) => println!("OK: o aviso 'Carregando…' do ambiente veio antes de ele carregar."),
+            Some(false) => {
+                return Err("o aviso 'Carregando…' veio DEPOIS de o ambiente carregar: 'PRISMA_M4 carregando tipo=ambiente' devia vir antes de 'PRISMA_M3 carregado tipo=ambiente'".to_string())
+            }
+            None => return Err("faltou a linha 'PRISMA_M4 carregando tipo=ambiente' (o aviso 'Carregando…' do ambiente)".to_string()),
+        }
+
+        // (5) Com a vibração ligada, uma jogada vibra.
+        self.tocar_botao("fechar_som")?;
+        if vibracao_ligada {
+            let toques = self.registro.toques_de_vibracao();
+            let pontos = self
+                .jogada_arrastando(8, self.pontos_zen)
+                .map_err(|erro| format!("depois de ligar a vibração: {erro}"))?;
+            self.pontos_zen = pontos;
+            if self.registro.toques_de_vibracao() <= toques {
+                return Err("a jogada valeu com a vibração ligada, mas o app não pediu nenhuma vibração (nenhuma linha nova 'PRISMA_M4 vibracao toque=')".to_string());
+            }
+            println!("OK: a jogada com a vibração ligada pediu o toque '{}'.", self.registro.ultimo_toque_de_vibracao().unwrap_or_default());
+        }
+
+        // (6) Nada quebrou.
+        self.continua_aberto("no fim do acabamento")?;
+        self.sem_erro_de_som()?;
         Ok(())
     }
 }
@@ -887,8 +1005,9 @@ fn executar(celular: &mut dyn Celular, pacote: &str, pasta_apk: &Path, saida: &P
     teste.atualizar_por_cima(&apk, pontos_classico)?;
     teste.conferir_recordes()?;
     teste.som()?;
+    teste.acabamento()?;
     println!("{}", resumo(&teste.logcat));
-    println!("OK: o jogo rodou no celular virtual (Zen e Clássico, toque e arrasto; fechar, reabrir e atualizar por cima guardam a partida e os recordes; efeitos, música e ambiente carregam e o jogo segue).");
+    println!("OK: o jogo rodou no celular virtual (Zen e Clássico, toque e arrasto; fechar, reabrir e atualizar por cima guardam a partida e os recordes; efeitos, música e ambiente carregam e o jogo segue; o menu, a vibração, a intensidade e o aviso Carregando… funcionam).");
     Ok(())
 }
 
@@ -1021,7 +1140,38 @@ mod tests {
         aba_zen_perde_os_pontos_depois_de_atualizar: bool,
         trava_depois_do_som: bool,
         sem_meminfo: bool,
+        // ---- o acabamento (M4) ----
+        /// O celular não tem vibrador: a folha de Som não ganha o interruptor `liga_vibracao`.
+        sem_vibrador: bool,
+        menu_nao_abre: bool,
+        /// Ligar a vibração não escreve a linha `toque=ligou`.
+        vibracao_nao_pede_o_toque: bool,
+        /// Ligar a vibração escreve `toque=curto` em vez de `toque=ligou`.
+        vibracao_pede_o_toque_curto: bool,
+        /// O aparelho recusa o toque: o app escreve `recusada` e desliga a vibração.
+        vibrador_recusa: bool,
+        /// Uma jogada válida com a vibração ligada não pede nenhuma vibração.
+        jogada_nao_vibra: bool,
+        intensidade_nao_registra: bool,
+        carregando_depois_do_carregado: bool,
+        sem_carregando: bool,
+        /// O ambiente ligado pela segunda vez nunca termina de carregar.
+        ambiente_religado_nao_carrega: bool,
+        /// A folha de Som só abre da primeira vez que o ♪ é tocado.
+        folha_nao_abre_na_segunda_vez: bool,
+        morre_ao_trocar_a_intensidade: bool,
+        /// Uma jogada com a vibração ligada faz o app avisar de um erro de som.
+        erro_de_som_na_jogada_com_vibracao: bool,
+        /// O app fecha 1 s depois de o ambiente ligado pela segunda vez carregar.
+        morre_depois_de_religar_o_ambiente: bool,
         // ---- o que ele guarda ----
+        menu: bool,
+        vibracao_ligada: bool,
+        /// 0 = suave, 1 = padrão, 2 = vibrante.
+        intensidade: usize,
+        /// Quantas vezes a folha de Som foi pedida e quantas vezes o ambiente começou a carregar.
+        pedidos_de_folha: usize,
+        cargas_do_ambiente: usize,
         relogio_ms: u64,
         logcat: String,
         instalado: bool,
@@ -1051,6 +1201,7 @@ mod tests {
         relogio_no_ultimo_arrasto: u64,
         /// O relógio de mentira no último toque no ♪.
         relogio_no_toque_no_som: u64,
+        relogio_no_toque_no_menu: u64,
         relogio_na_ultima_jogada: u64,
     }
 
@@ -1099,6 +1250,25 @@ mod tests {
                 aba_zen_perde_os_pontos_depois_de_atualizar: false,
                 trava_depois_do_som: false,
                 sem_meminfo: false,
+                sem_vibrador: false,
+                menu_nao_abre: false,
+                vibracao_nao_pede_o_toque: false,
+                vibracao_pede_o_toque_curto: false,
+                vibrador_recusa: false,
+                jogada_nao_vibra: false,
+                intensidade_nao_registra: false,
+                carregando_depois_do_carregado: false,
+                sem_carregando: false,
+                ambiente_religado_nao_carrega: false,
+                folha_nao_abre_na_segunda_vez: false,
+                morre_ao_trocar_a_intensidade: false,
+                erro_de_som_na_jogada_com_vibracao: false,
+                morre_depois_de_religar_o_ambiente: false,
+                menu: false,
+                vibracao_ligada: false,
+                intensidade: 1,
+                pedidos_de_folha: 0,
+                cargas_do_ambiente: 0,
                 relogio_ms: 0,
                 logcat: String::new(),
                 instalado: false,
@@ -1125,6 +1295,7 @@ mod tests {
                 fotos_reduzidas: 0,
                 relogio_no_ultimo_arrasto: 0,
                 relogio_no_toque_no_som: 0,
+                relogio_no_toque_no_menu: 0,
                 relogio_na_ultima_jogada: 0,
             }
         }
@@ -1181,6 +1352,7 @@ mod tests {
             self.selecionada = None;
             self.confirmando = false;
             self.folha = false;
+            self.menu = false;
             self.musica_ligada = false;
             self.ambiente_ligado = false;
             self.pendentes.clear();
@@ -1229,6 +1401,7 @@ mod tests {
                     ("dica", 160, 517),
                     ("novo_jogo", 262, 517),
                     ("som", 300, 96),
+                    ("menu", 44, 96),
                 ],
                 ModoFalso::Classico => vec![
                     ("zen", 83, 96),
@@ -1236,16 +1409,31 @@ mod tests {
                     ("dica", 109, 517),
                     ("novo_jogo", 211, 517),
                     ("som", 300, 96),
+                    ("menu", 44, 96),
                 ],
             }
         }
 
+        /// Os botões da folha de Recordes e Créditos (só existem com ela aberta).
+        fn botoes_do_menu() -> [(&'static str, i32, i32); 3] {
+            [("fechar_menu", 482, 130), ("aba_recordes", 130, 190), ("aba_creditos", 360, 190)]
+        }
+
         /// Os botões da folha de Som: no Clássico só o de fechar; no Zen também os dois interruptores.
         fn botoes_da_folha(&self) -> Vec<(&'static str, i32, i32)> {
-            match self.modo {
-                ModoFalso::Zen => vec![("fechar_som", 482, 240), ("liga_musica", 110, 520), ("liga_ambiente", 110, 700)],
+            let mut botoes = match self.modo {
+                ModoFalso::Zen => vec![
+                    ("fechar_som", 482, 240),
+                    ("liga_musica", 110, 520),
+                    ("liga_ambiente", 110, 700),
+                    ("escolhe_efeitos", 110, 780),
+                ],
                 ModoFalso::Classico => vec![("fechar_som", 482, 240)],
+            };
+            if !self.sem_vibrador {
+                botoes.push(("liga_vibracao", 110, 610));
             }
+            botoes
         }
 
         fn botoes_da_confirmacao() -> [(&'static str, i32, i32); 3] {
@@ -1263,6 +1451,9 @@ mod tests {
             if self.folha {
                 todos.extend(self.botoes_da_folha());
             }
+            if self.menu {
+                todos.extend(Self::botoes_do_menu());
+            }
             for (nome, bx, by) in todos {
                 if self.sem_botao != Some(nome) {
                     self.escrever(&format!("PRISMA_M1 botao={nome} x={bx} y={by}"));
@@ -1273,6 +1464,9 @@ mod tests {
         /// O app começou a carregar a música: a linha `carregado` sai daqui a `musica_carrega_em_ms`
         /// (ou nunca, ou com um erro de som, ou seguida da morte do app, conforme o que o teste ligou).
         fn carregar_musica(&mut self) {
+            if !self.sem_carregando {
+                self.escrever("PRISMA_M4 carregando tipo=musica");
+            }
             if self.erro_de_som {
                 self.escrever("PRISMA_M3 erro tipo=musica nome=cozy-puzzle texto=sem placa de som");
             }
@@ -1288,13 +1482,22 @@ mod tests {
         }
 
         fn carregar_ambiente(&mut self) {
-            if self.ambiente_nunca_carrega {
+            self.cargas_do_ambiente += 1;
+            let aviso = "PRISMA_M4 carregando tipo=ambiente";
+            if !self.sem_carregando && !self.carregando_depois_do_carregado {
+                self.escrever(aviso);
+            }
+            if self.ambiente_nunca_carrega || (self.ambiente_religado_nao_carrega && self.cargas_do_ambiente > 1) {
                 return;
             }
             let quando = self.relogio_ms + self.ambiente_carrega_em_ms;
             let ms = self.ambiente_carrega_em_ms;
             self.pendentes.push((quando, Pendente::Linha(format!("PRISMA_M3 carregado tipo=ambiente nome=rain-soft ms={ms}"))));
-            if self.morre_depois_de_carregar_o_ambiente {
+            if !self.sem_carregando && self.carregando_depois_do_carregado {
+                // Na mesma hora, mas escrito DEPOIS do `carregado`.
+                self.pendentes.push((quando, Pendente::Linha(aviso.to_string())));
+            }
+            if self.morre_depois_de_carregar_o_ambiente || (self.morre_depois_de_religar_o_ambiente && self.cargas_do_ambiente > 1) {
                 self.pendentes.push((quando + 1_000, Pendente::Morre));
             }
         }
@@ -1319,6 +1522,8 @@ mod tests {
             // Com a folha aberta só ela (e o ♪, que a fecha) reage: o resto fica coberto.
             let candidatos = if self.confirmando {
                 Self::botoes_da_confirmacao().to_vec()
+            } else if self.menu {
+                Self::botoes_do_menu().to_vec()
             } else if self.folha {
                 let mut folha = self.botoes_da_folha();
                 folha.extend(self.botoes_normais().into_iter().filter(|(nome, _, _)| *nome == "som"));
@@ -1353,6 +1558,12 @@ mod tests {
             self.escrever(&format!("PRISMA_M1 jogada valida={valida} pontos={pontos} nivel=1"));
             if valida && !self.sem_efeito {
                 self.escrever("PRISMA_M3 efeito sinal=combinacao elevacao=0");
+            }
+            if valida && self.vibracao_ligada && !self.jogada_nao_vibra {
+                self.escrever("PRISMA_M4 vibracao toque=curto");
+            }
+            if valida && self.vibracao_ligada && self.erro_de_som_na_jogada_com_vibracao {
+                self.escrever("PRISMA_M3 erro tipo=efeito nome=combinacao texto=sem placa de som");
             }
             if valida {
                 self.gravar(); // o app grava logo depois da jogada, antes de a animação acabar
@@ -1424,8 +1635,45 @@ mod tests {
                     "novo_jogo" if self.modo == ModoFalso::Classico => self.confirmando = true,
                     "som" => {
                         self.relogio_no_toque_no_som = self.relogio_ms;
-                        self.folha = !self.folha && !self.folha_nao_abre;
+                        let abrindo = !self.folha;
+                        if abrindo {
+                            self.pedidos_de_folha += 1;
+                        }
+                        let recusa = self.folha_nao_abre || (self.folha_nao_abre_na_segunda_vez && self.pedidos_de_folha > 1);
+                        self.folha = abrindo && !recusa;
                         self.escrever_geometria();
+                    }
+                    "menu" => {
+                        self.relogio_no_toque_no_menu = self.relogio_ms;
+                        self.menu = !self.menu_nao_abre;
+                        self.escrever_geometria();
+                    }
+                    "fechar_menu" if self.menu => {
+                        self.menu = false;
+                        self.escrever_geometria();
+                    }
+                    "liga_vibracao" if self.folha => {
+                        self.vibracao_ligada = !self.vibracao_ligada;
+                        if self.vibracao_ligada {
+                            if self.vibracao_pede_o_toque_curto {
+                                self.escrever("PRISMA_M4 vibracao toque=curto");
+                            } else if !self.vibracao_nao_pede_o_toque {
+                                self.escrever("PRISMA_M4 vibracao toque=ligou");
+                            }
+                            if self.vibrador_recusa {
+                                self.vibracao_ligada = false;
+                                self.escrever("PRISMA_M4 vibracao recusada");
+                            }
+                        }
+                    }
+                    "escolhe_efeitos" if self.folha && self.modo == ModoFalso::Zen => {
+                        self.intensidade = (self.intensidade + 1) % 3;
+                        if self.morre_ao_trocar_a_intensidade {
+                            self.aberto = false;
+                        } else if !self.intensidade_nao_registra {
+                            let nome = ["suave", "padrao", "vibrante"][self.intensidade];
+                            self.escrever(&format!("PRISMA_M4 intensidade valor={nome}"));
+                        }
                     }
                     "fechar_som" if self.folha => {
                         self.folha = false;
@@ -1435,9 +1683,12 @@ mod tests {
                         self.musica_ligada = true;
                         self.carregar_musica();
                     }
-                    "liga_ambiente" if self.folha && !self.ambiente_ligado => {
-                        self.ambiente_ligado = true;
-                        self.carregar_ambiente();
+                    "liga_ambiente" if self.folha => {
+                        // É um interruptor: tocar com ele ligado desliga (e não carrega nada).
+                        self.ambiente_ligado = !self.ambiente_ligado;
+                        if self.ambiente_ligado {
+                            self.carregar_ambiente();
+                        }
                     }
                     _ => {}
                 }
@@ -1605,20 +1856,22 @@ mod tests {
         let mut celular = CelularFalso::novo();
         let (resultado, pasta) = rodar_com(&mut celular, "fluxo_completo");
         assert_eq!(resultado, Ok(()));
-        assert_eq!(celular.arrastos, 7, "5 jogadas arrastando no Zen e mais 2 na fase do som");
+        assert_eq!(celular.arrastos, 8, "5 jogadas arrastando no Zen, mais 2 na fase do som e 1 na do acabamento");
         // 1 calibração + 5 dicas do Zen + 1 aba + 15 no Clássico (dica e dois toques, 5 vezes)
         // + Novo jogo + Confirmar + voltar ao Zen
         // + 1 calibração depois de reabrir no Zen
         // + 1 aba Clássico + 3 (dica e dois toques) da jogada do Clássico + 1 calibração depois de reabrir
         // + 1 calibração depois de atualizar por cima
         // + a fase do som: 1 aba Zen, 1 dica, o ♪, os 2 interruptores, o ✕ da folha e 1 dica
-        assert_eq!(celular.toques, 39);
-        assert_eq!(celular.pontos, [525, 75], "Zen guardou os pontos e fez 2 jogadas na fase do som; o Clássico zerou e jogou de novo");
-        assert_eq!(celular.melhor, [525, 375], "os recordes nunca diminuem");
+        // + a fase do acabamento: o menu, a aba Créditos, o ✕ do menu (3), o ♪, a vibração, a intensidade,
+        //   o ambiente desligado e ligado, o ✕ da folha (6) e 1 dica
+        assert_eq!(celular.toques, 49);
+        assert_eq!(celular.pontos, [600, 75], "Zen guardou os pontos e fez 3 jogadas depois do Clássico; o Clássico zerou e jogou de novo");
+        assert_eq!(celular.melhor, [600, 375], "os recordes nunca diminuem");
         assert_eq!(celular.instalacoes, 2, "instalou e depois atualizou por cima");
         assert_eq!(celular.aberturas, 4, "a abertura do começo e 3 reaberturas");
         assert_eq!(celular.force_stops, 3, "cada reabertura fecha o app de verdade antes");
-        assert_eq!(celular.fotos_reduzidas, 10);
+        assert_eq!(celular.fotos_reduzidas, 12);
         for nome in [
             "1-zen-inicio",
             "2-zen-dica",
@@ -1630,6 +1883,8 @@ mod tests {
             "8-reaberto-zen",
             "9-atualizado",
             "10-som",
+            "11-recordes",
+            "11-creditos",
         ] {
             assert!(pasta.0.join(format!("resultado/tela-{nome}.png")).exists(), "faltou a foto {nome}");
             assert!(pasta.0.join(format!("resultado/pequena-{nome}.png")).exists(), "faltou a foto pequena {nome}");
@@ -1797,6 +2052,171 @@ mod tests {
         assert!(erro.contains("depois de ligar a música e o ambiente"), "{erro}");
         assert!(erro.contains("a animação não terminou em 30 s"), "{erro}");
         assert_eq!(celular.arrastos, 7, "a jogada de antes do som passou e a de depois travou");
+    }
+
+    #[test]
+    fn a_fase_de_acabamento_confere_menu_vibracao_intensidade_e_carregando() {
+        let mut celular = CelularFalso::novo();
+        let (resultado, pasta) = rodar_com(&mut celular, "fase_acabamento");
+        assert_eq!(resultado, Ok(()));
+        assert!(!celular.menu, "o menu foi fechado no fim");
+        assert!(!celular.folha, "a folha de Som foi fechada no fim");
+        assert!(celular.vibracao_ligada, "a fase liga a vibração");
+        assert_eq!(celular.intensidade, 2, "a intensidade foi de Padrão para Vibrante");
+        assert!(celular.ambiente_ligado, "o ambiente foi desligado e ligado de novo");
+        assert!(celular.modo == ModoFalso::Zen);
+        let registro = fs::read_to_string(pasta.0.join("resultado/logcat.txt")).unwrap();
+        for linha in [
+            "PRISMA_M4 vibracao toque=ligou",
+            "PRISMA_M4 vibracao toque=curto",
+            "PRISMA_M4 intensidade valor=vibrante",
+            "PRISMA_M4 carregando tipo=ambiente",
+            "PRISMA_M1 botao=aba_recordes",
+            "PRISMA_M1 botao=escolhe_efeitos",
+        ] {
+            assert!(registro.contains(linha), "faltou '{linha}' no registro guardado: {registro}");
+        }
+        assert_eq!(registro.matches("PRISMA_M3 carregado tipo=ambiente").count(), 2, "um da fase do som e um do ambiente ligado de novo");
+        assert!(pasta.0.join("resultado/tela-11-recordes.png").exists());
+        assert!(pasta.0.join("resultado/tela-11-creditos.png").exists());
+    }
+
+    #[test]
+    fn reprova_se_o_menu_nao_abre() {
+        let mut celular = CelularFalso::novo();
+        celular.menu_nao_abre = true;
+        let erro = erro_de(&mut celular, "menu_nao_abre");
+        assert!(erro.contains("o toque no menu não abriu os Recordes e Créditos em 10 s"), "{erro}");
+        assert!(erro.contains("aba_recordes"), "diz o que faltou no registro: {erro}");
+        let esperou = celular.relogio_ms - celular.relogio_no_toque_no_menu;
+        assert_eq!(esperou, 10_000, "esperou {esperou} ms depois do toque no menu: 10 s, nem mais nem menos");
+        assert_eq!(celular.arrastos, 7, "a fase do acabamento é depois da do som");
+    }
+
+    #[test]
+    fn reprova_se_ligar_a_vibracao_nao_pede_o_toque() {
+        let mut celular = CelularFalso::novo();
+        celular.vibracao_nao_pede_o_toque = true;
+        let erro = erro_de(&mut celular, "vibracao_sem_toque");
+        assert!(erro.contains("ligar a vibração não pediu o toque 'ligou'"), "{erro}");
+        assert!(erro.contains("PRISMA_M4 vibracao toque=ligou"), "diz a linha que faltou: {erro}");
+    }
+
+    #[test]
+    fn reprova_se_a_vibracao_pede_outro_toque_em_vez_do_de_ligou() {
+        let mut celular = CelularFalso::novo();
+        celular.vibracao_pede_o_toque_curto = true;
+        let erro = erro_de(&mut celular, "vibracao_toque_errado");
+        assert!(erro.contains("ligar a vibração não pediu o toque 'ligou'"), "{erro}");
+        assert!(erro.contains("toque=curto"), "diz o toque que veio: {erro}");
+    }
+
+    #[test]
+    fn sem_vibrador_so_avisa() {
+        let mut celular = CelularFalso::novo();
+        celular.sem_vibrador = true;
+        let (resultado, _pasta) = rodar_com(&mut celular, "sem_vibrador");
+        assert_eq!(resultado, Ok(()), "um celular virtual sem vibrador não reprova");
+        assert!(!celular.vibracao_ligada);
+        assert_eq!(celular.arrastos, 7, "sem vibração a fase não faz a jogada extra");
+        assert_eq!(celular.intensidade, 2, "o resto da fase roda igual");
+    }
+
+    #[test]
+    fn a_recusa_da_vibracao_so_avisa_e_pula_a_jogada() {
+        let mut celular = CelularFalso::novo();
+        celular.vibrador_recusa = true;
+        let (resultado, _pasta) = rodar_com(&mut celular, "vibrador_recusa");
+        assert_eq!(resultado, Ok(()), "o aparelho pode recusar o toque: o app desliga a vibração e segue");
+        assert!(!celular.vibracao_ligada);
+        assert_eq!(celular.arrastos, 7, "sem vibração ligada não há jogada para conferir");
+    }
+
+    #[test]
+    fn reprova_se_a_jogada_com_a_vibracao_ligada_nao_vibra() {
+        let mut celular = CelularFalso::novo();
+        celular.jogada_nao_vibra = true;
+        let erro = erro_de(&mut celular, "jogada_nao_vibra");
+        assert!(erro.contains("a jogada valeu com a vibração ligada, mas o app não pediu nenhuma vibração"), "{erro}");
+        assert_eq!(celular.arrastos, 8, "falhou na jogada do acabamento");
+    }
+
+    #[test]
+    fn reprova_se_a_intensidade_nao_registra() {
+        let mut celular = CelularFalso::novo();
+        celular.intensidade_nao_registra = true;
+        let erro = erro_de(&mut celular, "intensidade_sem_registro");
+        assert!(erro.contains("trocar a intensidade dos efeitos não deixou a linha 'PRISMA_M4 intensidade valor=' no registro"), "{erro}");
+    }
+
+    #[test]
+    fn reprova_se_o_carregando_vem_depois_do_carregado() {
+        let mut celular = CelularFalso::novo();
+        celular.carregando_depois_do_carregado = true;
+        let erro = erro_de(&mut celular, "carregando_depois");
+        assert!(erro.contains("o aviso 'Carregando…' veio DEPOIS de o ambiente carregar"), "{erro}");
+        assert!(erro.contains("PRISMA_M4 carregando tipo=ambiente"), "{erro}");
+    }
+
+    #[test]
+    fn reprova_se_o_app_nao_avisa_carregando() {
+        let mut celular = CelularFalso::novo();
+        celular.sem_carregando = true;
+        let erro = erro_de(&mut celular, "sem_carregando");
+        assert!(erro.contains("faltou a linha 'PRISMA_M4 carregando tipo=ambiente'"), "{erro}");
+    }
+
+    #[test]
+    fn o_ambiente_ligado_de_novo_tem_de_carregar_de_novo() {
+        // O `carregado` da fase do som continua no registro: só vale um NOVO.
+        let mut celular = CelularFalso::novo();
+        celular.ambiente_religado_nao_carrega = true;
+        let erro = erro_de(&mut celular, "ambiente_religado");
+        assert!(erro.contains("o ambiente não carregou em 20 s"), "{erro}");
+        assert!(erro.contains("PRISMA_M3 carregado tipo=ambiente"), "{erro}");
+        assert_eq!(celular.arrastos, 7, "a fase do som passou inteira");
+    }
+
+    #[test]
+    fn a_folha_de_som_aberta_antes_nao_vale_para_a_segunda_abertura() {
+        // A geometria da primeira abertura (fase do som) ainda está no registro: a segunda tem de
+        // escrever a dela de novo.
+        let mut celular = CelularFalso::novo();
+        celular.folha_nao_abre_na_segunda_vez = true;
+        let erro = erro_de(&mut celular, "folha_nao_abre_de_novo");
+        assert!(erro.contains("o toque no ♪ não abriu a folha de Som"), "{erro}");
+        let esperou = celular.relogio_ms - celular.relogio_no_toque_no_som;
+        assert_eq!(esperou, 10_000);
+        assert_eq!(celular.arrastos, 7);
+    }
+
+    #[test]
+    fn reprova_se_o_app_avisa_de_um_erro_de_som_no_fim_do_acabamento() {
+        // O erro vem depois de a última faixa carregar: só a conferência do fim o pega.
+        let mut celular = CelularFalso::novo();
+        celular.erro_de_som_na_jogada_com_vibracao = true;
+        let erro = erro_de(&mut celular, "erro_de_som_no_fim");
+        assert!(erro.contains("o app não conseguiu tocar um som: tipo=efeito nome=combinacao texto=sem placa de som"), "{erro}");
+        assert_eq!(celular.arrastos, 8, "o erro veio na jogada do acabamento");
+    }
+
+    #[test]
+    fn reprova_se_o_app_fecha_depois_de_religar_o_ambiente_sem_jogada_para_pegar() {
+        // Sem vibrador não há jogada no fim: só a conferência do fim vê que o app fechou.
+        let mut celular = CelularFalso::novo();
+        celular.sem_vibrador = true;
+        celular.morre_depois_de_religar_o_ambiente = true;
+        let erro = erro_de(&mut celular, "morre_no_fim");
+        assert!(erro.contains("o app FECHOU sozinho no fim do acabamento"), "{erro}");
+        assert_eq!(celular.arrastos, 7);
+    }
+
+    #[test]
+    fn reprova_se_o_app_morre_na_fase_11() {
+        let mut celular = CelularFalso::novo();
+        celular.morre_ao_trocar_a_intensidade = true;
+        let erro = erro_de(&mut celular, "morre_na_fase_11");
+        assert!(erro.contains("o app FECHOU sozinho ao trocar a intensidade dos efeitos"), "{erro}");
     }
 
     #[test]
@@ -2135,11 +2555,11 @@ mod tests {
 
     #[test]
     fn resumo_pega_as_linhas_que_ajudam_a_achar_erro_sem_ligar_para_maiuscula() {
-        let logcat = "I Outro: nada\nE AndroidRuntime: FATAL EXCEPTION\nI SAPP : PRISMA_M1 toque x=1 y=2\nI SAPP : PRISMA_M2 aberto modo=zen\nI SAPP : PRISMA_M3 pronto efeitos=20 ms=75\nthread panicked at x\nF libc: Fatal signal 11 (SIGSEGV)\nD  DEBUG  : backtrace\nI miniquad: algo\ndlopen failed\nI Banal: de novo nada\n";
+        let logcat = "I Outro: nada\nE AndroidRuntime: FATAL EXCEPTION\nI SAPP : PRISMA_M1 toque x=1 y=2\nI SAPP : PRISMA_M2 aberto modo=zen\nI SAPP : PRISMA_M3 pronto efeitos=20 ms=75\nI SAPP : PRISMA_M4 vibracao toque=curto\nthread panicked at x\nF libc: Fatal signal 11 (SIGSEGV)\nD  DEBUG  : backtrace\nI miniquad: algo\ndlopen failed\nI Banal: de novo nada\n";
         let texto = resumo(logcat);
         assert!(texto.starts_with("===== logcat (resumo) =====\n"));
         assert!(texto.ends_with("\n===== fim do resumo ====="));
-        for deve in ["FATAL EXCEPTION", "PRISMA_M1 toque", "PRISMA_M2 aberto", "PRISMA_M3 pronto", "panicked", "SIGSEGV", "backtrace", "miniquad", "dlopen"] {
+        for deve in ["FATAL EXCEPTION", "PRISMA_M1 toque", "PRISMA_M2 aberto", "PRISMA_M3 pronto", "PRISMA_M4 vibracao", "panicked", "SIGSEGV", "backtrace", "miniquad", "dlopen"] {
             assert!(texto.contains(deve), "o resumo devia ter '{deve}': {texto}");
         }
         assert!(!texto.contains("nada"), "linhas banais ficam de fora: {texto}");

@@ -154,6 +154,38 @@ jobs:
             readelf --dyn-syms -W "$LIB" | grep -E "JNI_OnLoad|Java_|ANativeActivity|android_main| main$" | head -20 || true
           done
 
+      # Reprova o fluxo se o APK não pedir o Android mínimo 26 e o alvo 34 (game/Cargo.toml) ou se
+      # o ícone do app não for o adaptativo (res/mipmap-anydpi-v26/ic_launcher.xml, gerado por
+      # `prisma_tools imagens`). Lê o `aapt2 dump badging` inteiro: minSdkVersion (o aapt2 novo escreve
+      # `sdkVersion:'26'` quando só há mínimo), targetSdkVersion e os application-icon-*.
+      - name: Conferir versões e ícone do APK
+        run: |
+          set -eu
+          APK="apk-assinado/prisma-rust.apk"
+          FERRAMENTAS="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          BADGING="$("${FERRAMENTAS%/}/aapt2" dump badging "$APK")"
+          MINIMO="$(grep -m 1 -E "^(minSdkVersion|sdkVersion):'" <<< "$BADGING" | sed -E "s/.*:'([0-9]+)'.*/\1/" || true)"
+          ALVO="$(grep -m 1 -E "^targetSdkVersion:'" <<< "$BADGING" | sed -E "s/.*:'([0-9]+)'.*/\1/" || true)"
+          ICONES="$(grep -E "^application-icon-" <<< "$BADGING" || true)"
+          echo "minSdkVersion:    ${MINIMO:-?} (esperado 26)"
+          echo "targetSdkVersion: ${ALVO:-?} (esperado 34)"
+          echo "Ícones do app:"
+          echo "$ICONES"
+          ERRO=0
+          if [ "$MINIMO" != '26' ]; then
+            echo "::error::O APK pede minSdkVersion ${MINIMO:-?}, e o esperado é 26 (min_sdk_version em game/Cargo.toml)."
+            ERRO=1
+          fi
+          if [ "$ALVO" != '34' ]; then
+            echo "::error::O APK tem targetSdkVersion ${ALVO:-?}, e o esperado é 34 (target_sdk_version em game/Cargo.toml)."
+            ERRO=1
+          fi
+          if ! grep -q 'mipmap-anydpi-v26/ic_launcher.xml' <<< "$ICONES"; then
+            echo "::error::O ícone do APK não aponta para mipmap-anydpi-v26/ic_launcher.xml (o ícone adaptativo)."
+            ERRO=1
+          fi
+          exit "$ERRO"
+
       # Reprova o fluxo se o APK não tiver os 9 áudios (sem eles o Zen não teria música nem
       # ambiente) ou se passar de 60 MB (a spec pede um APK de tamanho razoável).
       - name: Conferir os sons e o tamanho do APK

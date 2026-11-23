@@ -3,14 +3,14 @@
 //! No Android essas duas coisas dependem de perguntar ao sistema (por JNI, a "ponte" entre
 //! o Rust e o Java do Android). No PC a pasta vem das variáveis de ambiente e a vibração é
 //! só de mentira. O resto do jogo chama `plataforma::pasta_de_dados()` e
-//! `plataforma::vibrar(...)` sem saber qual das duas versões está ligada.
+//! `plataforma::vibrar(...)` (e `tem_vibrador`, `vibrar_padrao`) sem saber qual das duas versões está ligada.
 
 #[cfg(target_os = "android")]
 mod android;
 #[cfg(target_os = "android")]
-pub use android::{pasta_de_dados, vibrar};
+pub use android::{pasta_de_dados, tem_vibrador, vibrar, vibrar_padrao};
 
 #[cfg(not(target_os = "android"))]
 mod pc;
 #[cfg(not(target_os = "android"))]
-pub use pc::{pasta_de_dados, vibrar};
+pub use pc::{pasta_de_dados, tem_vibrador, vibrar, vibrar_padrao};

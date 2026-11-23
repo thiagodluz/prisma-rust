@@ -24,6 +24,11 @@ package_name = "com.thiagodluz.prisma_game"
 # executor, sem commitar); o Android só aceita instalar por cima uma versão com número igual ou maior.
 version_code = 1
 label = "Prisma (Rust)"
+# O Android mais antigo que aceita o app (8.0: o ícone adaptativo e o vibrador novo valem daí) e o
+# Android para o qual ele foi pensado. O fluxo `.github/workflows/android.yml` confere os dois no APK
+# pronto, e o teste `tests/workspace.rs` avisa se estas linhas mudarem.
+min_sdk_version = 26
+target_sdk_version = 34
 # Ícones do app (gerados por `prisma_tools imagens`, da pasta tools/, em android_res/mipmap-*/).
 res = "android_res"
 icon = "@mipmap/ic_launcher"
