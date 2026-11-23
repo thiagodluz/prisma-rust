@@ -12,7 +12,7 @@ use crate::app::{App, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
 use crate::linha::{
-    deslocamento_troca, embaralhar_alfa, limpeza_da_casa, linhas_de_queda, nivel_faixa, queda_deslocamento,
+    deslocamento_troca, embaralhar_alfa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa, queda_deslocamento,
     queda_ms, resgate_da_casa,
 };
 use crate::menu::{creditos, linhas_de_recordes};
@@ -221,10 +221,12 @@ fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
             desenhar_pedra(sprites, &antes[linha_a][coluna_a], casa_a, 1.0, 1.0, (dx, dy));
             desenhar_pedra(sprites, &antes[linha_b][coluna_b], casa_b, 1.0, 1.0, (-dx, -dy));
         }
-        Passo::Limpeza { tabuleiro, celulas, ativadas, .. } => {
+        Passo::Limpeza { tabuleiro, celulas, ativadas, intensidade, .. } => {
+            // As pedras só começam a sumir depois da fusão da Supernova (`fusao_ms` é 0 sem ela).
+            let t_da_limpeza = t - fusao_ms(passo);
             desenhar_casas(sprites, tabuleiro, area, |indice, _| {
                 if celulas.contains(&indice) {
-                    let (escala, alfa) = limpeza_da_casa(ativadas, indice, t);
+                    let (escala, alfa, _brilho) = limpeza_da_casa(ativadas, indice, t_da_limpeza, *intensidade);
                     Some((escala, alfa, (0.0, 0.0)))
                 } else {
                     Some((1.0, 1.0, (0.0, 0.0)))

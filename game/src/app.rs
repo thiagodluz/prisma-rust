@@ -12,7 +12,7 @@ use crate::fundo::Desejado;
 use crate::input::{Acao, Evento, Gestos};
 use crate::layout::{Rect, TelaJogo, TelaSom};
 use crate::linha::{montar, Passo, Reprodutor};
-use crate::preferencias::{estado_da_respiracao, Canal, EstadoRespiracao, Preferencias};
+use crate::preferencias::{estado_da_respiracao, Canal, EstadoRespiracao, Intensidade, Preferencias};
 use crate::salvar::{Origem, Salvador};
 use crate::vibracao::{toque_da_jogada, Toque};
 use prisma_engine::{lcg_random, level_goal, Event, Game, Mode, TileKind, SIZE};
@@ -958,7 +958,8 @@ impl App {
         let antes = jogo.board;
         let resultado = jogo.play(a, b);
         let (pontos, nivel) = (jogo.score, jogo.level);
-        let passos = montar(antes, a, b, &resultado, nivel);
+        // A intensidade das partículas vem da preferência na Tarefa 10; até lá vale o Padrão.
+        let passos = montar(antes, a, b, &resultado, nivel, Intensidade::Padrao);
         self.registros.push(format!("PRISMA_M1 jogada valida={} pontos={} nivel={}", resultado.valid, pontos, nivel));
         if self.preferencias.vibracao {
             let ativou_especial =
@@ -1974,10 +1975,13 @@ mod tests {
         // Montada à mão: só uma limpeza de 250 pontos; o "+250" some em 1 s.
         let mut app = App::com_sementes(7, 9);
         let tabuleiro = app.jogo().board;
-        injetar(&mut app, vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![], supernova: false, ganho: 250, cadeia: 1, criou: false }]);
+        injetar(&mut app, vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![], supernova: false, ganho: 250, cadeia: 1, criou: false, visuais: vec![], intensidade: Intensidade::Padrao }]);
         assert_eq!(app.painel().ganho, None, "só depois que a limpeza acaba");
         assert_eq!(app.painel().aviso, None, "limpeza comum não tem aviso");
-        app.avancar(300.0);
+        // A limpeza comum dura 380 ms (as faíscas passam dos 270 ms das pedras).
+        app.avancar(379.0);
+        assert!(app.ocupado());
+        app.avancar(21.0);
         assert!(!app.ocupado());
         assert_eq!(app.painel().ganho.as_deref(), Some("+250"));
         app.avancar(999.0);
@@ -1992,7 +1996,7 @@ mod tests {
         let tabuleiro = app.jogo().board;
         injetar(
             &mut app,
-            vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![0], supernova: true, ganho: 250, cadeia: 1, criou: false }],
+            vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas: vec![0], supernova: true, ganho: 250, cadeia: 1, criou: false, visuais: vec![], intensidade: Intensidade::Padrao }],
         );
         assert!(app.ocupado());
         assert_eq!(app.painel().aviso.as_deref(), Some("Supernova"), "o aviso aparece no começo da limpeza");
@@ -2520,7 +2524,7 @@ mod tests {
             tabuleiro[casa / SIZE][casa % SIZE].kind = tipo;
         }
         let ativadas = especiais.iter().map(|&(casa, _)| casa).collect();
-        injetar(&mut app, vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas, supernova, ganho: 250, cadeia, criou: false }]);
+        injetar(&mut app, vec![Passo::Limpeza { tabuleiro, celulas: vec![0], ativadas, supernova, ganho: 250, cadeia, criou: false, visuais: vec![], intensidade: Intensidade::Padrao }]);
         sons_ate_o_fim(&mut app, 16.0)
     }
 

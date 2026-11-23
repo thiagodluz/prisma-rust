@@ -10,7 +10,8 @@
 //! As durações são as do `app.js` do Prisma em JS (efeitos em escala 1). As curvas de
 //! suavização são nossas (a spec deixa isso para quem constrói).
 
-use prisma_engine::{position, Activation, Board, Event, MoveResult, SIZE};
+use crate::preferencias::Intensidade;
+use prisma_engine::{position, Activation, Board, Event, MoveResult, TileKind, SIZE};
 
 // ---- Durações, em milissegundos (as do JS) -----------------------------------------------
 
@@ -18,9 +19,21 @@ const TROCA_VALIDA_MS: f32 = 225.0;
 const TROCA_INVALIDA_MS: f32 = 300.0;
 /// Na troca inválida as pedras vão até a casa vizinha em 48% do tempo e depois voltam.
 const PICO_DA_TROCA_INVALIDA: f32 = 0.48;
+/// Quanto a PEDRA leva para sumir (o passo todo dura mais: ver `duracao_ms`).
 const LIMPEZA_MS: f32 = 270.0;
-/// Limpeza em que uma pedra especial foi ativada (dura um pouco mais).
+/// Pedra que some numa limpeza em que uma pedra especial foi ativada (dura um pouco mais).
 const LIMPEZA_ESPECIAL_MS: f32 = 340.0;
+/// As animações dos efeitos, em escala 1 (as do JS). O passo de limpeza dura até a mais longa.
+const FAISCA_MS: f32 = 380.0;
+const ONDA_MS: f32 = 360.0;
+const FEIXE_MS: f32 = 330.0;
+const VEU_MS: f32 = 370.0;
+const SUPERNOVA_MS: f32 = 480.0;
+/// A fusão das pedras de origem de uma Supernova, antes da explosão.
+const FUSAO_MS: f32 = 240.0;
+/// O maior "filtro de brilho" do JS (o do Vibrante). O brilho que sai daqui vai de 0 (sem brilho,
+/// filtro 1) a 1 (filtro 2,1): `(filtro − 1) / (2,1 − 1)`.
+const BRILHO_MAXIMO: f32 = 2.1;
 /// Quando há especial ativada, cada pedra espera 22 ms por casa de distância dela, até 100 ms.
 const ATRASO_POR_CASA_MS: f32 = 22.0;
 const ATRASO_MAXIMO_MS: f32 = 100.0;
@@ -35,6 +48,60 @@ const NIVEL_MS: f32 = 580.0;
 
 // ---- Os passos ---------------------------------------------------------------------------
 
+/// Que efeito uma ativação faz na tela.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TipoVisual {
+    /// Pulso: uma onda em volta da pedra.
+    Pulso,
+    /// Raio: dois feixes, na linha e na coluna.
+    Raio,
+    /// Espectro: um véu sobre o tabuleiro todo.
+    Espectro,
+    /// Supernova: a explosão grande (antes dela, as pedras de origem se fundem).
+    Supernova,
+}
+
+/// Uma ativação (pedra especial ou Supernova) que o passo de limpeza mostra com efeitos.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Visual {
+    /// A casa de onde o efeito sai.
+    pub casa: usize,
+    pub tipo: TipoVisual,
+    /// A cor da Supernova (0 nos outros tipos).
+    pub cor: u8,
+    /// As pedras fundidas numa Supernova (vazio nos outros tipos).
+    pub origens: Vec<usize>,
+}
+
+impl Intensidade {
+    /// Quanto as animações esticam (ou encolhem) nesta intensidade: Suave 0,82, Padrão 1, Vibrante 1,1.
+    /// (Uma função solta de `linha.rs`: só quem mexe com tempo precisa dela.)
+    fn escala_de_duracao(self) -> f32 {
+        match self {
+            Intensidade::Suave => 0.82,
+            Intensidade::Padrao => 1.0,
+            Intensidade::Vibrante => 1.1,
+        }
+    }
+
+    /// O tamanho máximo que a pedra chega a ter ao sumir (1 é o tamanho normal).
+    fn pico_da_pedra(self) -> f32 {
+        match self {
+            Intensidade::Suave | Intensidade::Padrao => 1.1,
+            Intensidade::Vibrante => 1.18,
+        }
+    }
+
+    /// O filtro de brilho que a pedra chega a ter ao sumir (1 é sem brilho), como no JS.
+    fn brilho_da_pedra(self) -> f32 {
+        match self {
+            Intensidade::Suave => 1.35,
+            Intensidade::Padrao => 1.8,
+            Intensidade::Vibrante => 2.1,
+        }
+    }
+}
+
 /// Um passo da animação de uma jogada.
 ///
 /// Um `enum` é "uma coisa que é UMA destas opções"; cada opção aqui carrega os dados que a
@@ -48,6 +115,8 @@ pub enum Passo {
     /// `ativadas` são as casas de pedras especiais (e Supernovas) que dispararam. `cadeia` é o
     /// número da limpeza na jogada (1 = a primeira, 2 = a primeira cascata...) e `criou` diz se
     /// ela fez nascer uma pedra especial. Os dois servem para escolher o efeito sonoro.
+    /// `visuais` são todas as ativações, na ordem do motor, com o que a tela desenha de cada uma, e
+    /// `intensidade` é a escolha do jogador para os efeitos (só mexe no visual e no tempo).
     Limpeza {
         tabuleiro: Board,
         celulas: Vec<usize>,
@@ -56,6 +125,8 @@ pub enum Passo {
         ganho: u64,
         cadeia: u32,
         criou: bool,
+        visuais: Vec<Visual>,
+        intensidade: Intensidade,
     },
     /// As pedras caem. `tabuleiro` é o tabuleiro DEPOIS da queda; `origens[destino]` é a casa
     /// de onde a pedra veio (`linha * 8 + coluna`); número negativo = pedra nova, que nasceu
@@ -77,13 +148,38 @@ fn casa_da_ativacao(ativacao: &Activation) -> usize {
     }
 }
 
+/// O efeito visual de uma ativação. Uma pedra "especial" comum não faz efeito (não acontece).
+fn visual_da_ativacao(ativacao: &Activation) -> Option<Visual> {
+    match ativacao {
+        Activation::Special { index, kind, .. } => {
+            let tipo = match kind {
+                TileKind::Burst => TipoVisual::Pulso,
+                TileKind::Cross => TipoVisual::Raio,
+                TileKind::Spectrum => TipoVisual::Espectro,
+                TileKind::Normal => return None,
+            };
+            Some(Visual { casa: *index, tipo, cor: 0, origens: Vec::new() })
+        }
+        Activation::Supernova(nova) => {
+            Some(Visual { casa: nova.index, tipo: TipoVisual::Supernova, cor: nova.color, origens: nova.sources.clone() })
+        }
+    }
+}
+
 /// Monta os passos de uma jogada.
 ///
 /// `antes` é o tabuleiro de antes de chamar `Game::play(a, b)`, `resultado` é o que o motor
 /// devolveu e `nivel_final` é o nível do jogo depois da jogada. Jogada inválida dá só o passo
 /// da troca que vai e volta. O fim de partida não vira passo: o cartão de "Fim de partida"
-/// aparece depois da animação, como no JS.
-pub fn montar(antes: Board, a: usize, b: usize, resultado: &MoveResult, nivel_final: u32) -> Vec<Passo> {
+/// aparece depois da animação, como no JS. `intensidade` vai para cada passo de limpeza.
+pub fn montar(
+    antes: Board,
+    a: usize,
+    b: usize,
+    resultado: &MoveResult,
+    nivel_final: u32,
+    intensidade: Intensidade,
+) -> Vec<Passo> {
     let mut passos = vec![Passo::Troca { antes, a, b, valida: resultado.valid }];
     if !resultado.valid {
         return passos;
@@ -98,6 +194,8 @@ pub fn montar(antes: Board, a: usize, b: usize, resultado: &MoveResult, nivel_fi
                 ganho: *earned,
                 cadeia: *chain,
                 criou: !creations.is_empty(),
+                visuais: activated.iter().filter_map(visual_da_ativacao).collect(),
+                intensidade,
             }),
             Event::Fall { board, falls, .. } => {
                 passos.push(Passo::Queda { tabuleiro: *board, origens: falls.clone() });
@@ -122,17 +220,15 @@ pub fn duracao_ms(passo: &Passo) -> f32 {
     match passo {
         Passo::Troca { valida: true, .. } => TROCA_VALIDA_MS,
         Passo::Troca { valida: false, .. } => TROCA_INVALIDA_MS,
-        Passo::Limpeza { celulas, ativadas, .. } => {
-            if ativadas.is_empty() {
-                LIMPEZA_MS
-            } else {
-                // A última pedra a começar (a mais longe da especial) define quando acaba.
-                let maior_atraso = celulas
-                    .iter()
-                    .map(|&casa| atraso_da_casa(ativadas, casa))
-                    .fold(0.0, f32::max);
-                LIMPEZA_ESPECIAL_MS + maior_atraso
-            }
+        // Primeiro a fusão (só na Supernova) e depois o que durar mais: as pedras ou os efeitos
+        // (como o `waitAnimations` do JS, que espera a mais longa das animações).
+        Passo::Limpeza { celulas, ativadas, visuais, intensidade, .. } => {
+            let escala = intensidade.escala_de_duracao();
+            // A última pedra a começar (a mais longe da especial) define quando as pedras acabam.
+            let maior_atraso = celulas.iter().map(|&casa| atraso_da_casa(ativadas, casa)).fold(0.0, f32::max);
+            let pedras = duracao_da_pedra(ativadas, *intensidade) + maior_atraso;
+            let efeitos = escala * visuais.iter().map(|visual| duracao_do_efeito(visual.tipo)).fold(FAISCA_MS, f32::max);
+            fusao_ms(passo) + pedras.max(efeitos)
         }
         // A queda dura o tempo da pedra que mais demora; pedra que não se mexe não conta.
         Passo::Queda { origens, .. } => origens
@@ -145,6 +241,35 @@ pub fn duracao_ms(passo: &Passo) -> f32 {
         Passo::Embaralhar { .. } => EMBARALHAR_SAI_MS + EMBARALHAR_ENTRA_MS,
         Passo::Resgate { .. } => RESGATE_MS,
         Passo::Nivel { .. } => NIVEL_MS,
+    }
+}
+
+/// Quanto uma pedra leva para sumir: com especial ativada demora mais. Escalada pela intensidade.
+fn duracao_da_pedra(ativadas: &[usize], intensidade: Intensidade) -> f32 {
+    let base = if ativadas.is_empty() { LIMPEZA_MS } else { LIMPEZA_ESPECIAL_MS };
+    base * intensidade.escala_de_duracao()
+}
+
+/// Quanto dura a animação de um efeito, em escala 1.
+fn duracao_do_efeito(tipo: TipoVisual) -> f32 {
+    match tipo {
+        TipoVisual::Pulso => ONDA_MS,
+        TipoVisual::Raio => FEIXE_MS,
+        TipoVisual::Espectro => VEU_MS,
+        TipoVisual::Supernova => SUPERNOVA_MS,
+    }
+}
+
+/// Quanto tempo a fusão das pedras de origem de uma Supernova leva, no começo do passo de
+/// limpeza (0 se o passo não tem Supernova com pedras fundidas).
+pub fn fusao_ms(passo: &Passo) -> f32 {
+    match passo {
+        Passo::Limpeza { visuais, intensidade, .. }
+            if visuais.iter().any(|visual| visual.tipo == TipoVisual::Supernova && !visual.origens.is_empty()) =>
+        {
+            FUSAO_MS * intensidade.escala_de_duracao()
+        }
+        _ => 0.0,
     }
 }
 
@@ -210,22 +335,40 @@ fn atraso_da_casa(ativadas: &[usize], casa: usize) -> f32 {
         .map_or(0.0, |distancia| (distancia as f32 * ATRASO_POR_CASA_MS).min(ATRASO_MAXIMO_MS))
 }
 
-/// Como está a pedra da `casa` que vai sumir, `t_ms` depois do começo da limpeza:
-/// devolve (escala, opacidade). Ela cresce um pouco (1 → 1,1) e depois encolhe e apaga
-/// (até 0,72 e opacidade 0).
-pub fn limpeza_da_casa(ativadas: &[usize], casa: usize, t_ms: f32) -> (f32, f32) {
-    let (duracao, atraso) = if ativadas.is_empty() {
-        (LIMPEZA_MS, 0.0)
-    } else {
-        (LIMPEZA_ESPECIAL_MS, atraso_da_casa(ativadas, casa))
-    };
+/// O brilho (de 0 a 1) de um filtro de brilho do JS (1 é sem brilho; 2,1 é o máximo).
+fn brilho_do_filtro(filtro: f32) -> f32 {
+    ((filtro - 1.0) / (BRILHO_MAXIMO - 1.0)).clamp(0.0, 1.0)
+}
+
+/// Como está a pedra da `casa` que vai sumir, `t_ms` depois do fim da fusão (ou do começo da
+/// limpeza, se não há fusão): devolve (escala, opacidade, brilho de 0 a 1).
+/// Ela cresce até o pico (1,1; 1,18 no Vibrante) e brilha, depois encolhe e apaga (até 0,72 e
+/// opacidade 0); o brilho vai do pico do filtro de cada intensidade até o filtro 1,5 do JS.
+pub fn limpeza_da_casa(ativadas: &[usize], casa: usize, t_ms: f32, intensidade: Intensidade) -> (f32, f32, f32) {
+    let atraso = if ativadas.is_empty() { 0.0 } else { atraso_da_casa(ativadas, casa) };
     let tempo = if t_ms.is_nan() { 0.0 } else { t_ms - atraso };
-    let p = desacelera(progresso(tempo, duracao));
+    let p = desacelera(progresso(tempo, duracao_da_pedra(ativadas, intensidade)));
+    let (pico, filtro_do_pico) = (intensidade.pico_da_pedra(), intensidade.brilho_da_pedra());
     if p < 0.38 {
-        (entre(1.0, 1.1, p / 0.38), 1.0)
+        let q = p / 0.38;
+        (entre(1.0, pico, q), 1.0, brilho_do_filtro(entre(1.0, filtro_do_pico, q)))
     } else {
         let q = (p - 0.38) / 0.62;
-        (entre(1.1, 0.72, q), entre(1.0, 0.0, q))
+        (entre(pico, 0.72, q), entre(1.0, 0.0, q), brilho_do_filtro(entre(filtro_do_pico, 1.5, q)))
+    }
+}
+
+/// Como está cada pedra de origem de uma Supernova, `t_ms` depois do começo da fusão: devolve
+/// (escala, brilho de 0 a 1). Cresce a 1,16 (filtro 1,8) em 60% do tempo e depois encolhe a 0,9
+/// (filtro 2). A fusão dura `FUSAO_MS` vezes a escala da intensidade.
+pub fn fusao_da_casa(t_ms: f32, intensidade: Intensidade) -> (f32, f32) {
+    let p = progresso(t_ms, FUSAO_MS * intensidade.escala_de_duracao());
+    if p < 0.6 {
+        let q = p / 0.6;
+        (entre(1.0, 1.16, q), brilho_do_filtro(entre(1.0, 1.8, q)))
+    } else {
+        let q = (p - 0.6) / 0.4;
+        (entre(1.16, 0.9, q), brilho_do_filtro(entre(1.8, 2.0, q)))
     }
 }
 
@@ -360,7 +503,7 @@ impl Reprodutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prisma_engine::{lcg_random, Game, Mode};
+    use prisma_engine::{lcg_random, Game, Mode, TileKind};
 
     fn perto(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
@@ -396,6 +539,30 @@ mod tests {
         panic!("não achei nenhuma troca inválida");
     }
 
+    /// Uma limpeza montada à mão (sem passar pelo motor), só com o que importa para os tempos.
+    fn limpeza_a_mao(celulas: Vec<usize>, ativadas: Vec<usize>, visuais: Vec<Visual>, intensidade: Intensidade) -> Passo {
+        Passo::Limpeza {
+            tabuleiro: tabuleiro(),
+            celulas,
+            ativadas,
+            supernova: visuais.iter().any(|visual| visual.tipo == TipoVisual::Supernova),
+            ganho: 0,
+            cadeia: 1,
+            criou: false,
+            visuais,
+            intensidade,
+        }
+    }
+
+    fn visual(casa: usize, tipo: TipoVisual) -> Visual {
+        Visual { casa, tipo, cor: 0, origens: vec![] }
+    }
+
+    /// Uma Supernova com fusão (as três pedras de origem na linha da `casa`).
+    fn supernova(casa: usize) -> Visual {
+        Visual { casa, tipo: TipoVisual::Supernova, cor: 1, origens: vec![casa - 1, casa, casa + 1] }
+    }
+
     fn nome(passo: &Passo) -> &'static str {
         match passo {
             Passo::Troca { .. } => "troca",
@@ -411,7 +578,7 @@ mod tests {
     fn troca_invalida_vira_um_passo_so() {
         let mut game = Game::with_random(lcg_random(3));
         let (antes, a, b, resultado) = jogada_invalida(&mut game);
-        let passos = montar(antes, a, b, &resultado, game.level);
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
         assert_eq!(passos, vec![Passo::Troca { antes, a, b, valida: false }]);
         assert!(perto(duracao_ms(&passos[0]), 300.0));
     }
@@ -421,7 +588,7 @@ mod tests {
         let mut game = Game::with_random(lcg_random(3));
         let (antes, a, b, resultado) = jogar(&mut game).unwrap();
         assert!(resultado.valid);
-        let passos = montar(antes, a, b, &resultado, game.level);
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
         assert_eq!(passos[0], Passo::Troca { antes, a, b, valida: true });
         assert!(perto(duracao_ms(&passos[0]), 225.0));
     }
@@ -434,7 +601,7 @@ mod tests {
             let mut game = Game::with_random(lcg_random(seed));
             for _ in 0..15 {
                 let Some((antes, a, b, resultado)) = jogar(&mut game) else { break };
-                let passos = montar(antes, a, b, &resultado, game.level);
+                let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
                 let mut esperado = vec!["troca"];
                 for evento in &resultado.events {
                     match evento.name() {
@@ -461,13 +628,13 @@ mod tests {
         game.score = 1790;
         let (antes, a, b, resultado) = jogar(&mut game).unwrap();
         assert!(resultado.levels_gained > 0);
-        let passos = montar(antes, a, b, &resultado, game.level);
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
         assert_eq!(passos.last(), Some(&Passo::Nivel { nivel: game.level }));
         // Sem subir de nível não há faixa.
         for seed in 1..=10 {
             let mut game = Game::with_random(lcg_random(seed));
             let (antes, a, b, resultado) = jogar(&mut game).unwrap();
-            let passos = montar(antes, a, b, &resultado, game.level);
+            let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
             assert_eq!(passos.iter().any(|p| nome(p) == "nivel"), resultado.levels_gained > 0);
         }
     }
@@ -480,7 +647,7 @@ mod tests {
         let (antes, a, b, resultado) = jogar(&mut game).unwrap();
         assert!(resultado.ended);
         assert_eq!(resultado.events.last().map(|e| e.name()), Some("gameover"));
-        let passos = montar(antes, a, b, &resultado, game.level);
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
         // 1 troca + todos os eventos menos o "gameover" + (a faixa de nível, se subiu).
         let faixa = usize::from(resultado.levels_gained > 0);
         assert_eq!(passos.len(), 1 + resultado.events.len() - 1 + faixa);
@@ -492,7 +659,7 @@ mod tests {
         game.force_no_moves = true;
         let (antes, a, b, resultado) = jogar(&mut game).unwrap();
         assert!(resultado.rescued);
-        let passos = montar(antes, a, b, &resultado, game.level);
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
         let resgate = passos.iter().find(|p| nome(p) == "rescue");
         assert!(matches!(resgate, Some(Passo::Resgate { indice, .. }) if *indice < 64));
     }
@@ -502,7 +669,7 @@ mod tests {
         let mut game = Game::with_random(lcg_random(5));
         let antes = game.board;
         let resultado = game.cheat_supernova(27);
-        let passos = montar(antes, 0, 1, &resultado, game.level);
+        let passos = montar(antes, 0, 1, &resultado, game.level, Intensidade::Padrao);
         let marcada = passos
             .iter()
             .any(|p| matches!(p, Passo::Limpeza { supernova: true, ativadas, .. } if !ativadas.is_empty()));
@@ -511,16 +678,9 @@ mod tests {
 
     #[test]
     fn duracoes_do_js() {
-        let limpeza = |ativadas: Vec<usize>, celulas: Vec<usize>| Passo::Limpeza {
-            tabuleiro: tabuleiro(),
-            celulas,
-            ativadas,
-            supernova: false,
-            ganho: 0,
-            cadeia: 1,
-            criou: false,
-        };
-        assert!(perto(duracao_ms(&limpeza(vec![], vec![1, 2, 3])), 270.0));
+        let limpeza = |ativadas: Vec<usize>, celulas: Vec<usize>| limpeza_a_mao(celulas, ativadas, vec![], Intensidade::Padrao);
+        // A limpeza dura o que a mais longa das animações dura: as faíscas (380 ms) passam das 270 ms das pedras.
+        assert!(perto(duracao_ms(&limpeza(vec![], vec![1, 2, 3])), 380.0));
         assert!(duracao_ms(&limpeza(vec![0], vec![0, 1])) >= 340.0);
         // Pedra a 5 casas da ativada: espera 100 ms (teto) e depois dura 340.
         assert!(perto(duracao_ms(&limpeza(vec![0], vec![5])), 440.0));
@@ -578,15 +738,16 @@ mod tests {
         assert!(perto(deslocamento_troca(0.48 * 300.0, false), 1.0));
         assert!(perto(deslocamento_troca(300.0, false), 0.0));
 
-        let (escala, alfa) = limpeza_da_casa(&[], 10, 0.0);
+        let padrao = Intensidade::Padrao;
+        let (escala, alfa, _) = limpeza_da_casa(&[], 10, 0.0, padrao);
         assert!(perto(escala, 1.0) && perto(alfa, 1.0));
-        let (escala, alfa) = limpeza_da_casa(&[], 10, 270.0);
+        let (escala, alfa, _) = limpeza_da_casa(&[], 10, 270.0, padrao);
         assert!(perto(escala, 0.72) && perto(alfa, 0.0));
         // Com uma especial ativada na casa 0, a casa 5 (a 5 casas) espera 100 ms antes de começar.
-        assert_eq!(limpeza_da_casa(&[0], 5, 99.0), (1.0, 1.0));
-        assert!(limpeza_da_casa(&[0], 5, 130.0).0 > 1.0);
+        assert_eq!(limpeza_da_casa(&[0], 5, 99.0, padrao), (1.0, 1.0, 0.0));
+        assert!(limpeza_da_casa(&[0], 5, 130.0, padrao).0 > 1.0);
         // A própria casa ativada começa na hora.
-        assert!(limpeza_da_casa(&[0], 0, 30.0).0 > 1.0);
+        assert!(limpeza_da_casa(&[0], 0, 30.0, padrao).0 > 1.0);
 
         assert!(perto(embaralhar_alfa(0.0).1, 1.0) && !embaralhar_alfa(0.0).0);
         assert!(perto(embaralhar_alfa(190.0).1, 0.12));
@@ -614,9 +775,9 @@ mod tests {
                 deslocamento_troca(t, false),
                 queda_deslocamento(-5, 0, t),
                 queda_deslocamento(3, 3, t),
-                limpeza_da_casa(&[0], 5, t).0,
-                limpeza_da_casa(&[0], 5, t).1,
-                limpeza_da_casa(&[], 5, t).0,
+                limpeza_da_casa(&[0], 5, t, Intensidade::Padrao).0,
+                limpeza_da_casa(&[0], 5, t, Intensidade::Padrao).1,
+                limpeza_da_casa(&[], 5, t, Intensidade::Padrao).0,
                 embaralhar_alfa(t).1,
                 resgate_da_casa(t).0,
                 resgate_da_casa(t).1,
@@ -697,7 +858,7 @@ mod tests {
                 game.new_game(modo);
                 for _ in 0..15 {
                     let Some((antes, a, b, resultado)) = jogar(&mut game) else { break };
-                    let passos = montar(antes, a, b, &resultado, game.level);
+                    let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
                     let total: f32 = passos.iter().map(duracao_ms).sum();
                     assert!(total.is_finite() && total < 60_000.0, "total {total}");
                     let mut reprodutor = Reprodutor::novo(passos);
@@ -719,7 +880,7 @@ mod tests {
         // Semente 4: a 1ª limpeza cria uma pedra especial e a 2ª (a cascata) não.
         let mut game = Game::with_random(lcg_random(4));
         let (antes, a, b, resultado) = jogar(&mut game).unwrap();
-        let passos = montar(antes, a, b, &resultado, game.level);
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
         let limpezas: Vec<(u32, bool)> = passos
             .iter()
             .filter_map(|passo| match passo {
@@ -731,7 +892,7 @@ mod tests {
         // Semente 9: quatro limpezas seguidas, nenhuma cria pedra.
         let mut game = Game::with_random(lcg_random(9));
         let (antes, a, b, resultado) = jogar(&mut game).unwrap();
-        let passos = montar(antes, a, b, &resultado, game.level);
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
         let limpezas: Vec<(u32, bool)> = passos
             .iter()
             .filter_map(|passo| match passo {
@@ -740,5 +901,196 @@ mod tests {
             })
             .collect();
         assert_eq!(limpezas, vec![(1, false), (2, false), (3, false), (4, false)]);
+    }
+
+    // ---- Efeitos, intensidade e tempos da limpeza (M4) ----
+
+    /// Os `visuais` e a `intensidade` de cada passo de limpeza de uma jogada montada.
+    fn visuais_e_intensidades(passos: &[Passo]) -> Vec<(&Vec<Visual>, Intensidade)> {
+        passos
+            .iter()
+            .filter_map(|passo| match passo {
+                Passo::Limpeza { visuais, intensidade, .. } => Some((visuais, *intensidade)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn montar_guarda_os_visuais_e_a_intensidade() {
+        // Um Pulso no meio do tabuleiro, ativado por uma explosão geral: a limpeza leva o Pulso.
+        let mut game = Game::with_random(lcg_random(5));
+        assert!(game.cheat_spawn_special(27, TileKind::Burst));
+        let antes = game.board;
+        let resultado = game.cheat_explode();
+        let passos = montar(antes, 0, 1, &resultado, game.level, Intensidade::Vibrante);
+        let limpezas = visuais_e_intensidades(&passos);
+        assert!(!limpezas.is_empty());
+        assert!(limpezas.iter().all(|(_, intensidade)| *intensidade == Intensidade::Vibrante), "a intensidade vai em todo passo");
+        let pulso = limpezas.iter().flat_map(|(visuais, _)| visuais.iter()).find(|visual| visual.casa == 27);
+        assert_eq!(pulso, Some(&visual(27, TipoVisual::Pulso)), "cor 0 e sem origens fora da Supernova");
+
+        // Uma Supernova: o visual leva a cor e as pedras fundidas do motor, e vem marcada.
+        let mut game = Game::with_random(lcg_random(5));
+        let antes = game.board;
+        let resultado = game.cheat_supernova(27);
+        let passos = montar(antes, 0, 1, &resultado, game.level, Intensidade::Suave);
+        let do_motor = resultado
+            .events
+            .iter()
+            .find_map(|evento| match evento {
+                Event::Clear { activated, .. } => activated.iter().find_map(|a| match a {
+                    Activation::Supernova(nova) => Some(nova.clone()),
+                    Activation::Special { .. } => None,
+                }),
+                _ => None,
+            })
+            .expect("o cheat faz uma Supernova");
+        let esperado = Visual { casa: do_motor.index, tipo: TipoVisual::Supernova, cor: do_motor.color, origens: do_motor.sources.clone() };
+        let limpezas = visuais_e_intensidades(&passos);
+        assert!(limpezas.iter().any(|(visuais, intensidade)| visuais.contains(&esperado) && *intensidade == Intensidade::Suave));
+        assert!(!esperado.origens.is_empty());
+    }
+
+    #[test]
+    fn limpeza_sem_especial_tem_visuais_vazio() {
+        let mut game = Game::with_random(lcg_random(9));
+        let (antes, a, b, resultado) = jogar(&mut game).unwrap();
+        let passos = montar(antes, a, b, &resultado, game.level, Intensidade::Padrao);
+        let limpezas = visuais_e_intensidades(&passos);
+        assert_eq!(limpezas.len(), 4, "a semente 9 faz quatro limpezas, sem nenhuma especial");
+        assert!(limpezas.iter().all(|(visuais, _)| visuais.is_empty()));
+    }
+
+    #[test]
+    fn limpeza_comum_dura_380_ms_no_padrao() {
+        let comum = limpeza_a_mao(vec![1, 2, 3], vec![], vec![], Intensidade::Padrao);
+        assert!(perto(duracao_ms(&comum), 380.0), "as faíscas (380) passam das pedras (270)");
+        assert!(perto(fusao_ms(&comum), 0.0));
+    }
+
+    #[test]
+    fn limpeza_com_especial_dura_o_maior_entre_pedras_e_efeitos() {
+        let com = |celulas: Vec<usize>, visuais: Vec<Visual>| {
+            duracao_ms(&limpeza_a_mao(celulas, vec![0], visuais, Intensidade::Padrao))
+        };
+        // Pedras 340 + 22 (a casa 1 está a 1 casa da ativada) = 362: vencem as faíscas (380).
+        assert!(perto(com(vec![0, 1], vec![visual(0, TipoVisual::Pulso)]), 380.0));
+        // Pedra a 5 casas: espera 100 (o atraso não escala) e dura 340 = 440: vencem as pedras.
+        assert!(perto(com(vec![5], vec![visual(0, TipoVisual::Raio)]), 440.0));
+        // Onda, feixes e véu (360, 330, 370) nunca passam das faíscas (380).
+        for tipo in [TipoVisual::Pulso, TipoVisual::Raio, TipoVisual::Espectro] {
+            assert!(perto(com(vec![0], vec![visual(0, tipo)]), 380.0), "{tipo:?}");
+        }
+        // A Supernova (480) passa das faíscas, mesmo sem fusão (sem pedras de origem).
+        assert!(perto(com(vec![0], vec![visual(0, TipoVisual::Supernova)]), 480.0));
+    }
+
+    #[test]
+    fn supernova_ganha_fusao_antes_da_explosao() {
+        let passo = limpeza_a_mao(vec![27], vec![27], vec![supernova(27)], Intensidade::Padrao);
+        assert!(perto(fusao_ms(&passo), 240.0));
+        assert!(perto(duracao_ms(&passo), 240.0 + 480.0), "fusão e depois a explosão");
+        // Sem pedras de origem não há o que fundir.
+        let sem_origens = limpeza_a_mao(vec![27], vec![27], vec![visual(27, TipoVisual::Supernova)], Intensidade::Padrao);
+        assert!(perto(fusao_ms(&sem_origens), 0.0));
+        // Pulso, Raio e Espectro não têm fusão; os outros passos também não.
+        let pulso = limpeza_a_mao(vec![27], vec![27], vec![visual(27, TipoVisual::Pulso)], Intensidade::Padrao);
+        assert!(perto(fusao_ms(&pulso), 0.0));
+        assert!(perto(fusao_ms(&Passo::Nivel { nivel: 2 }), 0.0));
+    }
+
+    #[test]
+    fn escala_suave_e_vibrante_multiplicam_a_duracao() {
+        let comum = |intensidade| duracao_ms(&limpeza_a_mao(vec![1, 2, 3], vec![], vec![], intensidade));
+        assert!((comum(Intensidade::Suave) - 380.0 * 0.82).abs() < 0.01);
+        assert!((comum(Intensidade::Padrao) - 380.0).abs() < 0.01);
+        assert!((comum(Intensidade::Vibrante) - 380.0 * 1.1).abs() < 0.01);
+        // A fusão e a Supernova escalam juntas; o atraso por distância da pedra não escala.
+        let nova = |intensidade| limpeza_a_mao(vec![27], vec![27], vec![supernova(27)], intensidade);
+        assert!((fusao_ms(&nova(Intensidade::Suave)) - 240.0 * 0.82).abs() < 0.01);
+        assert!((duracao_ms(&nova(Intensidade::Vibrante)) - (240.0 + 480.0) * 1.1).abs() < 0.01);
+        let longe = |intensidade| duracao_ms(&limpeza_a_mao(vec![5], vec![0], vec![visual(0, TipoVisual::Raio)], intensidade));
+        assert!((longe(Intensidade::Suave) - (340.0 * 0.82 + 100.0)).abs() < 0.01);
+        assert!((longe(Intensidade::Vibrante) - (340.0 * 1.1 + 100.0)).abs() < 0.01);
+    }
+
+    /// O instante (ms) em que a pedra chega ao pico: 38% do progresso já "suavizado".
+    fn instante_do_pico(duracao: f32) -> f32 {
+        duracao * (1.0 - 0.62_f32.powf(1.0 / 3.0))
+    }
+
+    #[test]
+    fn limpeza_da_casa_pico_1_1_no_padrao_e_1_18_no_vibrante() {
+        for (intensidade, pico, escala_de_tempo) in
+            [(Intensidade::Suave, 1.1, 0.82), (Intensidade::Padrao, 1.1, 1.0), (Intensidade::Vibrante, 1.18, 1.1)]
+        {
+            let t = instante_do_pico(270.0 * escala_de_tempo);
+            let (escala, opacidade, _) = limpeza_da_casa(&[], 10, t, intensidade);
+            assert!((escala - pico).abs() < 1e-3, "{intensidade:?}: pico {escala}");
+            assert!((opacidade - 1.0).abs() < 1e-3, "{intensidade:?}: ainda inteira no pico");
+            // No fim a pedra sumiu (escala 0,72, opacidade 0), em qualquer intensidade.
+            let (escala, opacidade, _) = limpeza_da_casa(&[], 10, 270.0 * escala_de_tempo, intensidade);
+            assert!(perto(escala, 0.72) && perto(opacidade, 0.0), "{intensidade:?}");
+        }
+    }
+
+    #[test]
+    fn limpeza_da_casa_brilho_sobe_e_volta() {
+        // O brilho vai de 0 (nada) até o pico de cada intensidade e desce depois (o JS vai do pico a 1,5).
+        // Escala do brilho: (filtro − 1) / 1,1, onde 2,1 é o maior filtro (o Vibrante).
+        for (intensidade, pico, escala_de_tempo) in
+            [(Intensidade::Suave, 0.35 / 1.1, 0.82), (Intensidade::Padrao, 0.8 / 1.1, 1.0), (Intensidade::Vibrante, 1.0, 1.1)]
+        {
+            let duracao = 270.0 * escala_de_tempo;
+            let comeco = limpeza_da_casa(&[], 10, 0.0, intensidade).2;
+            let no_pico = limpeza_da_casa(&[], 10, instante_do_pico(duracao), intensidade).2;
+            let no_fim = limpeza_da_casa(&[], 10, duracao, intensidade).2;
+            assert!(perto(comeco, 0.0), "{intensidade:?}: começa sem brilho");
+            assert!((no_pico - pico).abs() < 1e-3, "{intensidade:?}: pico {no_pico}, esperado {pico}");
+            assert!((no_fim - 0.5 / 1.1).abs() < 1e-3, "{intensidade:?}: o fim é o filtro 1,5");
+            if intensidade != Intensidade::Suave {
+                assert!(no_pico > no_fim, "{intensidade:?}: sobe e depois desce");
+            }
+        }
+        // O brilho cresce até o pico (nunca desce antes dele).
+        let mut anterior = -1.0;
+        for passo in 0..=20 {
+            let t = instante_do_pico(270.0) * passo as f32 / 20.0;
+            let atual = limpeza_da_casa(&[], 10, t, Intensidade::Padrao).2;
+            assert!(atual >= anterior - 1e-6);
+            anterior = atual;
+        }
+    }
+
+    #[test]
+    fn fusao_da_casa_chega_a_1_16() {
+        for (intensidade, escala_de_tempo) in [(Intensidade::Suave, 0.82), (Intensidade::Padrao, 1.0), (Intensidade::Vibrante, 1.1)] {
+            let duracao = 240.0 * escala_de_tempo;
+            let (escala, brilho) = fusao_da_casa(0.0, intensidade);
+            assert!(perto(escala, 1.0) && perto(brilho, 0.0), "{intensidade:?}: começa quieta");
+            // Em 60% a pedra está no pico: 1,16 e filtro 1,8.
+            let (escala, brilho) = fusao_da_casa(0.6 * duracao, intensidade);
+            assert!((escala - 1.16).abs() < 1e-3, "{intensidade:?}: {escala}");
+            assert!((brilho - 0.8 / 1.1).abs() < 1e-3, "{intensidade:?}: {brilho}");
+            // No fim encolhe a 0,9, com o filtro 2.
+            let (escala, brilho) = fusao_da_casa(duracao, intensidade);
+            assert!((escala - 0.9).abs() < 1e-3 && (brilho - 1.0 / 1.1).abs() < 1e-3, "{intensidade:?}");
+        }
+    }
+
+    #[test]
+    fn tempo_estranho_nao_gera_nan() {
+        for intensidade in Intensidade::TODAS {
+            for t in [f32::NAN, -5.0, f32::INFINITY, f32::NEG_INFINITY, 1e30, -1e30] {
+                let (escala, opacidade, brilho) = limpeza_da_casa(&[0], 5, t, intensidade);
+                let (escala_f, brilho_f) = fusao_da_casa(t, intensidade);
+                for numero in [escala, opacidade, brilho, escala_f, brilho_f] {
+                    assert!(numero.is_finite(), "{intensidade:?} t = {t}");
+                }
+                assert!((0.0..=1.0).contains(&opacidade) && (0.0..=1.0).contains(&brilho) && (0.0..=1.0).contains(&brilho_f));
+                assert!((0.7..=1.2).contains(&escala) && (0.8..=1.2).contains(&escala_f), "{intensidade:?} t = {t}");
+            }
+        }
     }
 }
