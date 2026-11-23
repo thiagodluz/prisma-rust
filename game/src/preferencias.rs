@@ -1,4 +1,4 @@
-//! Preferências de som e guia de respiração: tudo "puro" (só números e textos), sem tocar nada.
+//! Preferências de som, vibração e guia de respiração: tudo "puro" (só números e textos), sem tocar nada.
 //!
 //! O arquivo `som.json` guarda, com os mesmos nomes do jogo em JS (`soundOn`, `audio`, `zen`),
 //! os volumes, o que está ligado e as escolhas do Zen. A leitura é por campo, como as funções
@@ -194,6 +194,8 @@ pub struct Preferencias {
     pub musica: Musica,
     pub ambiente: Ambiente,
     pub respiracao: Respiracao,
+    /// O interruptor "Vibração" (padrão: desligada, como no JS).
+    pub vibracao: bool,
 }
 
 impl Default for Preferencias {
@@ -206,6 +208,7 @@ impl Default for Preferencias {
             musica: Musica::CozyPuzzle,
             ambiente: Ambiente::Chuva,
             respiracao: Respiracao::Desligada,
+            vibracao: false,
         }
     }
 }
@@ -214,6 +217,7 @@ impl Default for Preferencias {
 pub fn preferencias_para_json(preferencias: &Preferencias) -> String {
     json!({
         "soundOn": preferencias.sons_do_jogo,
+        "vibration": preferencias.vibracao,
         "audio": {
             "effects": preferencias.volumes.efeitos,
             "music": preferencias.volumes.musica,
@@ -272,6 +276,8 @@ pub fn json_para_preferencias(texto: &str) -> Result<Preferencias, String> {
         musica: texto_do_zen("musicTrack").and_then(Musica::pelo_id_js).unwrap_or(padrao.musica),
         ambiente: texto_do_zen("ambienceSound").and_then(Ambiente::pelo_id_js).unwrap_or(padrao.ambiente),
         respiracao: texto_do_zen("breath").and_then(Respiracao::pelo_id_js).unwrap_or(padrao.respiracao),
+        // Como a música e o ambiente: só `true` de verdade liga; o arquivo do M3 não tem o campo.
+        vibracao: booleano(Some(&raiz), "vibration", padrao.vibracao),
     })
 }
 
@@ -439,17 +445,20 @@ mod tests {
                         for musica in Musica::TODAS {
                             for ambiente in Ambiente::TODOS {
                                 for respiracao in Respiracao::TODAS {
-                                    let original = Preferencias {
-                                        sons_do_jogo,
-                                        volumes: Volumes { efeitos, musica: musica_v, ambiente: ambiente_v },
-                                        musica_ligada,
-                                        ambiente_ligado,
-                                        musica,
-                                        ambiente,
-                                        respiracao,
-                                    };
-                                    assert_eq!(ler(&preferencias_para_json(&original)), original);
-                                    quantas += 1;
+                                    for vibracao in [true, false] {
+                                        let original = Preferencias {
+                                            sons_do_jogo,
+                                            volumes: Volumes { efeitos, musica: musica_v, ambiente: ambiente_v },
+                                            musica_ligada,
+                                            ambiente_ligado,
+                                            musica,
+                                            ambiente,
+                                            respiracao,
+                                            vibracao,
+                                        };
+                                        assert_eq!(ler(&preferencias_para_json(&original)), original);
+                                        quantas += 1;
+                                    }
                                 }
                             }
                         }
@@ -457,7 +466,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(quantas, 2 * 4 * 2 * 2 * 3 * 6 * 3);
+        assert_eq!(quantas, 2 * 4 * 2 * 2 * 3 * 6 * 3 * 2);
     }
 
     #[test]
@@ -470,12 +479,14 @@ mod tests {
             musica: Musica::SpaceCity,
             ambiente: Ambiente::FlorestaAposChuva,
             respiracao: Respiracao::Lenta,
+            vibracao: true,
         };
         let gravado: serde_json::Value = serde_json::from_str(&preferencias_para_json(&preferencias)).unwrap();
         assert_eq!(
             gravado,
             json!({
                 "soundOn": false,
+                "vibration": true,
                 "audio": {"effects": 10, "music": 20, "ambience": 30},
                 "zen": {"music": true, "ambience": false, "musicTrack": "spaceCity", "ambienceSound": "rainforest", "breath": "slow"}
             })
@@ -486,10 +497,46 @@ mod tests {
             padrao,
             json!({
                 "soundOn": true,
+                "vibration": false,
                 "audio": {"effects": 80, "music": 70, "ambience": 65},
                 "zen": {"music": false, "ambience": false, "musicTrack": "cozyPuzzle", "ambienceSound": "rain", "breath": "off"}
             })
         );
+    }
+
+    #[test]
+    fn vibracao_comeca_desligada() {
+        assert!(!Preferencias::default().vibracao);
+    }
+
+    #[test]
+    fn vibracao_vai_e_volta_no_json() {
+        for ligada in [true, false] {
+            let preferencias = Preferencias { vibracao: ligada, ..Preferencias::default() };
+            let texto = preferencias_para_json(&preferencias);
+            let gravado: serde_json::Value = serde_json::from_str(&texto).unwrap();
+            assert_eq!(gravado["vibration"], json!(ligada), "o nome no arquivo é o do JS");
+            assert_eq!(ler(&texto).vibracao, ligada);
+        }
+    }
+
+    #[test]
+    fn json_do_m3_sem_vibration_carrega_desligada() {
+        // O arquivo que a versão do M3 gravava não tem o campo novo.
+        let lidas = ler(r#"{"soundOn":false,"audio":{"effects":10,"music":20,"ambience":30},"zen":{"music":true,"breath":"slow"}}"#);
+        assert!(!lidas.vibracao);
+        assert!(!lidas.sons_do_jogo, "o resto continua valendo");
+        assert_eq!(lidas.volumes.efeitos, 10);
+    }
+
+    #[test]
+    fn vibration_so_vale_com_booleano_de_verdade() {
+        for estranho in [r#""on""#, "1", "null", r#""true""#, "[]", "{}", "0.5"] {
+            let lidas = ler(&format!(r#"{{"vibration":{estranho}}}"#));
+            assert!(!lidas.vibracao, "{estranho} devia valer desligada");
+        }
+        assert!(ler(r#"{"vibration":true}"#).vibracao);
+        assert!(!ler(r#"{"vibration":false}"#).vibracao);
     }
 
     #[test]

@@ -18,6 +18,7 @@ mod preferencias;
 mod render;
 mod salvar;
 mod tom;
+mod vibracao;
 
 use crate::app::App;
 use crate::input::Evento;

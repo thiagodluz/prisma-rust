@@ -475,6 +475,7 @@ mod tests {
             musica: Musica::SpaceCity,
             ambiente: Ambiente::Trovoada,
             respiracao: Respiracao::Lenta,
+            vibracao: true,
         }
     }
 

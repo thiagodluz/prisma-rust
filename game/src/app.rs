@@ -14,7 +14,8 @@ use crate::layout::{Rect, TelaJogo, TelaSom};
 use crate::linha::{montar, Passo, Reprodutor};
 use crate::preferencias::{estado_da_respiracao, Canal, EstadoRespiracao, Preferencias};
 use crate::salvar::{Origem, Salvador};
-use prisma_engine::{lcg_random, level_goal, Game, Mode, TileKind, SIZE};
+use crate::vibracao::{toque_da_jogada, Toque};
+use prisma_engine::{lcg_random, level_goal, Event, Game, Mode, TileKind, SIZE};
 
 /// Quanto tempo a Dica fica destacada.
 const DICA_MS: f32 = 2600.0;
@@ -65,6 +66,8 @@ pub enum Botao {
     LigaAmbiente,
     EscolheAmbiente,
     Respiracao,
+    /// O interruptor "Vibração" da folha de Som (nos dois modos; só existe em aparelho com vibrador).
+    Vibracao,
 }
 
 impl Botao {
@@ -292,6 +295,10 @@ pub struct App {
     respiracao_ms: f32,
     /// O erro de áudio mais recente da Música e do Ambiente (`None` = está bem).
     erros_de_audio: [Option<String>; 2],
+    /// O aparelho tem vibrador? Sem ele o interruptor de vibração não existe.
+    vibrador: bool,
+    /// As vibrações que já "chegaram a hora" e ainda não foram entregues à plataforma.
+    toques: Vec<Toque>,
 }
 
 impl App {
@@ -367,6 +374,8 @@ impl App {
             arrasto: None,
             respiracao_ms: 0.0,
             erros_de_audio: [None, None],
+            vibrador: false,
+            toques: Vec::new(),
         }
     }
 
@@ -375,6 +384,17 @@ impl App {
     pub fn com_preferencias(mut self, preferencias: Preferencias) -> App {
         self.preferencias = preferencias;
         self
+    }
+
+    /// O mesmo app dizendo se o aparelho tem vibrador (o laço de `main.rs` pergunta à plataforma).
+    pub fn com_vibrador(mut self, vibrador: bool) -> App {
+        self.vibrador = vibrador;
+        self
+    }
+
+    /// O aparelho tem vibrador? (Sem ele, o interruptor "Vibração" some da folha de Som.)
+    pub fn tem_vibrador(&self) -> bool {
+        self.vibrador
     }
 
     pub fn modo(&self) -> Mode {
@@ -611,7 +631,41 @@ impl App {
                 self.respiracao_ms = 0.0;
                 self.gravar_preferencias();
             }
+            Botao::Vibracao => self.alternar_vibracao(),
         }
+    }
+
+    /// "Vibração": liga e desliga, e grava. Ao ligar, pede um toque curto para o jogador sentir
+    /// (se o aparelho recusar, o laço chama [`App::vibracao_recusada`] e ela volta a desligada).
+    /// Sem vibrador o interruptor não existe, então não faz nada.
+    fn alternar_vibracao(&mut self) {
+        if !self.vibrador {
+            return;
+        }
+        self.preferencias.vibracao = !self.preferencias.vibracao;
+        self.gravar_preferencias();
+        if self.preferencias.vibracao {
+            self.pedir_toque(Toque::Ligou);
+        }
+    }
+
+    /// Põe um toque na fila da plataforma e anota no registro.
+    fn pedir_toque(&mut self, toque: Toque) {
+        self.toques.push(toque);
+        self.registros.push(format!("PRISMA_M4 vibracao toque={}", toque.nome()));
+    }
+
+    /// Entrega (e esvazia) as vibrações que chegaram a hora de acontecer.
+    pub fn vibracoes(&mut self) -> Vec<Toque> {
+        std::mem::take(&mut self.toques)
+    }
+
+    /// O aparelho recusou o toque de "ligou": a vibração volta a desligada (e é gravada), para o
+    /// interruptor não mentir.
+    pub fn vibracao_recusada(&mut self) {
+        self.preferencias.vibracao = false;
+        self.gravar_preferencias();
+        self.registros.push("PRISMA_M4 vibracao recusada".to_string());
     }
 
     fn fechar_folha(&mut self) {
@@ -817,6 +871,13 @@ impl App {
         let (pontos, nivel) = (jogo.score, jogo.level);
         let passos = montar(antes, a, b, &resultado, nivel);
         self.registros.push(format!("PRISMA_M1 jogada valida={} pontos={} nivel={}", resultado.valid, pontos, nivel));
+        if self.preferencias.vibracao {
+            let ativou_especial =
+                resultado.events.iter().any(|evento| matches!(evento, Event::Clear { activated, .. } if !activated.is_empty()));
+            if let Some(toque) = toque_da_jogada(resultado.valid, ativou_especial, resultado.levels_gained) {
+                self.pedir_toque(toque);
+            }
+        }
         self.animacao = Some(EmAndamento::nova(Reprodutor::novo(passos), base, None, melhor_antes));
         if resultado.valid {
             // Grava já, antes de a animação acabar: o motor resolveu a jogada inteira, e se o app
@@ -1064,6 +1125,7 @@ mod tests {
     use crate::input::Evento;
     use crate::layout::{cell_rect, tela_jogo, Rect, TelaJogo};
     use crate::linha::{Passo, Reprodutor};
+    use crate::vibracao::Toque;
     use crate::preferencias::{Ambiente, Canal, Fase, Musica, Respiracao, Volumes};
     use prisma_engine::{adjacent, lcg_random, level_goal, Board, Game, Mode, TileKind, SIZE};
     use std::fs;
@@ -3140,5 +3202,143 @@ mod tests {
         let preferencias = Preferencias { sons_do_jogo: false, ..tudo_ligado() };
         let desejado = App::com_sementes(7, 9).com_preferencias(preferencias).som_desejado();
         assert!(desejado.musica.is_some() && desejado.ambiente.is_some());
+    }
+
+    // ---- M4 Task 1: vibração ---------------------------------------------------------------
+
+    fn com_vibracao() -> Preferencias {
+        Preferencias { vibracao: true, ..Preferencias::default() }
+    }
+
+    /// Os toques que a jogada de número `n` (1 = a primeira) da Dica pede, num jogo Zen da `semente`
+    /// com a vibração ligada. As jogadas de antes não contam.
+    fn toques_da_jogada_numero(semente: u32, n: usize) -> Vec<Toque> {
+        let mut app = App::com_sementes(semente, 9).com_preferencias(com_vibracao());
+        for _ in 1..n {
+            jogar_inteira(&mut app);
+        }
+        app.vibracoes(); // esvazia o que as jogadas de antes pediram
+        jogar_inteira(&mut app);
+        app.vibracoes()
+    }
+
+    #[test]
+    fn jogada_comum_com_vibracao_ligada_pede_toque_curto() {
+        // Semente 2: uma limpeza simples, sem especial e sem subir de nível.
+        assert_eq!(toques_da_jogada_numero(2, 1), vec![Toque::Curto]);
+    }
+
+    #[test]
+    fn jogada_com_especial_pede_toque_de_45() {
+        // Semente 13, 4ª jogada da Dica: ativa um Pulso.
+        assert_eq!(toques_da_jogada_numero(13, 4), vec![Toque::ComEspecial]);
+        assert_eq!(Toque::ComEspecial.padrao_ms(), &[0, 45]);
+    }
+
+    #[test]
+    fn subir_de_nivel_pede_o_padrao_longo() {
+        // Faltando 1 ponto para o nível 2, qualquer limpeza sobe de nível.
+        let mut app = App::com_sementes(2, 9).com_preferencias(com_vibracao());
+        app.jogo_mut().score = level_goal(1) - 1;
+        jogar_inteira(&mut app);
+        assert_eq!(app.vibracoes(), vec![Toque::NivelAcima]);
+        // Semente 15, 13ª jogada: um Pulso E a subida de nível; o nível vence o especial.
+        assert_eq!(toques_da_jogada_numero(15, 13), vec![Toque::NivelAcima]);
+    }
+
+    #[test]
+    fn jogada_invalida_nao_pede_toque() {
+        let mut app = App::com_sementes(7, 9).com_preferencias(com_vibracao());
+        app.registro();
+        let (a, b) = par_invalido(7);
+        arrastar(&mut app, a, b);
+        terminar(&mut app);
+        assert_eq!(app.vibracoes(), vec![]);
+        assert!(app.registro().iter().all(|linha| !linha.starts_with("PRISMA_M4")), "nada de vibração no registro");
+    }
+
+    #[test]
+    fn vibracao_desligada_nao_pede_nada_e_o_jogo_segue() {
+        let mut desligada = App::com_sementes(9, 9);
+        let mut ligada = App::com_sementes(9, 9).com_preferencias(com_vibracao());
+        desligada.registro();
+        for app in [&mut desligada, &mut ligada] {
+            jogar_inteira(app);
+        }
+        assert_eq!(desligada.vibracoes(), vec![]);
+        assert!(desligada.registro().iter().all(|linha| !linha.starts_with("PRISMA_M4")));
+        assert!(!ligada.vibracoes().is_empty());
+        // O jogo é o mesmo com ou sem vibração.
+        assert_eq!(desligada.jogo().score, ligada.jogo().score);
+        assert_eq!(desligada.jogo().board, ligada.jogo().board);
+    }
+
+    #[test]
+    fn vibracoes_esvazia_a_fila_como_sons() {
+        let mut app = App::com_sementes(2, 9).com_preferencias(com_vibracao());
+        jogar_inteira(&mut app);
+        assert_eq!(app.vibracoes(), vec![Toque::Curto]);
+        assert_eq!(app.vibracoes(), vec![], "a fila foi esvaziada");
+    }
+
+    #[test]
+    fn apertar_vibracao_liga_grava_e_pede_toque_ligou() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta).com_vibrador(true);
+        abrir_folha(&mut app);
+        app.registro();
+        app.apertar(Botao::Vibracao);
+        assert!(app.preferencias().vibracao);
+        assert_eq!(som_json(&pasta)["vibration"], serde_json::json!(true));
+        assert_eq!(app.vibracoes(), vec![Toque::Ligou]);
+        assert!(app.registro().contains(&"PRISMA_M4 vibracao toque=ligou".to_string()));
+        // Apertar de novo desliga, grava e não vibra.
+        app.apertar(Botao::Vibracao);
+        assert!(!app.preferencias().vibracao);
+        assert_eq!(som_json(&pasta)["vibration"], serde_json::json!(false));
+        assert_eq!(app.vibracoes(), vec![]);
+    }
+
+    #[test]
+    fn apertar_vibracao_sem_vibrador_ou_com_folha_fechada_nao_faz_nada() {
+        // Sem vibrador (o padrão do App), mesmo com a folha aberta.
+        let mut sem_vibrador = App::com_sementes(7, 9);
+        assert!(!sem_vibrador.tem_vibrador());
+        abrir_folha(&mut sem_vibrador);
+        sem_vibrador.apertar(Botao::Vibracao);
+        assert_eq!(sem_vibrador.preferencias(), Preferencias::default());
+        assert_eq!(sem_vibrador.vibracoes(), vec![]);
+        // Com vibrador, mas com a folha fechada.
+        let mut fechada = App::com_sementes(7, 9).com_vibrador(true);
+        assert!(fechada.tem_vibrador());
+        fechada.apertar(Botao::Vibracao);
+        assert_eq!(fechada.preferencias(), Preferencias::default());
+        assert_eq!(fechada.vibracoes(), vec![]);
+    }
+
+    #[test]
+    fn vibracao_recusada_desliga_e_grava() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta).com_vibrador(true);
+        abrir_folha(&mut app);
+        app.apertar(Botao::Vibracao);
+        assert_eq!(app.vibracoes(), vec![Toque::Ligou]);
+        app.registro();
+        // O aparelho recusou o toque de "ligou": volta a desligada.
+        app.vibracao_recusada();
+        assert!(!app.preferencias().vibracao);
+        assert_eq!(som_json(&pasta)["vibration"], serde_json::json!(false));
+        assert!(app.registro().contains(&"PRISMA_M4 vibracao recusada".to_string()));
+    }
+
+    #[test]
+    fn registro_tem_as_linhas_de_vibracao() {
+        let mut app = App::com_sementes(2, 9).com_preferencias(com_vibracao());
+        app.registro();
+        jogar_inteira(&mut app);
+        let registro = app.registro();
+        let posicao = registro.iter().position(|linha| linha.starts_with("PRISMA_M4")).expect("a linha de vibração");
+        assert_eq!(registro[posicao], "PRISMA_M4 vibracao toque=curto");
+        assert!(registro[posicao - 1].starts_with("PRISMA_M1 jogada valida=true"), "logo depois da linha da jogada");
     }
 }
