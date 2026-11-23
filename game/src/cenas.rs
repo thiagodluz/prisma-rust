@@ -9,7 +9,7 @@ use crate::formato::Recordes;
 use crate::input::Evento;
 use crate::layout::{cell_rect, tela_jogo, TelaJogo};
 use crate::linha::{duracao_ms, Passo, TipoVisual};
-use crate::preferencias::{Canal, Preferencias, Respiracao};
+use crate::preferencias::{Canal, Intensidade, Preferencias, Respiracao};
 use prisma_engine::{MoveResult, TileKind, SIZE};
 
 /// A tela de referência das cenas. Os toques são montados a partir dela; como o resultado
@@ -106,7 +106,8 @@ fn recordes_da_cena() -> Recordes {
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
 /// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
 /// `som-classico`, `som-aviso`, `respiracao`, `recordes`, `creditos`, `particulas-pulso`,
-/// `particulas-raio`, `particulas-espectro` e `particulas-supernova`.
+/// `particulas-raio`, `particulas-espectro`, `particulas-espectro-suave`,
+/// `particulas-espectro-vibrante` e `particulas-supernova`.
 pub fn cena(nome: &str) -> Option<App> {
     let mut app = App::com_sementes(7, 9);
     match nome {
@@ -200,6 +201,18 @@ pub fn cena(nome: &str) -> Option<App> {
             TipoVisual::Espectro,
             60.0,
         ),
+        // O mesmo Espectro nas outras duas intensidades do Zen (para comparar com a de cima).
+        "particulas-espectro-suave" | "particulas-espectro-vibrante" => {
+            let intensidade =
+                if nome == "particulas-espectro-suave" { Intensidade::Suave } else { Intensidade::Vibrante };
+            app = app.com_preferencias(Preferencias { intensidade, ..Preferencias::default() });
+            cena_de_particulas(
+                &mut app,
+                |jogo| explodir_com_especial(jogo, TileKind::Spectrum),
+                TipoVisual::Espectro,
+                60.0,
+            );
+        }
         "particulas-supernova" => {
             cena_de_particulas(&mut app, |jogo| jogo.cheat_supernova(27), TipoVisual::Supernova, 330.0)
         }
@@ -216,7 +229,7 @@ mod tests {
     use crate::preferencias::Fase;
     use prisma_engine::Mode;
 
-    const NOMES: [&str; 20] = [
+    const NOMES: [&str; 22] = [
         "inicio",
         "selecionada",
         "dica",
@@ -237,6 +250,8 @@ mod tests {
         "particulas-raio",
         "particulas-espectro",
         "particulas-supernova",
+        "particulas-espectro-suave",
+        "particulas-espectro-vibrante",
     ];
 
     fn passo_da_cena(nome: &str) -> &'static str {
@@ -370,6 +385,24 @@ mod tests {
             };
             let lista = crate::particulas::particulas(visuais, celulas, decorrido, intensidade);
             assert!(lista.iter().any(|particula| particula.alfa > 0.2), "{nome}: tem partícula bem visível");
+        }
+    }
+
+    #[test]
+    fn as_cenas_do_espectro_mostram_cada_intensidade() {
+        use crate::preferencias::Intensidade;
+
+        for (nome, esperada) in [
+            ("particulas-espectro-suave", Intensidade::Suave),
+            ("particulas-espectro", Intensidade::Padrao),
+            ("particulas-espectro-vibrante", Intensidade::Vibrante),
+        ] {
+            let app = cena(nome).unwrap_or_else(|| panic!("a cena {nome} existe"));
+            assert_eq!(app.intensidade(), esperada, "{nome}");
+            let (passo, _) = app.passo_atual().expect("em andamento");
+            let Passo::Limpeza { visuais, intensidade, .. } = passo else { panic!("{nome}: o passo é de limpeza") };
+            assert_eq!(*intensidade, esperada, "{nome}: a limpeza leva a intensidade da cena");
+            assert!(visuais.iter().any(|visual| visual.tipo == TipoVisual::Espectro), "{nome}");
         }
     }
 

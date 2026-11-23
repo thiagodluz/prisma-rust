@@ -60,12 +60,14 @@ pub enum Botao {
     FecharSom,
     SonsDoJogo,
     Testar,
-    // Estes cinco só existem no Zen.
+    // Estes seis só existem no Zen.
     LigaMusica,
     EscolheMusica,
     LigaAmbiente,
     EscolheAmbiente,
     Respiracao,
+    /// A linha "Intensidade" dos efeitos visuais: cada toque vai ao próximo valor (Zen).
+    Efeitos,
     /// O interruptor "Vibração" da folha de Som (nos dois modos; só existe em aparelho com vibrador).
     Vibracao,
     /// O ≡ ao lado do ♪: abre e fecha a folha do Menu (Recordes e Créditos).
@@ -118,6 +120,7 @@ impl Botao {
             | Botao::LigaAmbiente
             | Botao::EscolheAmbiente
             | Botao::Respiracao
+            | Botao::Efeitos
             | Botao::Vibracao => Some(Folha::Som),
         }
     }
@@ -126,7 +129,12 @@ impl Botao {
     fn so_do_zen(self) -> bool {
         matches!(
             self,
-            Botao::LigaMusica | Botao::EscolheMusica | Botao::LigaAmbiente | Botao::EscolheAmbiente | Botao::Respiracao
+            Botao::LigaMusica
+                | Botao::EscolheMusica
+                | Botao::LigaAmbiente
+                | Botao::EscolheAmbiente
+                | Botao::Respiracao
+                | Botao::Efeitos
         )
     }
 }
@@ -611,6 +619,7 @@ impl App {
                     (Botao::LigaAmbiente, som.liga_ambiente),
                     (Botao::EscolheAmbiente, som.escolhe_ambiente),
                     (Botao::Respiracao, som.respiracao),
+                    (Botao::Efeitos, som.efeitos),
                 ];
                 botoes.extend(do_zen.into_iter().filter_map(|(botao, retangulo)| retangulo.map(|r| (botao, r))));
             }
@@ -707,7 +716,22 @@ impl App {
                 self.respiracao_ms = 0.0;
                 self.gravar_preferencias();
             }
+            Botao::Efeitos => {
+                self.preferencias.intensidade = self.preferencias.intensidade.proximo();
+                self.registros.push(format!("PRISMA_M4 intensidade valor={}", self.preferencias.intensidade.nome_do_registro()));
+                self.gravar_preferencias();
+            }
             Botao::Vibracao => self.alternar_vibracao(),
+        }
+    }
+
+    /// A intensidade dos efeitos visuais valendo agora: a escolha do jogador no Zen; no Clássico
+    /// sempre o Padrão (a escolha continua gravada e volta a valer no Zen).
+    pub fn intensidade(&self) -> Intensidade {
+        if self.modo == Mode::Zen {
+            self.preferencias.intensidade
+        } else {
+            Intensidade::Padrao
         }
     }
 
@@ -954,12 +978,12 @@ impl App {
         // Guardado antes de a jogada contar: durante a animação o painel mostra este MELHOR.
         let melhor_antes = self.melhor_parado();
         self.dica = None;
+        let intensidade = self.intensidade();
         let jogo = self.jogo_mut();
         let antes = jogo.board;
         let resultado = jogo.play(a, b);
         let (pontos, nivel) = (jogo.score, jogo.level);
-        // A intensidade das partículas vem da preferência na Tarefa 10; até lá vale o Padrão.
-        let passos = montar(antes, a, b, &resultado, nivel, Intensidade::Padrao);
+        let passos = montar(antes, a, b, &resultado, nivel, intensidade);
         self.registros.push(format!("PRISMA_M1 jogada valida={} pontos={} nivel={}", resultado.valid, pontos, nivel));
         if self.preferencias.vibracao {
             let ativou_especial =
@@ -1096,7 +1120,7 @@ impl App {
         let base = self.estagio();
         let melhor_antes = self.melhor_parado();
         let nivel = self.jogo().level;
-        let mut passos = montar(antes, 0, 0, resultado, nivel, Intensidade::Padrao);
+        let mut passos = montar(antes, 0, 0, resultado, nivel, self.intensidade());
         passos.retain(|passo| !matches!(passo, Passo::Troca { .. }));
         self.animacao = Some(EmAndamento::nova(Reprodutor::novo(passos), base, None, melhor_antes));
         self.observar(true);
@@ -3052,7 +3076,8 @@ mod tests {
         let mut app = App::com_sementes(7, 9);
         app.apertar(Botao::Classico);
         abrir_folha(&mut app);
-        let zen_so = [Botao::LigaMusica, Botao::EscolheMusica, Botao::LigaAmbiente, Botao::EscolheAmbiente, Botao::Respiracao];
+        let zen_so =
+            [Botao::LigaMusica, Botao::EscolheMusica, Botao::LigaAmbiente, Botao::EscolheAmbiente, Botao::Respiracao, Botao::Efeitos];
         for botao in zen_so {
             app.apertar(botao);
         }
@@ -3067,6 +3092,135 @@ mod tests {
                 assert!(!achado.is_some_and(|botao| zen_so.contains(&botao)), "{achado:?} em ({x}, {y})");
             }
         }
+    }
+
+    /// A primeira limpeza de uma jogada boa: devolve a intensidade que o passo leva e a duração dele.
+    fn primeira_limpeza(app: &mut App) -> (Intensidade, f32) {
+        let (a, b) = boa_jogada(app);
+        arrastar(app, a, b);
+        for _ in 0..20_000 {
+            if let Some((passo @ Passo::Limpeza { intensidade, .. }, _)) = app.passo_atual() {
+                return (*intensidade, crate::linha::duracao_ms(passo));
+            }
+            app.avancar(1.0);
+        }
+        panic!("a jogada não teve limpeza");
+    }
+
+    fn com_intensidade(intensidade: Intensidade) -> App {
+        App::com_sementes(7, 9).com_preferencias(Preferencias { intensidade, ..Preferencias::default() })
+    }
+
+    #[test]
+    fn apertar_efeitos_passa_ao_proximo_grava_e_registra() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        abrir_folha(&mut app);
+        let tela = tela();
+        assert_eq!(app.preferencias().intensidade, Intensidade::Padrao, "de fábrica vale o Padrão");
+        app.registro();
+        let esperado = [(Intensidade::Vibrante, "vibrante"), (Intensidade::Suave, "suave"), (Intensidade::Padrao, "padrao")];
+        for (intensidade, nome) in esperado {
+            tocar_em(&mut app, &tela, tela.som.efeitos.expect("o Zen tem a linha de efeitos"));
+            assert_eq!(app.preferencias().intensidade, intensidade);
+            assert_eq!(app.registro(), vec![format!("PRISMA_M4 intensidade valor={nome}")]);
+            assert!(app.folha_aberta(), "a folha continua aberta");
+        }
+        // Uma volta inteira e o último valor ficou gravado.
+        tocar_em(&mut app, &tela, tela.som.efeitos.unwrap());
+        drop(app);
+        assert_eq!(abrir(&pasta).preferencias().intensidade, Intensidade::Vibrante);
+    }
+
+    #[test]
+    fn efeitos_so_existe_no_zen() {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Classico);
+        abrir_folha(&mut app);
+        app.registro();
+        app.apertar(Botao::Efeitos);
+        assert_eq!(app.preferencias().intensidade, Intensidade::Padrao, "no Clássico o botão não faz nada");
+        assert!(app.registro().is_empty());
+        let classico = tela_classico();
+        assert_eq!(classico.som.efeitos, None);
+        let folha = classico.som.folha;
+        for linha in 0..40 {
+            for coluna in 0..40 {
+                let (x, y) = (folha.x + folha.w * (coluna as f32 + 0.5) / 40.0, folha.y + folha.h * (linha as f32 + 0.5) / 40.0);
+                assert_ne!(app.botao_em(&classico, x, y), Some(Botao::Efeitos), "({x}, {y})");
+            }
+        }
+        // Com a folha de Som fechada o botão também não reage, e no Zen ele existe.
+        let mut fechada = App::com_sementes(7, 9);
+        fechada.apertar(Botao::Efeitos);
+        assert_eq!(fechada.preferencias().intensidade, Intensidade::Padrao);
+        abrir_folha(&mut fechada);
+        let zen = tela();
+        let area = zen.som.efeitos.expect("o Zen tem a linha");
+        assert_eq!(fechada.botao_em(&zen, meio(area).0, meio(area).1), Some(Botao::Efeitos));
+    }
+
+    #[test]
+    fn jogada_usa_a_intensidade_escolhida_no_zen() {
+        let (suave, duracao_suave) = primeira_limpeza(&mut com_intensidade(Intensidade::Suave));
+        let (padrao, duracao_padrao) = primeira_limpeza(&mut com_intensidade(Intensidade::Padrao));
+        let (vibrante, duracao_vibrante) = primeira_limpeza(&mut com_intensidade(Intensidade::Vibrante));
+        assert_eq!((suave, padrao, vibrante), (Intensidade::Suave, Intensidade::Padrao, Intensidade::Vibrante));
+        assert!(duracao_suave < duracao_padrao && duracao_padrao < duracao_vibrante, "{duracao_suave} {duracao_padrao} {duracao_vibrante}");
+    }
+
+    #[test]
+    fn no_classico_a_intensidade_vale_padrao_mesmo_com_vibrante_gravado() {
+        let mut app = com_intensidade(Intensidade::Vibrante);
+        assert_eq!(app.intensidade(), Intensidade::Vibrante, "no Zen vale a escolha");
+        app.apertar(Botao::Classico);
+        assert_eq!(app.intensidade(), Intensidade::Padrao, "no Clássico vale o Padrão");
+        assert_eq!(app.preferencias().intensidade, Intensidade::Vibrante, "a escolha continua gravada");
+        let (usada, _) = primeira_limpeza(&mut app);
+        assert_eq!(usada, Intensidade::Padrao);
+        terminar(&mut app); // trocar de modo no meio da animação não vale
+        app.apertar(Botao::Zen);
+        assert_eq!(app.modo(), Mode::Zen);
+        assert_eq!(app.intensidade(), Intensidade::Vibrante, "ao voltar ao Zen a escolha volta a valer");
+    }
+
+    /// Joga a jogada boa até o fim e devolve (os sons que tocaram, os pontos).
+    fn jogar_e_ouvir(app: &mut App) -> (Vec<Efeito>, u64) {
+        let (a, b) = boa_jogada(app);
+        arrastar(app, a, b);
+        let mut sons = app.sons();
+        for _ in 0..10_000 {
+            if !app.ocupado() {
+                break;
+            }
+            app.avancar(16.0);
+            sons.extend(app.sons());
+        }
+        assert!(!app.ocupado(), "a animação terminou");
+        (sons, app.jogo().score)
+    }
+
+    #[test]
+    fn trocar_a_intensidade_nao_muda_os_sons_nem_os_pontos() {
+        let (sons_suave, pontos_suave) = jogar_e_ouvir(&mut com_intensidade(Intensidade::Suave));
+        let (sons_vibrante, pontos_vibrante) = jogar_e_ouvir(&mut com_intensidade(Intensidade::Vibrante));
+        assert!(!sons_suave.is_empty() && pontos_suave > 0);
+        assert_eq!(sons_suave, sons_vibrante);
+        assert_eq!(pontos_suave, pontos_vibrante);
+    }
+
+    #[test]
+    fn fechar_e_abrir_lembra_a_intensidade() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        abrir_folha(&mut app);
+        let tela = tela();
+        tocar_em(&mut app, &tela, tela.som.efeitos.unwrap());
+        assert_eq!(app.preferencias().intensidade, Intensidade::Vibrante);
+        drop(app);
+        let reaberto = abrir(&pasta);
+        assert_eq!(reaberto.preferencias().intensidade, Intensidade::Vibrante);
+        assert_eq!(reaberto.intensidade(), Intensidade::Vibrante, "no Zen, que é o modo ao abrir");
     }
 
     #[test]

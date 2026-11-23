@@ -153,6 +153,9 @@ pub struct TelaSom {
     pub escolhe_ambiente: Option<Rect>,
     pub barra_ambiente: Rect,
     pub respiracao: Option<Rect>,
+    /// A linha "Intensidade" dos efeitos visuais (Suave, Padrão, Vibrante): a última da folha do
+    /// Zen, depois da respiração. No Clássico não existe (lá os efeitos valem o Padrão).
+    pub efeitos: Option<Rect>,
     /// O interruptor "Vibração", logo depois do volume dos efeitos, nos dois modos. `None` em
     /// aparelho sem vibrador (e aí as outras linhas ocupam o lugar dela).
     pub vibracao: Option<Rect>,
@@ -176,6 +179,7 @@ impl TelaSom {
         escolhe_ambiente: None,
         barra_ambiente: Rect::VAZIO,
         respiracao: None,
+        efeitos: None,
         vibracao: None,
         fechar: Rect::VAZIO,
         texto: 0.0,
@@ -431,7 +435,7 @@ fn folha_de_som(folha: Rect, unidade: f32, zen: bool, vibrador: bool) -> TelaSom
     // Quantas linhas da folha vêm depois do volume dos Efeitos é decidido aqui: a da Vibração (se
     // houver) empurra todas as seguintes uma linha para baixo.
     let deslocamento = usize::from(vibrador);
-    let linhas = ((if zen { 8 } else { 5 }) + deslocamento) as f32;
+    let linhas = ((if zen { 9 } else { 5 }) + deslocamento) as f32;
     let altura_livre = folha.h - 2.0 * borda;
     let altura = ((altura_livre - (linhas - 1.0) * vao) / linhas).min(FILA_MAXIMA * unidade);
     let bloco = linhas * altura + (linhas - 1.0) * vao;
@@ -445,17 +449,19 @@ fn folha_de_som(folha: Rect, unidade: f32, zen: bool, vibrador: bool) -> TelaSom
     let (sons_do_jogo, testar) = dividir(linha(1), 0.62 * largura, vao);
     let barra_efeitos = linha(2);
     let vibracao = vibrador.then(|| linha(3));
-    let (liga_musica, escolhe_musica, barra_musica, liga_ambiente, escolhe_ambiente, barra_ambiente, respiracao);
+    let (liga_musica, escolhe_musica, barra_musica, liga_ambiente, escolhe_ambiente, barra_ambiente, respiracao, efeitos);
     if zen {
         let (liga, escolhe) = dividir(depois(0), 0.40 * largura, vao);
         (liga_musica, escolhe_musica, barra_musica) = (Some(liga), Some(escolhe), depois(1));
         let (liga, escolhe) = dividir(depois(2), 0.40 * largura, vao);
         (liga_ambiente, escolhe_ambiente, barra_ambiente) = (Some(liga), Some(escolhe), depois(3));
         respiracao = Some(depois(4));
+        efeitos = Some(depois(5));
     } else {
         (liga_musica, escolhe_musica, barra_musica) = (None, None, depois(0));
         (liga_ambiente, escolhe_ambiente, barra_ambiente) = (None, None, depois(1));
         respiracao = None;
+        efeitos = None;
     }
     TelaSom {
         folha,
@@ -470,6 +476,7 @@ fn folha_de_som(folha: Rect, unidade: f32, zen: bool, vibrador: bool) -> TelaSom
         escolhe_ambiente,
         barra_ambiente,
         respiracao,
+        efeitos,
         vibracao,
         fechar,
         texto: TEXTO * unidade,
@@ -874,6 +881,7 @@ mod tests_tela_jogo {
             ("liga_ambiente", som.liga_ambiente),
             ("escolhe_ambiente", som.escolhe_ambiente),
             ("respiracao", som.respiracao),
+            ("efeitos", som.efeitos),
             ("vibracao", som.vibracao),
         ] {
             if let Some(retangulo) = retangulo {
@@ -950,6 +958,53 @@ mod tests_tela_jogo {
             // Os controles que existem nos dois modos ficam no mesmo lugar? Não precisam; mas a folha, sim.
             assert_eq!(zen.folha, classico.folha);
         }
+    }
+
+    #[test]
+    fn a_folha_do_zen_com_10_linhas_cabe_em_360x640_e_1080x2400() {
+        for (largura, altura) in [(360.0, 640.0), (1080.0, 2400.0)] {
+            let tela = tela_jogo_com(largura, altura, true, true);
+            let som = tela.som;
+            let unidade = largura.min(altura);
+            let efeitos = som.efeitos.expect("o Zen tem a linha de efeitos");
+            let respiracao = som.respiracao.expect("o Zen tem a respiração");
+            // A linha de efeitos é a última da folha, logo depois da respiração.
+            assert!(efeitos.y >= respiracao.y + respiracao.h - 1e-3, "{largura}x{altura}: efeitos vem depois da respiração");
+            assert!(dentro(efeitos, som.folha), "{largura}x{altura}: {efeitos:?} fora da folha");
+            // Com a vibração, são 10 linhas: título, sons, volume, vibração, música (2), ambiente (2), respiração, efeitos.
+            let todos = controles(&som);
+            let mut topos: Vec<f32> = todos.iter().map(|(_, retangulo)| (retangulo.y * 100.0).round() / 100.0).collect();
+            topos.sort_by(f32::total_cmp);
+            topos.dedup();
+            assert_eq!(topos.len(), 10, "{largura}x{altura}: a folha tem 10 linhas");
+            for (nome, retangulo) in &todos {
+                if *nome != "titulo" {
+                    assert!(retangulo.h >= 0.07 * unidade, "{nome} baixo demais em {largura}x{altura}: {} < {}", retangulo.h, 0.07 * unidade);
+                }
+            }
+            for (i, (nome_a, a)) in todos.iter().enumerate() {
+                for (nome_b, b) in &todos[i + 1..] {
+                    assert!(!se_cruzam(*a, *b), "{nome_a} e {nome_b} se cruzam em {largura}x{altura}");
+                }
+            }
+            // Sem vibrador são 9 linhas, e a de efeitos continua lá.
+            let sem_vibrador = tela_jogo_com(largura, altura, true, false).som;
+            assert!(sem_vibrador.vibracao.is_none() && sem_vibrador.efeitos.is_some());
+            let altura_de_cada = sem_vibrador.efeitos.unwrap().h;
+            assert!(altura_de_cada >= efeitos.h - 1e-3, "sem a vibração as linhas não ficam menores");
+        }
+    }
+
+    #[test]
+    fn no_classico_nao_ha_linha_de_efeitos() {
+        for (largura, altura) in CELULARES {
+            for vibrador in [true, false] {
+                let classico = tela_jogo_com(largura, altura, false, vibrador).som;
+                assert_eq!(classico.efeitos, None, "{largura}x{altura} vibrador={vibrador}");
+                assert!(tela_jogo_com(largura, altura, true, vibrador).som.efeitos.is_some());
+            }
+        }
+        assert_eq!(tela_som(0.0, 0.0, true).efeitos, None, "tela impossível: tudo vazio");
     }
 
     #[test]

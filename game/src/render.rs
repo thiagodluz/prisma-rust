@@ -16,8 +16,8 @@ use crate::linha::{
     queda_deslocamento, queda_ms, resgate_da_casa, Passo, TipoVisual,
 };
 use crate::menu::{creditos, linhas_de_recordes};
-use crate::particulas::{ajustar, particulas, Forma};
-use crate::preferencias::{orbe, segundos_restantes};
+use crate::particulas::{ajustar, particulas, realce_da_faixa, Forma};
+use crate::preferencias::{orbe, segundos_restantes, Intensidade};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
 const FUNDO: Color = Color::from_hex(0x101229);
@@ -458,7 +458,7 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
 }
 
 /// A faixa "Nível N" no meio do tabuleiro, crescendo e sumindo conforme `t` (ms).
-fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo) {
+fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo, intensidade: Intensidade) {
     let (escala, alfa) = nivel_faixa(t);
     let tabuleiro = tela.tabuleiro;
     let largura = 0.8 * tabuleiro.w * escala;
@@ -469,6 +469,16 @@ fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo) {
         w: largura,
         h: altura,
     };
+    // A sombra e o brilho roxo em volta da faixa mudam com a intensidade (Suave, Padrão, Vibrante).
+    let (sombra, brilho) = realce_da_faixa(intensidade);
+    let passo = 0.012 * tabuleiro.w;
+    for camada in 1..=4 {
+        let folga = camada as f32 * passo;
+        let cor = Color::new(0.71, 0.64, 1.0, 0.11 * brilho * alfa);
+        draw_rectangle(area.x - folga, area.y - folga, area.w + 2.0 * folga, area.h + 2.0 * folga, cor);
+    }
+    let desce = 0.025 * tabuleiro.h * sombra;
+    draw_rectangle(area.x, area.y + desce, area.w, area.h, Color::new(0.1, 0.09, 0.25, 0.45 * sombra * alfa));
     draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.95 * alfa));
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 3.0, com_alfa(DESTAQUE, alfa));
     escrever(&format!("Nível {nivel}"), area, 2.4 * tela.texto * escala, com_alfa(DESTAQUE, alfa), Alinhamento::Centro);
@@ -695,6 +705,16 @@ fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
         let cor = if ligada { DESTAQUE } else { TEXTO_SUAVE };
         escrever(valor, Rect { x: dentro.x + 0.38 * dentro.w, w: 0.62 * dentro.w, ..dentro }, 0.95 * t, cor, Alinhamento::Direita);
     }
+
+    // A intensidade dos efeitos visuais (só no Zen): o nome à esquerda e o valor escolhido à direita.
+    if let Some(area) = som.efeitos {
+        desenhar_cartao(area);
+        let margem = 0.18 * area.h;
+        let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area };
+        escrever("Intensidade", Rect { w: 0.45 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
+        let valor = preferencias.intensidade.texto();
+        escrever(valor, Rect { x: dentro.x + 0.47 * dentro.w, w: 0.53 * dentro.w, ..dentro }, 0.95 * t, DESTAQUE, Alinhamento::Direita);
+    }
 }
 
 /// Escreve `paragrafos` um abaixo do outro, de cima para baixo, quebrando cada um em linhas dentro
@@ -811,7 +831,7 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
         desenhar_aviso(aviso, tela);
     }
     if let Some((crate::linha::Passo::Nivel { nivel }, t)) = app.passo_atual() {
-        desenhar_faixa_de_nivel(*nivel, t, tela);
+        desenhar_faixa_de_nivel(*nivel, t, tela, app.intensidade());
     }
 
     // Os botões de baixo. Com a partida acabada, a Dica fica apagada.

@@ -205,8 +205,9 @@ fn linha_de_toque(x: f32, y: f32, escala: f32) -> String {
 /// tocar. `jogar_novamente`, `cancelar` e `confirmar` são sempre registrados, mesmo quando
 /// estão escondidos; `embaralhar` só existe no Zen. O ♪ (`som`) e o ≡ (`menu`) estão sempre lá;
 /// com a folha de Som aberta entram também os botões dela: `fechar_som`, `liga_vibracao` (só em
-/// aparelho com vibrador) e, no Zen, `liga_musica` e `liga_ambiente` (o teste do celular virtual
-/// os usa para ligar a vibração, a música e o ambiente). Com a folha do Menu aberta entram
+/// aparelho com vibrador) e, no Zen, `liga_musica`, `liga_ambiente` e `escolhe_efeitos` (o teste
+/// do celular virtual os usa para ligar a vibração, a música e o ambiente e para mudar a
+/// intensidade dos efeitos). Com a folha do Menu aberta entram
 /// `fechar_menu`, `aba_recordes` e `aba_creditos`.
 fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha: Option<Folha>) -> Vec<String> {
     let tabuleiro = tela.tabuleiro;
@@ -242,6 +243,7 @@ fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha: Option<Folha
             ("liga_vibracao", tela.som.vibracao),
             ("liga_musica", tela.som.liga_musica),
             ("liga_ambiente", tela.som.liga_ambiente),
+            ("escolhe_efeitos", tela.som.efeitos),
         ] {
             if let Some(area) = interruptor {
                 botoes.push((nome, area));
@@ -673,6 +675,24 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn a_geometria_leva_escolhe_efeitos_so_no_zen_com_a_folha_aberta() {
+        let tem = |linhas: &[String], nome: &str| linhas.iter().any(|linha| linha.starts_with(&format!("PRISMA_M1 botao={nome} ")));
+        let zen = layout::tela_jogo(540.0, 960.0, true);
+        let area = zen.som.efeitos.expect("o Zen tem a linha");
+        let esperado = format!(
+            "PRISMA_M1 botao=escolhe_efeitos x={:.0} y={:.0}",
+            (area.x + area.w / 2.0) * 2.0,
+            (area.y + area.h / 2.0) * 2.0
+        );
+        assert!(linhas_de_geometria(&zen, 2.0, Some(Folha::Som)).contains(&esperado), "faltou {esperado}");
+        for folha in [None, Some(Folha::Recordes), Some(Folha::Creditos)] {
+            assert!(!tem(&linhas_de_geometria(&zen, 2.0, folha), "escolhe_efeitos"), "{folha:?}");
+        }
+        let classico = layout::tela_jogo(540.0, 960.0, false);
+        assert!(!tem(&linhas_de_geometria(&classico, 2.0, Some(Folha::Som)), "escolhe_efeitos"));
+    }
 
     #[test]
     fn o_registro_de_geometria_leva_menu_e_os_botoes_do_menu_so_com_ele_aberto() {

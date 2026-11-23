@@ -358,6 +358,17 @@ pub fn ajustar(cor: [f32; 3], alfa: f32, intensidade: Intensidade) -> ([f32; 3],
     ([canal(cor[0]), canal(cor[1]), canal(cor[2])], alfa * fator_de_alfa)
 }
 
+/// O que a intensidade muda na faixa "Nível N" (no JS, o `box-shadow` dela): devolve (força da
+/// sombra escura, força do brilho roxo em volta), de 0 a 1. O Suave encolhe a sombra e apaga o
+/// brilho; o Padrão tem o brilho médio (`#b5a3ff85`); o Vibrante o aumenta (`#b5a3ffba`).
+pub fn realce_da_faixa(intensidade: Intensidade) -> (f32, f32) {
+    match intensidade {
+        Intensidade::Suave => (0.5, 0.0),
+        Intensidade::Padrao => (1.0, 0.52),
+        Intensidade::Vibrante => (1.0, 0.73),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,6 +627,18 @@ mod tests {
                 let (saida, a) = ajustar(entrada, 1.0, intensidade);
                 assert!(saida.iter().all(|c| (0.0..=1.0).contains(c)) && (0.0..=1.0).contains(&a));
             }
+        }
+    }
+
+    #[test]
+    fn faixa_de_nivel_tem_sombra_menor_no_suave_e_brilho_extra_no_vibrante() {
+        let (sombra_suave, brilho_suave) = realce_da_faixa(Intensidade::Suave);
+        let (sombra_padrao, brilho_padrao) = realce_da_faixa(PADRAO);
+        let (sombra_vibrante, brilho_vibrante) = realce_da_faixa(Intensidade::Vibrante);
+        assert!(sombra_suave < sombra_padrao && sombra_padrao == sombra_vibrante, "a sombra só encolhe no Suave");
+        assert!(brilho_suave < brilho_padrao && brilho_padrao < brilho_vibrante, "o brilho roxo cresce do Suave ao Vibrante");
+        for valor in [sombra_suave, brilho_suave, sombra_padrao, brilho_padrao, sombra_vibrante, brilho_vibrante] {
+            assert!((0.0..=1.0).contains(&valor), "{valor}");
         }
     }
 
