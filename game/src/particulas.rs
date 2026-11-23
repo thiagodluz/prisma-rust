@@ -45,8 +45,8 @@ pub struct Particula {
 // ---- Medidas e cores do JS (os pixels viram casas: uma casa tem uns 55 px) -----------------
 
 const LADO_DO_TABULEIRO: f32 = SIZE as f32;
-/// A faísca tem 6 px.
-const FAISCA_LADO: f32 = 0.11;
+/// A faísca tem 6 px no JS; na tela pequena do celular precisa de um pouco mais para aparecer.
+const FAISCA_LADO: f32 = 0.15;
 /// A borda da onda tem 2 px; a do anel da Supernova, 3 px.
 const ONDA_BORDA: f32 = 0.04;
 const SUPERNOVA_BORDA: f32 = 0.055;
@@ -106,9 +106,14 @@ fn fracao(u: f32, duracao: f32) -> f32 {
     }
 }
 
-/// Começa rápido e termina devagar (o `ease-out` do JS).
-fn saida(p: f32) -> f32 {
+/// Começa rápido e termina devagar, forte: o `cubic-bezier(.13,.65,.27,1)` das faíscas do JS.
+fn saida_forte(p: f32) -> f32 {
     1.0 - (1.0 - p).powi(3)
+}
+
+/// Começa rápido e termina devagar, mais leve: o `ease-out` do JS (onda, feixes, véu, Supernova).
+fn saida(p: f32) -> f32 {
+    1.0 - (1.0 - p).powi(2)
 }
 
 /// Começa devagar e termina rápido (o `ease-in` do JS).
@@ -159,7 +164,7 @@ fn alcance(tipo: Option<TipoVisual>) -> f32 {
 /// dura `FAISCA_MS` vezes a escala). O ângulo da `i`-ésima é `2π·i/n + 0,18`.
 fn faiscas(ox: f32, oy: f32, tipo: Option<TipoVisual>, n: usize, u: f32, escala_de_tempo: f32, saida_: &mut Vec<Particula>) {
     let p = fracao(u, FAISCA_MS * escala_de_tempo);
-    let progresso = saida(p);
+    let progresso = saida_forte(p);
     let deslocamento = quadros(progresso, &[(0.0, 0.0), (0.25, 0.32), (1.0, 1.0)]);
     let escala = quadros(progresso, &[(0.0, 0.35), (0.25, 1.15), (1.0, 0.35)]);
     let alfa = quadros(progresso, &[(0.0, 0.0), (0.25, 1.0), (1.0, 0.0)]);
@@ -479,7 +484,7 @@ mod tests {
         assert!(quase_no_fim.iter().all(|p| p.forma == Forma::Linha && (p.tamanho - 1.0).abs() < 0.05));
 
         // Segunda fase: o anel de 5 casas e nenhuma linha. Em 65% (eased) o anel está inteiro.
-        let u_no_pico = 480.0 * (1.0 - 0.35_f32.powf(1.0 / 3.0));
+        let u_no_pico = 480.0 * (1.0 - 0.35_f32.sqrt());
         let explosao = particulas(&[nova], &[26, 27, 28], 240.0 + u_no_pico, PADRAO);
         assert!(so(&explosao, Forma::Linha).is_empty());
         let aneis = so(&explosao, Forma::Anel);

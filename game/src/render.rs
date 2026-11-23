@@ -12,10 +12,11 @@ use crate::app::{App, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
 use crate::linha::{
-    deslocamento_troca, embaralhar_alfa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa, queda_deslocamento,
-    queda_ms, resgate_da_casa,
+    deslocamento_troca, embaralhar_alfa, fusao_da_casa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa,
+    queda_deslocamento, queda_ms, resgate_da_casa, Passo, TipoVisual,
 };
 use crate::menu::{creditos, linhas_de_recordes};
+use crate::particulas::{ajustar, particulas, Forma};
 use crate::preferencias::{orbe, segundos_restantes};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
@@ -207,7 +208,6 @@ fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
         desenhar_casas(sprites, &app.jogo().board, area, parada);
         return;
     };
-    use crate::linha::Passo;
     match passo {
         Passo::Troca { antes, a, b, valida } => {
             let (a, b) = (*a, *b);
@@ -221,17 +221,44 @@ fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
             desenhar_pedra(sprites, &antes[linha_a][coluna_a], casa_a, 1.0, 1.0, (dx, dy));
             desenhar_pedra(sprites, &antes[linha_b][coluna_b], casa_b, 1.0, 1.0, (-dx, -dy));
         }
-        Passo::Limpeza { tabuleiro, celulas, ativadas, intensidade, .. } => {
-            // As pedras só começam a sumir depois da fusão da Supernova (`fusao_ms` é 0 sem ela).
-            let t_da_limpeza = t - fusao_ms(passo);
-            desenhar_casas(sprites, tabuleiro, area, |indice, _| {
-                if celulas.contains(&indice) {
-                    let (escala, alfa, _brilho) = limpeza_da_casa(ativadas, indice, t_da_limpeza, *intensidade);
-                    Some((escala, alfa, (0.0, 0.0)))
+        Passo::Limpeza { tabuleiro, celulas, ativadas, intensidade, visuais, .. } => {
+            // Primeiro a fusão da Supernova (as pedras de origem pulsam), depois as pedras somem.
+            let fusao = fusao_ms(passo);
+            let t_da_limpeza = t - fusao;
+            let origens: Vec<usize> = visuais
+                .iter()
+                .filter(|visual| visual.tipo == TipoVisual::Supernova)
+                .flat_map(|visual| visual.origens.iter().copied())
+                .collect();
+            // Cada casa: (escala, opacidade, brilho de 0 a 1).
+            let estado = |indice: usize| -> (f32, f32, f32) {
+                if t < fusao && origens.contains(&indice) {
+                    let (escala, brilho) = fusao_da_casa(t, *intensidade);
+                    (escala, 1.0, brilho)
+                } else if celulas.contains(&indice) {
+                    limpeza_da_casa(ativadas, indice, t_da_limpeza, *intensidade)
                 } else {
-                    Some((1.0, 1.0, (0.0, 0.0)))
+                    (1.0, 1.0, 0.0)
                 }
+            };
+            desenhar_casas(sprites, tabuleiro, area, |indice, _| {
+                let (escala, alfa, _) = estado(indice);
+                Some((escala, alfa, (0.0, 0.0)))
             });
+            // O brilho da pedra: uma luz branca translúcida por cima dela (`0,33 × brilho × opacidade`).
+            for indice in (0..SIZE * SIZE).filter(|indice| celulas.contains(indice) || origens.contains(indice)) {
+                let (escala, alfa, brilho) = estado(indice);
+                if brilho <= 0.0 || alfa <= 0.0 {
+                    continue;
+                }
+                // Três círculos, do maior e mais fraco ao menor e mais forte: um brilho sem borda dura.
+                let casa = casa_de(area, indice);
+                let raio = casa.w * SPRITE_RATIO * escala * 0.5;
+                for (fator, forca) in [(1.0, 0.18), (0.72, 0.3), (0.45, 0.5)] {
+                    let cor = com_alfa(WHITE, 0.33 * brilho * alfa * forca * 2.0);
+                    draw_circle(casa.x + casa.w / 2.0, casa.y + casa.h / 2.0, raio * fator, cor);
+                }
+            }
         }
         Passo::Queda { tabuleiro, origens } => {
             desenhar_casas(sprites, tabuleiro, area, |indice, casa| {
@@ -261,6 +288,54 @@ fn desenhar_pedras(app: &App, sprites: &Sprites, area: Rect) {
         }
         // Na faixa de nível o tabuleiro já está no estado final.
         Passo::Nivel { .. } => desenhar_casas(sprites, &app.jogo().board, area, parada),
+    }
+}
+
+/// As partículas da limpeza (faíscas, ondas, feixes, véu, anel da Supernova e linhas de fusão),
+/// por cima das pedras. A conta é de `particulas::particulas`; aqui só se pinta: as medidas
+/// vêm em casas e viram pixels pelo lado de uma casa, e a intensidade escolhida (Suave, Padrão,
+/// Vibrante) ajusta cor e opacidade.
+fn desenhar_particulas(passo: &Passo, t_ms: f32, area: Rect) {
+    let Passo::Limpeza { celulas, visuais, intensidade, .. } = passo else { return };
+    let lado = area.w / SIZE as f32;
+    for particula in particulas(visuais, celulas, t_ms, *intensidade) {
+        let (cor, alfa) = ajustar(particula.cor, particula.alfa, *intensidade);
+        if alfa <= 0.0 {
+            continue;
+        }
+        let cor = Color::new(cor[0], cor[1], cor[2], alfa.clamp(0.0, 1.0));
+        let (x, y) = (area.x + particula.x * lado, area.y + particula.y * lado);
+        let tamanho = particula.tamanho * lado;
+        match particula.forma {
+            Forma::Faisca => {
+                // Um quadrado girado, com um maior e mais fraco por baixo (o "brilho").
+                // O miolo usa a raiz do alfa: acende mais cedo e a faísca continua bem visível.
+                for (fator, fraqueza) in [(2.4, 0.3), (1.0, 1.0)] {
+                    let lado_da_faisca = tamanho * fator;
+                    let cor = if fator > 1.0 { cor } else { Color::new(cor.r, cor.g, cor.b, cor.a.sqrt()) };
+                    draw_rectangle_ex(
+                        x,
+                        y,
+                        lado_da_faisca,
+                        lado_da_faisca,
+                        DrawRectangleParams {
+                            offset: vec2(0.5, 0.5),
+                            rotation: particula.angulo,
+                            color: com_alfa(cor, fraqueza),
+                        },
+                    );
+                }
+            }
+            Forma::Anel => draw_circle_lines(x, y, tamanho / 2.0, (particula.espessura * lado).max(1.0), cor),
+            Forma::Linha => draw_rectangle_ex(
+                x,
+                y,
+                tamanho,
+                particula.espessura * lado,
+                DrawRectangleParams { offset: vec2(0.0, 0.5), rotation: particula.angulo, color: cor },
+            ),
+            Forma::Veu => draw_rectangle(area.x, area.y, area.w, area.h, cor),
+        }
     }
 }
 
@@ -728,6 +803,9 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, PAINEL);
     desenhar_fundos_de_realce(app, tabuleiro);
     desenhar_pedras(app, sprites, tabuleiro);
+    if let Some((passo, t)) = app.passo_atual() {
+        desenhar_particulas(passo, t, tabuleiro);
+    }
     desenhar_contornos_de_realce(app, tabuleiro);
     if let Some(aviso) = &painel.aviso {
         desenhar_aviso(aviso, tela);

@@ -15,7 +15,7 @@ use crate::linha::{montar, Passo, Reprodutor};
 use crate::preferencias::{estado_da_respiracao, Canal, EstadoRespiracao, Intensidade, Preferencias};
 use crate::salvar::{Origem, Salvador};
 use crate::vibracao::{toque_da_jogada, Toque};
-use prisma_engine::{lcg_random, level_goal, Event, Game, Mode, TileKind, SIZE};
+use prisma_engine::{lcg_random, level_goal, Board, Event, Game, Mode, MoveResult, TileKind, SIZE};
 
 /// Quanto tempo a Dica fica destacada.
 const DICA_MS: f32 = 2600.0;
@@ -1087,6 +1087,19 @@ impl App {
             let linha = format!("PRISMA_M1 fim pontos={} nivel={}", jogo.score, jogo.level);
             self.registros.push(linha);
         }
+    }
+
+    /// Só para as cenas de foto: anima o resultado de um atalho do motor (`cheat_*`), que não vem
+    /// de uma troca de pedras. `antes` é o tabuleiro de antes do atalho. Os passos são os de uma
+    /// jogada, menos a troca (que não existe no atalho).
+    pub fn animar_atalho(&mut self, antes: Board, resultado: &MoveResult) {
+        let base = self.estagio();
+        let melhor_antes = self.melhor_parado();
+        let nivel = self.jogo().level;
+        let mut passos = montar(antes, 0, 0, resultado, nivel, Intensidade::Padrao);
+        passos.retain(|passo| !matches!(passo, Passo::Troca { .. }));
+        self.animacao = Some(EmAndamento::nova(Reprodutor::novo(passos), base, None, melhor_antes));
+        self.observar(true);
     }
 
     /// O passo da animação em andamento e há quantos milissegundos ele começou.

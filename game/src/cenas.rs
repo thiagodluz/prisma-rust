@@ -8,9 +8,9 @@ use crate::app::{App, Botao};
 use crate::formato::Recordes;
 use crate::input::Evento;
 use crate::layout::{cell_rect, tela_jogo, TelaJogo};
-use crate::linha::{duracao_ms, Passo};
+use crate::linha::{duracao_ms, Passo, TipoVisual};
 use crate::preferencias::{Canal, Preferencias, Respiracao};
-use prisma_engine::SIZE;
+use prisma_engine::{MoveResult, TileKind, SIZE};
 
 /// A tela de referência das cenas. Os toques são montados a partir dela; como o resultado
 /// (qual casa foi tocada) não depende do tamanho da tela, a cena serve para qualquer tamanho.
@@ -44,7 +44,7 @@ fn jogada_boa(app: &mut App) {
 }
 
 /// Deixa a animação andar (de 1 em 1 ms) até o passo atual ser do tipo procurado.
-fn avancar_ate(app: &mut App, procurado: fn(&Passo) -> bool) {
+fn avancar_ate(app: &mut App, procurado: impl Fn(&Passo) -> bool) {
     for _ in 0..20_000 {
         if app.passo_atual().is_some_and(|(passo, _)| procurado(passo)) {
             return;
@@ -63,6 +63,34 @@ fn avancar_ate_a_fracao(app: &mut App, fracao: f32) {
     app.avancar((fracao * duracao - decorrido).max(0.0));
 }
 
+/// Prepara uma cena de partículas: `atalho` mexe no motor (um atalho `cheat_*`) e devolve o
+/// resultado, que a cena anima; depois a animação anda até uma limpeza em que o efeito
+/// `procurado` aparece. A foto fica `ms` milissegundos depois do começo desse passo.
+fn cena_de_particulas(
+    app: &mut App,
+    atalho: impl FnOnce(&mut prisma_engine::Game) -> MoveResult,
+    procurado: TipoVisual,
+    ms: f32,
+) {
+    let antes = app.jogo().board;
+    let resultado = atalho(app.jogo_mut());
+    app.animar_atalho(antes, &resultado);
+    let tem_o_efeito = |passo: &Passo| match passo {
+        Passo::Limpeza { visuais, .. } => visuais.iter().any(|visual| visual.tipo == procurado),
+        _ => false,
+    };
+    avancar_ate(app, tem_o_efeito);
+    let decorrido = app.passo_atual().map_or(0.0, |(_, decorrido)| decorrido);
+    app.avancar((ms - decorrido).max(0.0));
+}
+
+/// Troca a pedra da casa 27 por uma especial de `tipo` e explode o tabuleiro (cada especial
+/// dispara uma vez), do jeito que o atalho de testes do motor faz.
+fn explodir_com_especial(jogo: &mut prisma_engine::Game, tipo: TileKind) -> MoveResult {
+    assert!(jogo.cheat_spawn_special(27, tipo), "a casa 27 aceita a pedra especial");
+    jogo.cheat_explode()
+}
+
 /// As escolhas de som das cenas de som: volumes de fábrica, música ligada, ambiente desligado
 /// (assim a foto mostra os dois estados), respiração no ritmo "4 s inspirar · 4 s expirar" e
 /// vibração ligada (as cenas de som são de um aparelho com vibrador: ver `com_vibrador`).
@@ -77,7 +105,8 @@ fn recordes_da_cena() -> Recordes {
 
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
 /// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
-/// `som-classico`, `som-aviso`, `respiracao`, `recordes` e `creditos`.
+/// `som-classico`, `som-aviso`, `respiracao`, `recordes`, `creditos`, `particulas-pulso`,
+/// `particulas-raio`, `particulas-espectro` e `particulas-supernova`.
 pub fn cena(nome: &str) -> Option<App> {
     let mut app = App::com_sementes(7, 9);
     match nome {
@@ -156,6 +185,24 @@ pub fn cena(nome: &str) -> Option<App> {
             app = app.com_preferencias(preferencias_da_cena());
             app.avancar(2000.0);
         }
+        // As partículas de cada especial, no meio da limpeza em que ela dispara. As cenas usam os
+        // atalhos do motor (como `nivel` e `fim`), porque achar jogadas reais que façam cada uma
+        // dependeria da sorte; o que se vê na tela é o mesmo.
+        "particulas-pulso" => {
+            cena_de_particulas(&mut app, |jogo| explodir_com_especial(jogo, TileKind::Burst), TipoVisual::Pulso, 60.0)
+        }
+        "particulas-raio" => {
+            cena_de_particulas(&mut app, |jogo| explodir_com_especial(jogo, TileKind::Cross), TipoVisual::Raio, 60.0)
+        }
+        "particulas-espectro" => cena_de_particulas(
+            &mut app,
+            |jogo| explodir_com_especial(jogo, TileKind::Spectrum),
+            TipoVisual::Espectro,
+            60.0,
+        ),
+        "particulas-supernova" => {
+            cena_de_particulas(&mut app, |jogo| jogo.cheat_supernova(27), TipoVisual::Supernova, 330.0)
+        }
         _ => return None,
     }
     Some(app)
@@ -169,7 +216,7 @@ mod tests {
     use crate::preferencias::Fase;
     use prisma_engine::Mode;
 
-    const NOMES: [&str; 16] = [
+    const NOMES: [&str; 20] = [
         "inicio",
         "selecionada",
         "dica",
@@ -186,6 +233,10 @@ mod tests {
         "som-aviso",
         "recordes",
         "creditos",
+        "particulas-pulso",
+        "particulas-raio",
+        "particulas-espectro",
+        "particulas-supernova",
     ];
 
     fn passo_da_cena(nome: &str) -> &'static str {
@@ -292,6 +343,33 @@ mod tests {
             let (passo, decorrido) = app.passo_atual().expect("em andamento");
             let duracao = crate::linha::duracao_ms(passo);
             assert!(decorrido > 0.1 * duracao && decorrido < 0.9 * duracao, "cena {nome}: {decorrido} de {duracao}");
+        }
+    }
+
+    #[test]
+    fn cenas_de_particulas_existem_e_estao_no_passo_de_limpeza_certo() {
+        use crate::linha::TipoVisual;
+
+        let esperadas = [
+            ("particulas-pulso", TipoVisual::Pulso),
+            ("particulas-raio", TipoVisual::Raio),
+            ("particulas-espectro", TipoVisual::Espectro),
+            ("particulas-supernova", TipoVisual::Supernova),
+        ];
+        for (nome, tipo) in esperadas {
+            let app = cena(nome).unwrap_or_else(|| panic!("a cena {nome} existe"));
+            let (passo, decorrido) = app.passo_atual().unwrap_or_else(|| panic!("{nome}: há um passo em andamento"));
+            let Passo::Limpeza { visuais, .. } = passo else { panic!("{nome}: o passo é de limpeza") };
+            assert!(visuais.iter().any(|visual| visual.tipo == tipo), "{nome}: falta o visual {tipo:?} em {visuais:?}");
+            // No meio do passo: as partículas já saíram e ainda não sumiram.
+            let duracao = crate::linha::duracao_ms(passo);
+            assert!(decorrido > 0.1 * duracao && decorrido < 0.9 * duracao, "{nome}: {decorrido} de {duracao}");
+            let (celulas, intensidade) = match passo {
+                Passo::Limpeza { celulas, intensidade, .. } => (celulas, *intensidade),
+                _ => unreachable!(),
+            };
+            let lista = crate::particulas::particulas(visuais, celulas, decorrido, intensidade);
+            assert!(lista.iter().any(|particula| particula.alfa > 0.2), "{nome}: tem partícula bem visível");
         }
     }
 
