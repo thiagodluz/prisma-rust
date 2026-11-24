@@ -9,7 +9,7 @@ use macroquad::prelude::*;
 use prisma_engine::{position, Board, Tile, SIZE};
 
 use crate::app::{App, Folha, Painel};
-use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, SPRITE_RATIO};
+use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, MARCA_PNG, SPRITE_RATIO};
 use crate::texto::{self, Peso};
 use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
 use crate::icones::{self, Linha};
@@ -84,6 +84,11 @@ struct Formas {
     solida: Forma,
     /// O fundo dos botões de baixo (Embaralhar, Dica, Novo jogo).
     botao: Forma,
+    /// O fundo dos botões quadrados do topo (♫ e ≡), e o dele quando a folha está aberta.
+    botao_icone: Forma,
+    botao_icone_ativo: Forma,
+    /// O logo do topo.
+    marca: Texture2D,
 }
 
 /// Uma cor `[r, g, b, a]` de `formas.rs` como `Color` do Macroquad.
@@ -97,6 +102,8 @@ impl Formas {
     fn load() -> Formas {
         let fundo = Texture2D::from_file_with_format(FUNDO_JPG, None);
         fundo.set_filter(FilterMode::Linear);
+        let marca = Texture2D::from_file_with_format(MARCA_PNG, None);
+        marca.set_filter(FilterMode::Linear);
         let sem_borda = rgba(0);
         let casa = |degrade| Receita {
             lado: 64,
@@ -142,6 +149,27 @@ impl Formas {
                 sombra: 0,
                 cor_da_sombra: sem_borda,
             }),
+            botao_icone: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff27),
+                degrade: [rgba(0xffffff10); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            botao_icone_ativo: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xc4b2ffff),
+                degrade: [rgba(0xac9aff38); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            marca,
             botao: Forma::nova(Receita {
                 lado: 64,
                 raio: 12,
@@ -604,27 +632,7 @@ fn desenhar_contornos_de_realce(app: &App, area: Rect) {
 /// As abas, o painel de números e a barra de progresso.
 fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Formas) {
     let t = tela.texto;
-    let zen = app.modo() == prisma_engine::Mode::Zen;
-    botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
-    botao_da_tela(tela.aba_classico, "Clássico", 1.05 * t, if zen { ABA_INATIVA } else { ABA_ATIVA }, true);
-    // O ♪ vira ✕ com a folha de Som aberta, e o ≡ vira ✕ com a do Menu aberta. Os quatro são
-    // desenhados com formas, não com letras: assim não dependem de a fonte embutida ter esses símbolos.
-    let som_aberto = app.folha() == Some(Folha::Som);
-    botao_da_tela(tela.botao_som, "", t, if som_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
-    let icone = encolher(tela.botao_som, 0.2 * tela.botao_som.h);
-    if som_aberto {
-        desenhar_xis(icone, WHITE);
-    } else {
-        desenhar_nota(icone, WHITE);
-    }
-    let menu_aberto = app.folha().is_some_and(Folha::e_do_menu);
-    botao_da_tela(tela.botao_menu, "", t, if menu_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
-    let icone = encolher(tela.botao_menu, 0.2 * tela.botao_menu.h);
-    if menu_aberto {
-        desenhar_xis(icone, WHITE);
-    } else {
-        desenhar_hamburguer(icone, WHITE);
-    }
+    desenhar_topo(formas, app, tela);
 
     // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita.
     let cartao = tela.cartao_pontos;
@@ -650,6 +658,66 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
     escrever(&painel.rotulo, tela.rotulo, 0.78 * t, cor_de(rgba(0x9996b9ff)), Alinhamento::Direita);
     if let Some(ganho) = &painel.ganho {
         escrever(ganho, tela.rotulo, 0.9 * t, DESTAQUE, Alinhamento::Esquerda);
+    }
+}
+
+/// A linha de topo: o logo e "PRISMA" à esquerda; à direita os botões ♫ e ≡. O ♫ vira ✕ com a
+/// folha de Som aberta, e o ≡ vira ✕ com a do Menu aberta. Os símbolos são desenhados com formas,
+/// não com letras: a Roboto não tem o ♫.
+fn desenhar_topo(formas: &Formas, app: &App, tela: &TelaJogo) {
+    desenhar_marca(formas, tela.marca);
+    let som_aberto = app.folha() == Some(Folha::Som);
+    let menu_aberto = app.folha().is_some_and(Folha::e_do_menu);
+    for (area, aberto) in [(tela.botao_som, som_aberto), (tela.botao_menu, menu_aberto)] {
+        let forma = if aberto { &formas.botao_icone_ativo } else { &formas.botao_icone };
+        desenhar_forma(forma, area, 0.316 * area.h, 0.0);
+    }
+    let cor = if som_aberto { WHITE } else { cor_de(rgba(0xd7d5f8ff)) };
+    let icone = encolher(tela.botao_som, 0.26 * tela.botao_som.h);
+    if som_aberto {
+        desenhar_xis(icone, cor);
+    } else {
+        desenhar_nota(icone, cor);
+    }
+    let cor = if menu_aberto { WHITE } else { cor_de(rgba(0xd7d5f8ff)) };
+    let icone = encolher(tela.botao_menu, 0.26 * tela.botao_menu.h);
+    if menu_aberto {
+        desenhar_xis(icone, cor);
+    } else {
+        desenhar_hamburguer(icone, cor);
+    }
+}
+
+/// O logo (quadrado, da altura da faixa) e "PRISMA" em negrito, com letras espaçadas (0,22 em).
+fn desenhar_marca(formas: &Formas, marca: Rect) {
+    if marca.w <= 0.0 || marca.h <= 0.0 {
+        return;
+    }
+    let lado = marca.h;
+    draw_texture_ex(
+        &formas.marca,
+        marca.x,
+        marca.y,
+        WHITE,
+        DrawTextureParams { dest_size: Some(vec2(lado, lado)), ..Default::default() },
+    );
+    let texto_x = marca.x + lado + 0.26 * lado;
+    let disponivel = marca.x + marca.w - texto_x;
+    let mut tamanho = 0.5 * lado;
+    let largura = |tamanho: f32| -> f32 {
+        "PRISMA".chars().map(|letra| texto::medir(&letra.to_string(), tamanho, Peso::Negrito).width + 0.22 * tamanho).sum::<f32>() - 0.22 * tamanho
+    };
+    tamanho = texto::tamanho_que_cabe(largura(tamanho), disponivel, tamanho);
+    if tamanho < 1.0 {
+        return;
+    }
+    let referencia = texto::medir("Ag", tamanho, Peso::Negrito);
+    let y = marca.y + (marca.h - referencia.height) / 2.0 + referencia.offset_y;
+    let mut x = texto_x;
+    for letra in "PRISMA".chars() {
+        let letra = letra.to_string();
+        texto::desenhar(&letra, x, y, tamanho, cor_de(rgba(0xf8f7ffff)), Peso::Negrito);
+        x += texto::medir(&letra, tamanho, Peso::Negrito).width + 0.22 * tamanho;
     }
 }
 

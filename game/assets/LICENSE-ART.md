@@ -11,6 +11,7 @@ As imagens desta pasta são **adaptações** das imagens do Prisma em JS
 | `cross-0.png` a `cross-6.png` | `cross-atlas.webp` (Raio) |
 | `spectrum.png` | `spectrum-gem.webp` (Espectro) |
 | `prisma-bg.jpg` | `prisma-bg.jpg` (foto de fundo do jogo; copiada sem alteração) |
+| `marca.png` | `icon-192.png` (logo do topo; copiada sem alteração) |
 
 ## O que foi alterado
 
