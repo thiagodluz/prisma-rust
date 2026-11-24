@@ -11,6 +11,7 @@ use prisma_engine::{position, Board, Tile, SIZE};
 use crate::app::{App, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, SPRITE_RATIO};
 use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
+use crate::icones::{self, Linha};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
 use crate::linha::{
     deslocamento_troca, embaralhar_alfa, fusao_da_casa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa,
@@ -80,6 +81,8 @@ struct Formas {
     cartao: Forma,
     /// Um retângulo arredondado branco e liso, para ser tingido na hora de desenhar.
     solida: Forma,
+    /// O fundo dos botões de baixo (Embaralhar, Dica, Novo jogo).
+    botao: Forma,
 }
 
 /// Uma cor `[r, g, b, a]` de `formas.rs` como `Color` do Macroquad.
@@ -135,6 +138,16 @@ impl Formas {
                 cor_da_borda: rgba(0xffffff17),
                 degrade: [rgba(0xffffff0d); 3],
                 angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            botao: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xb8a7ea70),
+                degrade: [rgba(0x60538763), rgba(0x443e6988), rgba(0x292a4cad)],
+                angulo: 155.0,
                 sombra: 0,
                 cor_da_sombra: sem_borda,
             }),
@@ -601,7 +614,7 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
     desenhar_forma(&formas.cartao, cartao, 0.045 * cartao.w, 0.0);
     for (rotulo, valor, area, cor_do_valor, alinhamento) in [
         ("PONTOS", &painel.pontos, tela.pontos, WHITE, Alinhamento::Esquerda),
-        ("NÍVEL", &painel.nivel, tela.nivel, cor_de(rgba(0xa2eddd_ff)), Alinhamento::Centro),
+        ("NÍVEL", &painel.nivel, tela.nivel, cor_de(rgba(0xa2edddff)), Alinhamento::Centro),
         ("MELHOR", &painel.melhor, tela.melhor, WHITE, Alinhamento::Direita),
     ] {
         let em_cima = Rect { h: 0.38 * area.h, ..area };
@@ -715,6 +728,42 @@ fn desenhar_dialogo(tela: &TelaJogo) {
 /// `area` com `margem` pixels a menos em cada lado.
 fn encolher(area: Rect, margem: f32) -> Rect {
     Rect { x: area.x + margem, y: area.y + margem, w: (area.w - 2.0 * margem).max(0.0), h: (area.h - 2.0 * margem).max(0.0) }
+}
+
+/// Os desenhos dos três botões de baixo.
+#[derive(Clone, Copy)]
+enum Icone {
+    Embaralhar,
+    Dica,
+    NovoJogo,
+}
+
+/// Um botão de baixo: fundo arredondado, o ícone no alto e o rótulo embaixo. `ativo` falso deixa
+/// tudo a 40% de opacidade.
+fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icone, tamanho: f32, ativo: bool) {
+    let alfa = if ativo { 1.0 } else { 0.4 };
+    desenhar_forma_tingida(&formas.botao, area, 0.21 * area.h, 0.0, com_alfa(WHITE, alfa));
+    let cor = com_alfa(cor_de(rgba(0xeeeaffff)), alfa);
+    let lado = 0.38 * area.h;
+    let quadrado = Rect { x: area.x + (area.w - lado) / 2.0, y: area.y + 0.12 * area.h, w: lado, h: lado };
+    let linhas: Vec<Linha> = match icone {
+        Icone::Embaralhar => icones::embaralhar(quadrado),
+        Icone::Dica => icones::faisca(quadrado),
+        Icone::NovoJogo => icones::novo_jogo(quadrado),
+    };
+    let grossura = 0.07 * area.h;
+    for linha in &linhas {
+        for par in linha.windows(2) {
+            draw_line(par[0].0, par[0].1, par[1].0, par[1].1, grossura, cor);
+        }
+        // Uma bolinha em cada ponto arredonda as quinas e as pontas.
+        for &(x, y) in linha {
+            draw_circle(x, y, grossura / 2.0, cor);
+        }
+    }
+    let margem = 0.06 * area.w;
+    let embaixo = Rect { x: area.x + margem, y: area.y + 0.54 * area.h, w: area.w - 2.0 * margem, h: 0.38 * area.h };
+    escrever(rotulo, embaixo, tamanho, cor, Alinhamento::Centro);
 }
 
 /// Uma colcheia (♪) dentro do quadrado `area`: cabeça redonda, haste e bandeirinha.
@@ -1023,10 +1072,10 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     // Os botões de baixo. Com a partida acabada, a Dica fica apagada.
     let t = tela.texto;
     if let (true, Some(embaralhar)) = (painel.embaralhar_visivel, tela.botao_embaralhar) {
-        botao_da_tela(embaralhar, "Embaralhar", t, ABA_INATIVA, true);
+        desenhar_botao_de_acao(&sprites.formas, embaralhar, "Embaralhar", Icone::Embaralhar, t, true);
     }
-    botao_da_tela(tela.botao_dica, "Dica", t, ABA_INATIVA, painel.dica_ativa);
-    botao_da_tela(tela.botao_novo_jogo, "Novo jogo", t, ABA_INATIVA, true);
+    desenhar_botao_de_acao(&sprites.formas, tela.botao_dica, "Dica", Icone::Dica, t, painel.dica_ativa);
+    desenhar_botao_de_acao(&sprites.formas, tela.botao_novo_jogo, "Novo jogo", Icone::NovoJogo, t, true);
 
     desenhar_guia_de_respiracao(app, tela);
 
