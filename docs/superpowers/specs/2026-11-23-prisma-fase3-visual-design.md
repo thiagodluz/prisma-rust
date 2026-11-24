@@ -67,7 +67,7 @@ Minhas (ele pode corrigir ao ler):
 
 - Contas puras com teste: a geometria nova (`layout.rs`) cabe em todos os `CELULARES` e `TELAS`, sem retângulos que se cruzem; as texturas de formas têm canto transparente e centro cheio (testes sem janela).
 - Fotos com `--cena` nos dois tamanhos, lado a lado com os prints do JS.
-- O CI do Android já existente (fotos da fase 11 e demais) tem de continuar verde; a fase do emulador ganha a foto da tela principal nova.
+- O CI do Android já existente (fotos da fase 11 e demais) tem de continuar verde; as fotos da tela principal que o celular virtual já tira (`1-zen-inicio`, `2-zen-dica`, `4-zen-fim`, `5-classico`) passam a mostrar a tela nova.
 - Mutação nos testes novos, como nos marcos anteriores.
 
 ## 7. Fica para quem constrói
