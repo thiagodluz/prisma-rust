@@ -117,7 +117,12 @@ pub fn tela_diagnostico(largura: f32, altura: f32) -> TelaDiagnostico {
 // ---- Tela de jogo ----------------------------------------------------------------------------
 
 /// Alturas das peças, em frações da unidade `u` (o menor lado da tela).
+/// A altura das abas da folha do Menu (a tela de jogo não tem mais abas).
 const ABAS_ALTURA: f32 = 0.085;
+/// A linha de topo (marca e botões ♫ e ≡): os botões são quadrados dessa altura (38 px em 360).
+const TOPO_ALTURA: f32 = 0.105;
+/// Os cartões de modo (Zen e Clássico), embaixo de tudo.
+const MODOS_ALTURA: f32 = 0.11;
 const PAINEL_ALTURA: f32 = 0.11;
 const BARRA_ALTURA: f32 = 0.022;
 const ROTULO_ALTURA: f32 = 0.05;
@@ -236,6 +241,8 @@ pub struct TelaJogo {
     /// A barra de progresso do nível e a linha de texto logo abaixo dela.
     pub barra: Rect,
     pub rotulo: Rect,
+    /// A marca do topo (logo + PRISMA), à esquerda da linha de topo; sem toque.
+    pub marca: Rect,
     /// O cartão arredondado que guarda as três colunas do painel (a largura toda do tabuleiro).
     pub cartao_pontos: Rect,
     /// O tabuleiro, ou melhor, a moldura dele: sempre um quadrado, com a largura de tudo que fica
@@ -278,6 +285,7 @@ impl TelaJogo {
         melhor: Rect::VAZIO,
         barra: Rect::VAZIO,
         rotulo: Rect::VAZIO,
+        marca: Rect::VAZIO,
         cartao_pontos: Rect::VAZIO,
         tabuleiro: Rect::VAZIO,
         grade: Rect::VAZIO,
@@ -298,8 +306,8 @@ impl TelaJogo {
 
 /// Posição de tudo na tela de jogo.
 ///
-/// De cima para baixo: abas (com o botão ♪ ao lado), painel, barra, rótulo, tabuleiro, botões
-/// e a linha do guia de respiração. O conjunto fica centrado na vertical. O tabuleiro é o maior
+/// De cima para baixo: linha de topo (marca, ♫ e ≡), painel, barra, rótulo, tabuleiro, botões,
+/// a linha do guia de respiração e os cartões de modo (`aba_zen` e `aba_classico`). O conjunto fica centrado na vertical. O tabuleiro é o maior
 /// quadrado que cabe: no máximo 94% da largura e no máximo a altura que sobra depois de
 /// reservar o resto (inclusive a linha do guia, que no Clássico fica vazia, para o tabuleiro
 /// não mudar de lugar entre os modos). As outras peças têm a mesma largura do tabuleiro, para
@@ -323,18 +331,19 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     }
     let unidade = largura.min(altura);
     let espaco = ESPACO * unidade;
-    let abas_h = ABAS_ALTURA * unidade;
+    let topo_h = TOPO_ALTURA * unidade;
+    let modos_h = MODOS_ALTURA * unidade;
     let painel_h = PAINEL_ALTURA * unidade;
     let barra_h = BARRA_ALTURA * unidade;
     let rotulo_h = ROTULO_ALTURA * unidade;
     let botoes_h = BOTOES_ALTURA * unidade;
     let guia_h = GUIA_ALTURA * unidade;
 
-    // Tudo menos o tabuleiro: seis peças e seis espaços entre as sete peças.
-    let fixo = abas_h + painel_h + barra_h + rotulo_h + botoes_h + guia_h + 6.0 * espaco;
+    // Tudo menos o tabuleiro: sete peças e sete espaços entre as oito peças.
+    let fixo = topo_h + painel_h + barra_h + rotulo_h + botoes_h + guia_h + modos_h + 7.0 * espaco;
     // O tabuleiro nunca passa da largura máxima nem da altura livre (reservando também uma
     // margem de um espaço em cima e outra embaixo). A altura livre é sempre positiva, porque
-    // `fixo` mais as margens é 0,597 do menor lado, que nunca passa da altura.
+    // `fixo` mais as margens é 0,747 do menor lado, que nunca passa da altura.
     let lado = (LARGURA_MAXIMA * largura).min(altura - fixo - 2.0 * espaco);
 
     let conjunto = fixo + lado;
@@ -343,8 +352,8 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
 
     // As posições de cima, descendo peça a peça.
     let mut y = (altura - conjunto) / 2.0;
-    let abas_y = y;
-    y += abas_h + espaco;
+    let topo_y = y;
+    y += topo_h + espaco;
     let painel_y = y;
     y += painel_h + espaco;
     let barra_y = y;
@@ -356,9 +365,13 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     let botoes_y = y;
     y += botoes_h + espaco;
     let guia_y = y;
+    y += guia_h + espaco;
+    let modos_y = y;
 
-    // Abas: duas metades com um espaço no meio, e os botões ♪ e ≡ (quadrados) no fim da linha.
-    let aba_w = (lado - 2.0 * abas_h - 3.0 * espaco) / 2.0;
+    // Linha de topo: a marca ocupa o que sobra à esquerda dos botões ♫ e ≡ (quadrados, no fim).
+    let marca_w = lado - 2.0 * topo_h - 2.0 * espaco;
+    // Cartões de modo: duas metades com um espaço no meio.
+    let modo_w = (lado - espaco) / 2.0;
     // Painel: um cartão com três colunas coladas: os pontos à esquerda, o nível no meio e o
     // melhor à direita, com uma folga nas laterais do cartão.
     let util = lado - 2.0 * CARTAO_FOLGA * lado;
@@ -406,10 +419,11 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     let escolha_y = dialogo.y + dialogo_h - 0.08 * dialogo_h - escolha_h;
 
     TelaJogo {
-        aba_zen: faixa(esquerda, abas_y, aba_w, abas_h),
-        aba_classico: faixa(esquerda + aba_w + espaco, abas_y, aba_w, abas_h),
-        botao_som: faixa(esquerda + lado - 2.0 * abas_h - espaco, abas_y, abas_h, abas_h),
-        botao_menu: faixa(esquerda + lado - abas_h, abas_y, abas_h, abas_h),
+        marca: faixa(esquerda, topo_y, marca_w, topo_h),
+        aba_zen: faixa(esquerda, modos_y, modo_w, modos_h),
+        aba_classico: faixa(esquerda + modo_w + espaco, modos_y, modo_w, modos_h),
+        botao_som: faixa(esquerda + lado - 2.0 * topo_h - espaco, topo_y, topo_h, topo_h),
+        botao_menu: faixa(esquerda + lado - topo_h, topo_y, topo_h, topo_h),
         cartao_pontos: faixa(esquerda, painel_y, lado, painel_h),
         pontos: faixa(pontos_x, painel_y, pontos_w, painel_h),
         nivel: faixa(nivel_x, painel_y, nivel_w, painel_h),
@@ -912,12 +926,13 @@ mod tests_tela_jogo {
     fn ordem_vertical() {
         for (largura, altura) in TELAS {
             let tela = tela_jogo(largura, altura, true);
-            assert!(tela.aba_zen.y < tela.pontos.y, "{largura}x{altura}");
+            assert!(tela.marca.y < tela.pontos.y, "{largura}x{altura}");
             assert!(tela.pontos.y < tela.barra.y);
             assert!(tela.barra.y < tela.rotulo.y);
             assert!(tela.rotulo.y < tela.tabuleiro.y);
             assert!(tela.tabuleiro.y < tela.botao_dica.y);
-            // As abas e as colunas do painel ficam na ordem da esquerda para a direita.
+            assert!(tela.botao_dica.y + tela.botao_dica.h <= tela.aba_zen.y, "os cartões de modo ficam depois dos botões");
+            // Os cartões de modo e as colunas do painel ficam na ordem da esquerda para a direita.
             assert!(tela.aba_zen.x < tela.aba_classico.x);
             assert!(tela.pontos.x < tela.nivel.x && tela.nivel.x < tela.melhor.x);
         }
@@ -937,10 +952,9 @@ mod tests_tela_jogo {
     fn conjunto_fica_centrado_na_vertical() {
         for (largura, altura) in TELAS {
             let tela = tela_jogo(largura, altura, true);
-            let em_cima = tela.aba_zen.y;
-            // O conjunto vai das abas até o fim da linha da respiração, que fica reservada logo
-            // abaixo dos botões (e continua reservada, vazia, no Clássico).
-            let embaixo = altura - (tela.guia_respiracao.y + tela.guia_respiracao.h);
+            let em_cima = tela.marca.y;
+            // O conjunto vai da linha de topo até o fim dos cartões de modo.
+            let embaixo = altura - (tela.aba_zen.y + tela.aba_zen.h);
             assert!((em_cima - embaixo).abs() < 1e-2, "{largura}x{altura}: {em_cima} em cima, {embaixo} embaixo");
         }
     }
@@ -962,6 +976,7 @@ mod tests_tela_jogo {
             // O tabuleiro e o resto do layout não mudam de lugar.
             assert_eq!(sem.tabuleiro, com.tabuleiro);
             assert_eq!(sem.aba_zen, com.aba_zen);
+            assert_eq!(sem.marca, com.marca);
         }
     }
 
@@ -977,6 +992,7 @@ mod tests_tela_jogo {
                 assert_eq!(tela.botao_embaralhar, None);
                 assert_eq!(tela.cartao_fim, vazio);
                 assert_eq!(tela.dialogo, vazio);
+                assert_eq!(tela.marca, vazio);
                 assert_eq!(tela.grade, vazio);
                 assert_eq!(tela.cartao_pontos, vazio);
                 assert_eq!(tela.texto, 0.0);
@@ -1157,21 +1173,61 @@ mod tests_tela_jogo {
     }
 
     #[test]
-    fn botao_som_fica_ao_lado_das_abas_e_nao_as_cobre() {
+    fn a_linha_de_topo_tem_marca_e_dois_botoes() {
         for (largura, altura) in TELAS {
             for zen in [true, false] {
                 let tela = tela_jogo(largura, altura, zen);
-                let som = tela.botao_som;
-                // Na mesma linha das abas e quadrado.
-                assert!((som.y - tela.aba_zen.y).abs() < 1e-3 && (som.h - tela.aba_zen.h).abs() < 1e-3, "{largura}x{altura}");
-                assert!((som.w - som.h).abs() < 1e-3, "{largura}x{altura}: o botão ♪ é quadrado");
-                // À direita das duas abas, sem cobri-las, e no fim da largura do tabuleiro.
-                assert!(som.x >= tela.aba_classico.x + tela.aba_classico.w, "{largura}x{altura}: ♪ cobre a aba do Clássico");
-                assert!(!se_cruzam(som, tela.aba_zen) && !se_cruzam(som, tela.aba_classico));
-                assert!(som.x + som.w <= tela.botao_menu.x + 1e-3, "{largura}x{altura}: o ♪ fica antes do ≡");
-                // As abas continuam do mesmo tamanho uma da outra, com largura de verdade.
-                assert!((tela.aba_zen.w - tela.aba_classico.w).abs() < 1e-3 && tela.aba_zen.w > 0.0);
+                let (marca, som, menu) = (tela.marca, tela.botao_som, tela.botao_menu);
+                // Na mesma faixa vertical, os botões quadrados.
+                assert!((som.y - marca.y).abs() < 1e-3 && (menu.y - marca.y).abs() < 1e-3, "{largura}x{altura}");
+                assert!((som.h - marca.h).abs() < 1e-3 && (menu.h - marca.h).abs() < 1e-3, "{largura}x{altura}");
+                assert!((som.w - som.h).abs() < 1e-3 && (menu.w - menu.h).abs() < 1e-3, "{largura}x{altura}: botões quadrados");
+                assert!(marca.w > 0.0, "{largura}x{altura}: a marca tem largura");
+                // Marca, som e menu, da esquerda para a direita, sem se cruzar.
+                assert!(marca.x + marca.w <= som.x + 1e-3 && som.x + som.w <= menu.x + 1e-3, "{largura}x{altura}");
+                assert!(!se_cruzam(marca, som) && !se_cruzam(som, menu) && !se_cruzam(marca, menu));
+                // O ≡ termina na margem direita do tabuleiro e a marca começa na esquerda.
+                assert!((menu.x + menu.w - (tela.tabuleiro.x + tela.tabuleiro.w)).abs() < 1e-2, "{largura}x{altura}");
+                assert!((marca.x - tela.tabuleiro.x).abs() < 1e-2, "{largura}x{altura}");
             }
+        }
+    }
+
+    #[test]
+    fn os_cartoes_de_modo_ficam_embaixo() {
+        for (largura, altura) in TELAS {
+            for zen in [true, false] {
+                let tela = tela_jogo(largura, altura, zen);
+                let (zen_r, classico) = (tela.aba_zen, tela.aba_classico);
+                assert!(zen_r.y >= tela.botao_dica.y + tela.botao_dica.h, "{largura}x{altura}: depois dos botões");
+                assert!(zen_r.y + zen_r.h <= altura + 1e-3, "{largura}x{altura}: dentro da tela");
+                assert!((zen_r.y - classico.y).abs() < 1e-3 && (zen_r.h - classico.h).abs() < 1e-3);
+                assert!((zen_r.w - classico.w).abs() < 1e-3 && zen_r.w > 0.0 && zen_r.h > 0.0);
+                assert!(!se_cruzam(zen_r, classico) && zen_r.x < classico.x, "{largura}x{altura}");
+                assert!((zen_r.x - tela.tabuleiro.x).abs() < 1e-2 && (classico.x + classico.w - (tela.tabuleiro.x + tela.tabuleiro.w)).abs() < 1e-2);
+                // Nada do resto da tela invade os cartões.
+                for (nome, outro) in [("marca", tela.marca), ("botao_som", tela.botao_som), ("botao_menu", tela.botao_menu), ("cartao_pontos", tela.cartao_pontos), ("barra", tela.barra), ("tabuleiro", tela.tabuleiro), ("botao_dica", tela.botao_dica), ("botao_novo_jogo", tela.botao_novo_jogo), ("guia_respiracao", tela.guia_respiracao)] {
+                    assert!(!se_cruzam(zen_r, outro) && !se_cruzam(classico, outro), "os cartões cruzam {nome} em {largura}x{altura}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_ordem_vertical_da_tela_nova_inclui_a_guia_e_os_modos() {
+        for (largura, altura) in TELAS {
+            let tela = tela_jogo(largura, altura, true);
+            assert!(tela.guia_respiracao.y + tela.guia_respiracao.h <= tela.aba_zen.y + 1e-3, "{largura}x{altura}: a guia fica antes dos cartões");
+        }
+    }
+
+    #[test]
+    fn a_casa_continua_confortavel_ao_toque() {
+        for (largura, altura) in CELULARES {
+            let tela = tela_jogo(largura, altura, true);
+            let casa = tela.grade.w / 8.0;
+            // 20 px em 360×640 e a mesma proporção nas telas maiores.
+            assert!(casa >= 20.0 * largura.min(altura) / 360.0, "{largura}x{altura}: casa de {casa}");
         }
     }
 
@@ -1294,27 +1350,24 @@ mod tests_tela_jogo {
     // ---- Botão ≡ e a folha do Menu (M4) ----
 
     #[test]
-    fn botao_menu_fica_ao_lado_do_som_sem_cobrir_as_abas() {
+    fn botao_menu_fica_ao_lado_do_som_sem_cobrir_nada() {
         for (largura, altura) in CELULARES.into_iter().chain(TELAS) {
             for zen in [true, false] {
                 let tela = tela_jogo(largura, altura, zen);
                 let (menu, som) = (tela.botao_menu, tela.botao_som);
                 assert!(menu.w > 0.0 && menu.h > 0.0, "{largura}x{altura}");
-                // Quadrado, na linha das abas e do mesmo tamanho do ♪.
+                // Quadrado, na linha de topo e do mesmo tamanho do ♫.
                 assert!((menu.w - menu.h).abs() < 1e-3, "{largura}x{altura}: o ≡ é quadrado");
-                assert!((menu.y - tela.aba_zen.y).abs() < 1e-3 && (menu.h - tela.aba_zen.h).abs() < 1e-3, "{largura}x{altura}");
+                assert!((menu.y - tela.marca.y).abs() < 1e-3 && (menu.h - tela.marca.h).abs() < 1e-3, "{largura}x{altura}");
                 assert!((menu.w - som.w).abs() < 1e-3 && (menu.y - som.y).abs() < 1e-3, "{largura}x{altura}");
                 // À direita do ♪, no fim da largura do tabuleiro, sem cruzar nada.
                 assert!(menu.x >= som.x + som.w, "{largura}x{altura}: o ≡ vem depois do ♪");
                 assert!((menu.x + menu.w - (tela.tabuleiro.x + tela.tabuleiro.w)).abs() < 1e-2, "{largura}x{altura}");
-                for (nome, outro) in [("aba_zen", tela.aba_zen), ("aba_classico", tela.aba_classico), ("botao_som", som)] {
+                for (nome, outro) in [("marca", tela.marca), ("aba_zen", tela.aba_zen), ("aba_classico", tela.aba_classico), ("botao_som", som)] {
                     assert!(!se_cruzam(menu, outro), "o ≡ cruza {nome} em {largura}x{altura}");
                 }
-                assert!(!se_cruzam(som, tela.aba_zen) && !se_cruzam(som, tela.aba_classico), "{largura}x{altura}");
-                // As abas ficam do mesmo tamanho uma da outra, com largura de verdade.
-                assert!((tela.aba_zen.w - tela.aba_classico.w).abs() < 1e-3 && tela.aba_zen.w > 0.0, "{largura}x{altura}");
-                // Nada da linha de cima passa do tabuleiro: abas, ♪ e ≡ somam a largura dele.
-                assert!(tela.aba_classico.x + tela.aba_classico.w <= som.x + 1e-3, "{largura}x{altura}");
+                // Nada da linha de cima passa do tabuleiro: marca, ♫ e ≡ somam a largura dele.
+                assert!(tela.marca.x + tela.marca.w <= som.x + 1e-3, "{largura}x{altura}");
             }
         }
     }
@@ -1423,8 +1476,9 @@ mod tests_tela_jogo {
 
     #[test]
     fn o_tabuleiro_nao_muda_com_o_botao_menu() {
-        // Posições do M3 (antes do botão ≡), calculadas à mão: o tabuleiro não se mexe.
-        for ((largura, altura), (x, y, lado)) in [((540.0, 960.0), (16.2, 263.19, 507.6)), ((720.0, 1280.0), (21.6, 350.92, 676.8))] {
+        // Posições da V2 (topo mais alto e cartões de modo embaixo), calculadas à mão: o tabuleiro
+        // não se mexe com o botão ≡ nem entre os modos.
+        for ((largura, altura), (x, y, lado)) in [((540.0, 960.0), (16.2, 233.49, 507.6)), ((720.0, 1280.0), (21.6, 311.32, 676.8))] {
             let tabuleiro = tela_jogo(largura, altura, true).tabuleiro;
             for (obtido, esperado, nome) in [(tabuleiro.x, x, "x"), (tabuleiro.y, y, "y"), (tabuleiro.w, lado, "lado")] {
                 assert!((obtido - esperado).abs() < 0.01, "{largura}x{altura}: {nome} = {obtido}, esperado {esperado}");
