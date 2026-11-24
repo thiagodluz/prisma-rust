@@ -53,7 +53,7 @@ pub fn desenhar(texto: &str, x: f32, y: f32, tamanho: f32, cor: Color, peso: Pes
 /// `largura_da_area`: o mesmo tamanho se já cabe, menor (na mesma proporção) se não cabe, e 0 se a
 /// área não tem largura ou algum número não vale.
 pub fn tamanho_que_cabe(largura_do_texto: f32, largura_da_area: f32, tamanho: f32) -> f32 {
-    if !(largura_da_area > 0.0) || !largura_do_texto.is_finite() || !tamanho.is_finite() {
+    if largura_da_area.is_nan() || largura_da_area <= 0.0 || !largura_do_texto.is_finite() || !tamanho.is_finite() {
         return 0.0;
     }
     if largura_do_texto <= largura_da_area {
