@@ -239,6 +239,14 @@ mod tests {
     }
 
     #[test]
+    fn o_canto_e_limitado_pela_menor_dimensao() {
+        // Faixa baixa e larga: o canto cabe na metade da altura, não da largura.
+        let fatias = nove_fatias(64.0, 12.0, Rect { x: 0.0, y: 0.0, w: 100.0, h: 10.0 }, 20.0);
+        assert_eq!((fatias[0].destino.w, fatias[0].destino.h), (5.0, 5.0));
+        assert!(fatias.iter().all(|f| f.destino.y >= 0.0 && f.destino.y + f.destino.h <= 10.0 + 1e-3));
+    }
+
+    #[test]
     fn destino_sem_tamanho_nao_da_nan() {
         for destino in [Rect::VAZIO, Rect { x: f32::NAN, y: 0.0, w: f32::NAN, h: 5.0 }, Rect { x: 0.0, y: 0.0, w: -4.0, h: 8.0 }] {
             for fatia in nove_fatias(64.0, 12.0, destino, 12.0) {
