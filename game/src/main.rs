@@ -10,6 +10,7 @@ mod contador;
 mod efeitos;
 mod formas;
 mod formato;
+mod icones;
 mod fundo;
 mod input;
 mod layout;
