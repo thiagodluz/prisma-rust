@@ -10,6 +10,7 @@ use prisma_engine::{position, Board, Tile, SIZE};
 
 use crate::app::{App, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, SPRITE_RATIO};
+use crate::texto::{self, Peso};
 use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
 use crate::icones::{self, Linha};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
@@ -248,6 +249,7 @@ impl Sprites {
             // `None`: a biblioteca descobre sozinha que o arquivo é um PNG.
             .map(|sprite| (sprite, Texture2D::from_file_with_format(png_bytes(sprite), None)))
             .collect();
+        texto::carregar();
         Sprites { texturas, formas: Formas::load() }
     }
 }
@@ -327,27 +329,28 @@ enum Alinhamento {
 /// Escreve `texto` dentro de `area`, na vertical no meio. Se não couber na largura, a letra
 /// encolhe até caber.
 fn escrever(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento) {
+    escrever_com_peso(texto, area, tamanho, cor, alinhamento, Peso::Normal);
+}
+
+/// Como `escrever`, no peso dado (`Negrito` para rótulos de botão e valores).
+fn escrever_com_peso(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento, peso: Peso) {
     if tamanho < 1.0 || area.w <= 0.0 {
         return;
     }
-    let mut tamanho = tamanho;
-    let medida = measure_text(texto, None, tamanho as u16, 1.0);
-    if medida.width > area.w {
-        tamanho *= area.w / medida.width;
-        if tamanho < 1.0 {
-            return;
-        }
+    let tamanho = texto::tamanho_que_cabe(texto::medir(texto, tamanho, peso).width, area.w, tamanho);
+    if tamanho < 1.0 {
+        return;
     }
-    let medida = measure_text(texto, None, tamanho as u16, 1.0);
+    let medida = texto::medir(texto, tamanho, peso);
     // A altura vem de uma palavra de referência, para o texto não "pular" de acordo com as letras.
-    let referencia = measure_text("Ag", None, tamanho as u16, 1.0);
+    let referencia = texto::medir("Ag", tamanho, peso);
     let x = match alinhamento {
         Alinhamento::Esquerda => area.x,
         Alinhamento::Centro => area.x + (area.w - medida.width) / 2.0,
         Alinhamento::Direita => area.x + area.w - medida.width,
     };
     let y = area.y + (area.h - referencia.height) / 2.0 + referencia.offset_y;
-    draw_text(texto, x, y, tamanho, cor);
+    texto::desenhar(texto, x, y, tamanho, cor, peso);
 }
 
 /// Um botão da tela de jogo: retângulo com borda e rótulo no meio. `ativo` falso apaga o botão.
@@ -357,7 +360,7 @@ fn botao_da_tela(area: Rect, rotulo: &str, tamanho: f32, fundo: Color, ativo: bo
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, com_alfa(BORDA, alfa));
     let margem = 0.06 * area.w;
     let dentro = Rect { x: area.x + margem, y: area.y, w: area.w - 2.0 * margem, h: area.h };
-    escrever(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro);
+    escrever_com_peso(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro, Peso::Negrito);
 }
 
 /// Desenha a imagem de uma pedra no meio de `casa`, com `escala` e `alfa`, deslocada de
@@ -634,7 +637,7 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
         let em_cima = Rect { h: 0.38 * area.h, ..area };
         let embaixo = Rect { y: area.y + 0.38 * area.h, h: 0.62 * area.h, ..area };
         escrever(rotulo, em_cima, 0.62 * t, cor_de(rgba(0xb3b0d4ff)), alinhamento);
-        escrever(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento);
+        escrever_com_peso(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento, Peso::Negrito);
     }
 
     // A barra de nível: trilho claro arredondado e, por cima, o preenchimento em degradê da
@@ -656,7 +659,7 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
     if tamanho < 1.0 {
         return;
     }
-    let medida = measure_text(texto, None, tamanho as u16, 1.0);
+    let medida = texto::medir(texto, tamanho, Peso::Negrito);
     let margem = 0.7 * tamanho;
     let largura = (medida.width + 2.0 * margem).min(tela.tabuleiro.w);
     let altura = 2.2 * tamanho;
@@ -668,7 +671,7 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
     };
     draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.85));
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, BORDA);
-    escrever(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro);
+    escrever_com_peso(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro, Peso::Negrito);
 }
 
 /// A faixa "Nível N" no meio do tabuleiro, crescendo e sumindo conforme `t` (ms).
@@ -777,7 +780,7 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
     }
     let margem = 0.06 * area.w;
     let embaixo = Rect { x: area.x + margem, y: area.y + 0.54 * area.h, w: area.w - 2.0 * margem, h: 0.38 * area.h };
-    escrever(rotulo, embaixo, tamanho, cor, Alinhamento::Centro);
+    escrever_com_peso(rotulo, embaixo, tamanho, cor, Alinhamento::Centro, Peso::Negrito);
 }
 
 /// Uma colcheia (♪) dentro do quadrado `area`: cabeça redonda, haste e bandeirinha.
@@ -873,7 +876,7 @@ fn quebrar_em_linhas(texto: &str, largura: f32, tamanho: f32) -> Vec<String> {
     let mut atual = String::new();
     for palavra in texto.split_whitespace() {
         let tentativa = if atual.is_empty() { palavra.to_string() } else { format!("{atual} {palavra}") };
-        if atual.is_empty() || measure_text(&tentativa, None, tamanho as u16, 1.0).width <= largura {
+        if atual.is_empty() || texto::medir(&tentativa, tamanho, Peso::Normal).width <= largura {
             atual = tentativa;
         } else {
             linhas.push(std::mem::replace(&mut atual, palavra.to_string()));
