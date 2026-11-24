@@ -123,6 +123,16 @@ mod tests {
     }
 
     #[test]
+    fn a_faisca_tem_pontas_longas_e_reentrancias_curtas() {
+        let pontos = &faisca(AREA)[0];
+        let (cx, cy) = (AREA.x + AREA.w / 2.0, AREA.y + AREA.h / 2.0);
+        let distancia = |i: usize| ((pontos[i].0 - cx).powi(2) + (pontos[i].1 - cy).powi(2)).sqrt();
+        for i in (0..8).step_by(2) {
+            assert!(distancia(i) > 2.0 * distancia(i + 1), "a ponta {i} tem de ser bem mais longa que a reentrância ao lado");
+        }
+    }
+
+    #[test]
     fn o_arco_do_novo_jogo_e_redondo_e_aberto() {
         let linhas = novo_jogo(AREA);
         let arco = &linhas[0];
