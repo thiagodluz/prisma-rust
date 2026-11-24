@@ -76,6 +76,10 @@ struct Formas {
     /// As duas casas do tabuleiro, de tons um pouco diferentes (listras verticais, como no JS).
     casa_par: Forma,
     casa_impar: Forma,
+    /// O cartão de vidro do painel de pontos.
+    cartao: Forma,
+    /// Um retângulo arredondado branco e liso, para ser tingido na hora de desenhar.
+    solida: Forma,
 }
 
 /// Uma cor `[r, g, b, a]` de `formas.rs` como `Color` do Macroquad.
@@ -124,6 +128,26 @@ impl Formas {
             }),
             casa_par: Forma::nova(casa([rgba(0xbfd5ff19), rgba(0x869ec912), rgba(0x4d67940b)])),
             casa_impar: Forma::nova(casa([rgba(0xc8c1ff1b), rgba(0x8a94c913), rgba(0x4d67940b)])),
+            cartao: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff17),
+                degrade: [rgba(0xffffff0d); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            solida: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 0,
+                cor_da_borda: sem_borda,
+                degrade: [rgba(0xffffffff); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
         }
     }
 }
@@ -131,6 +155,12 @@ impl Formas {
 /// Desenha `forma` cobrindo `area`, com cantos de `raio` pixels e uma sombra de `sombra` pixels
 /// em volta (a sombra fica FORA de `area`).
 fn desenhar_forma(forma: &Forma, area: Rect, raio: f32, sombra: f32) {
+    desenhar_forma_tingida(forma, area, raio, sombra, WHITE);
+}
+
+/// Como `desenhar_forma`, mas multiplicando a cor da forma por `tinta` (a forma `solida`, que é
+/// branca, vira qualquer cor).
+fn desenhar_forma_tingida(forma: &Forma, area: Rect, raio: f32, sombra: f32, tinta: Color) {
     let destino = expandir(area, sombra);
     for fatia in nove_fatias(forma.lado, forma.canto, destino, sombra + raio) {
         if fatia.destino.w <= 0.0 || fatia.destino.h <= 0.0 {
@@ -141,7 +171,7 @@ fn desenhar_forma(forma: &Forma, area: Rect, raio: f32, sombra: f32) {
             &forma.textura,
             d.x,
             d.y,
-            WHITE,
+            tinta,
             DrawTextureParams {
                 dest_size: Some(vec2(d.w, d.h)),
                 source: Some(macroquad::math::Rect::new(o.x, o.y, o.w, o.h)),
@@ -542,7 +572,7 @@ fn desenhar_contornos_de_realce(app: &App, area: Rect) {
 }
 
 /// As abas, o painel de números e a barra de progresso.
-fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
+fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Formas) {
     let t = tela.texto;
     let zen = app.modo() == prisma_engine::Mode::Zen;
     botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
@@ -566,22 +596,28 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
         desenhar_hamburguer(icone, WHITE);
     }
 
-    for (rotulo, valor, area) in [
-        ("PONTOS", &painel.pontos, tela.pontos),
-        ("NÍVEL", &painel.nivel, tela.nivel),
-        ("MELHOR", &painel.melhor, tela.melhor),
+    // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita.
+    let cartao = tela.cartao_pontos;
+    desenhar_forma(&formas.cartao, cartao, 0.045 * cartao.w, 0.0);
+    for (rotulo, valor, area, cor_do_valor, alinhamento) in [
+        ("PONTOS", &painel.pontos, tela.pontos, WHITE, Alinhamento::Esquerda),
+        ("NÍVEL", &painel.nivel, tela.nivel, cor_de(rgba(0xa2eddd_ff)), Alinhamento::Centro),
+        ("MELHOR", &painel.melhor, tela.melhor, WHITE, Alinhamento::Direita),
     ] {
-        draw_rectangle(area.x, area.y, area.w, area.h, PAINEL);
         let em_cima = Rect { h: 0.38 * area.h, ..area };
         let embaixo = Rect { y: area.y + 0.38 * area.h, h: 0.62 * area.h, ..area };
-        escrever(rotulo, em_cima, 0.62 * t, TEXTO_SUAVE, Alinhamento::Centro);
-        escrever(valor, embaixo, 1.5 * t, WHITE, Alinhamento::Centro);
+        escrever(rotulo, em_cima, 0.62 * t, cor_de(rgba(0xb3b0d4ff)), alinhamento);
+        escrever(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento);
     }
 
+    // A barra de nível: trilho claro arredondado e, por cima, o preenchimento em degradê da
+    // esquerda (verde-água) para a direita (lilás), com a ponta direita reta.
     let barra = tela.barra;
-    draw_rectangle(barra.x, barra.y, barra.w, barra.h, ABA_INATIVA);
-    draw_rectangle(barra.x, barra.y, barra.w * painel.progresso, barra.h, BARRA_PREENCHIDA);
-    escrever(&painel.rotulo, tela.rotulo, 0.78 * t, TEXTO_SUAVE, Alinhamento::Centro);
+    desenhar_forma_tingida(&formas.solida, barra, barra.h / 2.0, 0.0, cor_de(rgba(0xffffff17)));
+    let progresso = if painel.progresso.is_finite() { painel.progresso.clamp(0.0, 1.0) } else { 0.0 };
+    let (esquerda, direita) = (cor_de(rgba(0x6be2d6ff)), cor_de(rgba(0xd09cffff)));
+    desenhar_degrade(Rect { w: barra.w * progresso, ..barra }, [esquerda, direita, direita, esquerda]);
+    escrever(&painel.rotulo, tela.rotulo, 0.78 * t, cor_de(rgba(0x9996b9ff)), Alinhamento::Direita);
     if let Some(ganho) = &painel.ganho {
         escrever(ganho, tela.rotulo, 0.9 * t, DESTAQUE, Alinhamento::Esquerda);
     }
@@ -967,7 +1003,7 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     clear_background(FUNDO);
     desenhar_fundo(&sprites.formas);
     let painel = app.painel();
-    desenhar_cabecalho(app, &painel, tela);
+    desenhar_cabecalho(app, &painel, tela, &sprites.formas);
 
     desenhar_tabuleiro_vazio(&sprites.formas, tela);
     let tabuleiro = tela.grade;
