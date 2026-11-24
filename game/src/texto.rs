@@ -76,6 +76,63 @@ mod tests {
         }
     }
 
+    /// Os caracteres fora do ASCII que aparecem dentro de aspas no código de produção (antes do
+    /// `#[cfg(test)]`) dos arquivos que escrevem texto na tela. O ASCII todo existe na Roboto.
+    fn caracteres_de_texto_do_jogo() -> Vec<(&'static str, char)> {
+        let arquivos = [
+            ("render.rs", include_str!("render.rs")),
+            ("menu.rs", include_str!("menu.rs")),
+            ("app.rs", include_str!("app.rs")),
+            ("cenas.rs", include_str!("cenas.rs")),
+            ("preferencias.rs", include_str!("preferencias.rs")),
+            ("fundo.rs", include_str!("fundo.rs")),
+            ("layout.rs", include_str!("layout.rs")),
+        ];
+        let mut achados = Vec::new();
+        for (nome, fonte) in arquivos {
+            let producao = fonte.split("#[cfg(test)]").next().unwrap_or(fonte);
+            for linha in producao.lines() {
+                let mut dentro = false;
+                let mut anterior = ' ';
+                for c in linha.chars() {
+                    if c == '"' && anterior != '\\' {
+                        dentro = !dentro;
+                    } else if !dentro && c == '/' && anterior == '/' {
+                        break; // comentário até o fim da linha
+                    } else if dentro && !c.is_ascii() && !achados.contains(&(nome, c)) {
+                        achados.push((nome, c));
+                    }
+                    anterior = c;
+                }
+            }
+        }
+        achados
+    }
+
+    #[test]
+    fn todo_texto_do_jogo_tem_glifo_na_roboto() {
+        let fontes: Vec<(&str, fontdue::Font)> = [("Regular", REGULAR), ("Bold", NEGRITO)]
+            .into_iter()
+            .map(|(nome, bytes)| (nome, fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).unwrap()))
+            .collect();
+        let caracteres = caracteres_de_texto_do_jogo();
+        assert!(caracteres.len() > 5, "a varredura achou pouca coisa: {caracteres:?}");
+        for (arquivo, c) in caracteres {
+            for (nome, fonte) in &fontes {
+                assert!(fonte.lookup_glyph_index(c) != 0, "{arquivo}: '{c}' (U+{:04X}) não existe na Roboto {nome}", c as u32);
+            }
+        }
+    }
+
+    #[test]
+    fn a_varredura_pega_um_glifo_que_a_roboto_nao_tem() {
+        let fonte = fontdue::Font::from_bytes(REGULAR, fontdue::FontSettings::default()).unwrap();
+        for ausente in ['♫', '≡'] {
+            assert_eq!(fonte.lookup_glyph_index(ausente), 0, "{ausente} devia faltar (é por isso que é desenhado)");
+        }
+        assert!(fonte.lookup_glyph_index('ç') != 0 && fonte.lookup_glyph_index('·') != 0);
+    }
+
     #[test]
     fn tamanho_que_cabe_encolhe_so_quando_precisa() {
         assert_eq!(tamanho_que_cabe(50.0, 100.0, 20.0), 20.0);
