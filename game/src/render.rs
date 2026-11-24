@@ -89,6 +89,9 @@ struct Formas {
     botao_icone_ativo: Forma,
     /// O logo do topo.
     marca: Texture2D,
+    /// Os cartões de modo (Zen e Clássico): o normal e o escolhido.
+    modo: Forma,
+    modo_escolhido: Forma,
 }
 
 /// Uma cor `[r, g, b, a]` de `formas.rs` como `Color` do Macroquad.
@@ -170,6 +173,26 @@ impl Formas {
                 cor_da_sombra: sem_borda,
             }),
             marca,
+            modo: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff23),
+                degrade: [rgba(0xffffff0b); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            modo_escolhido: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xad9bff99),
+                degrade: [rgba(0x756aad32); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
             botao: Forma::nova(Receita {
                 lado: 64,
                 raio: 12,
@@ -633,6 +656,9 @@ fn desenhar_contornos_de_realce(app: &App, area: Rect) {
 fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Formas) {
     let t = tela.texto;
     desenhar_topo(formas, app, tela);
+    let zen = app.modo() == prisma_engine::Mode::Zen;
+    desenhar_cartao_de_modo(formas, tela.aba_zen, Icone::Lua, "Zen", "Sem pressa, sem derrota", zen);
+    desenhar_cartao_de_modo(formas, tela.aba_classico, Icone::Faisca, "Clássico", "Sem cronômetro · pode acabar", !zen);
 
     // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita.
     let cartao = tela.cartao_pontos;
@@ -821,6 +847,8 @@ enum Icone {
     Embaralhar,
     Dica,
     NovoJogo,
+    Lua,
+    Faisca,
 }
 
 /// Um botão de baixo: fundo arredondado, o ícone no alto e o rótulo embaixo. `ativo` falso deixa
@@ -835,6 +863,8 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
         Icone::Embaralhar => icones::embaralhar(quadrado),
         Icone::Dica => icones::faisca(quadrado),
         Icone::NovoJogo => icones::novo_jogo(quadrado),
+        Icone::Lua => icones::lua(quadrado),
+        Icone::Faisca => icones::faisca(quadrado),
     };
     let grossura = 0.07 * area.h;
     for linha in &linhas {
@@ -849,6 +879,33 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
     let margem = 0.06 * area.w;
     let embaixo = Rect { x: area.x + margem, y: area.y + 0.54 * area.h, w: area.w - 2.0 * margem, h: 0.38 * area.h };
     escrever_com_peso(rotulo, embaixo, tamanho, cor, Alinhamento::Centro, Peso::Negrito);
+}
+
+/// Um cartão de modo: a caixa do ícone à esquerda e, ao lado, o nome (negrito) e a frase (menor).
+/// `escolhido` troca o fundo e a borda pelos do modo em uso.
+fn desenhar_cartao_de_modo(formas: &Formas, area: Rect, icone: Icone, nome: &str, frase: &str, escolhido: bool) {
+    let forma = if escolhido { &formas.modo_escolhido } else { &formas.modo };
+    desenhar_forma(forma, area, 0.28 * area.h, 0.0);
+    let folga = 0.2 * area.h;
+    let lado = 0.56 * area.h;
+    let caixa = Rect { x: area.x + folga, y: area.y + (area.h - lado) / 2.0, w: lado, h: lado };
+    desenhar_forma_tingida(&formas.solida, caixa, 0.30 * lado, 0.0, cor_de(rgba(0x9785e438)));
+    let cor_do_icone = cor_de(rgba(0xcfbdffff));
+    let grossura = 0.07 * lado;
+    for linha in &match icone {
+        Icone::Lua => icones::lua(encolher(caixa, 0.2 * lado)),
+        _ => icones::faisca(encolher(caixa, 0.2 * lado)),
+    } {
+        for par in linha.windows(2) {
+            draw_line(par[0].0, par[0].1, par[1].0, par[1].1, grossura, cor_do_icone);
+        }
+    }
+    let texto_x = caixa.x + caixa.w + 0.7 * folga;
+    let largura = area.x + area.w - folga * 0.6 - texto_x;
+    let nome_area = Rect { x: texto_x, y: area.y + 0.14 * area.h, w: largura, h: 0.38 * area.h };
+    let frase_area = Rect { x: texto_x, y: area.y + 0.52 * area.h, w: largura, h: 0.32 * area.h };
+    escrever_com_peso(nome, nome_area, 0.30 * area.h, WHITE, Alinhamento::Esquerda, Peso::Negrito);
+    escrever(frase, frase_area, 0.22 * area.h, cor_de(rgba(0xb9b5d4ff)), Alinhamento::Esquerda);
 }
 
 /// Uma colcheia (♪) dentro do quadrado `area`: cabeça redonda, haste e bandeirinha.

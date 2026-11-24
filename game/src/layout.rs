@@ -122,7 +122,7 @@ const ABAS_ALTURA: f32 = 0.085;
 /// A linha de topo (marca e botões ♫ e ≡): os botões são quadrados dessa altura (38 px em 360).
 const TOPO_ALTURA: f32 = 0.105;
 /// Os cartões de modo (Zen e Clássico), embaixo de tudo.
-const MODOS_ALTURA: f32 = 0.11;
+const MODOS_ALTURA: f32 = 0.13;
 const PAINEL_ALTURA: f32 = 0.11;
 const BARRA_ALTURA: f32 = 0.022;
 const ROTULO_ALTURA: f32 = 0.05;
@@ -343,7 +343,7 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     let fixo = topo_h + painel_h + barra_h + rotulo_h + botoes_h + guia_h + modos_h + 7.0 * espaco;
     // O tabuleiro nunca passa da largura máxima nem da altura livre (reservando também uma
     // margem de um espaço em cima e outra embaixo). A altura livre é sempre positiva, porque
-    // `fixo` mais as margens é 0,747 do menor lado, que nunca passa da altura.
+    // `fixo` mais as margens é 0,767 do menor lado, que nunca passa da altura.
     let lado = (LARGURA_MAXIMA * largura).min(altura - fixo - 2.0 * espaco);
 
     let conjunto = fixo + lado;
@@ -369,7 +369,9 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     let modos_y = y;
 
     // Linha de topo: a marca ocupa o que sobra à esquerda dos botões ♫ e ≡ (quadrados, no fim).
-    let marca_w = lado - 2.0 * topo_h - 2.0 * espaco;
+    // Em tela deitada o tabuleiro fica pequeno: os botões encolhem para a marca ainda ter largura.
+    let topo_item = topo_h.min(0.2 * lado);
+    let marca_w = lado - 2.0 * topo_item - 2.0 * espaco;
     // Cartões de modo: duas metades com um espaço no meio.
     let modo_w = (lado - espaco) / 2.0;
     // Painel: um cartão com três colunas coladas: os pontos à esquerda, o nível no meio e o
@@ -419,11 +421,11 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     let escolha_y = dialogo.y + dialogo_h - 0.08 * dialogo_h - escolha_h;
 
     TelaJogo {
-        marca: faixa(esquerda, topo_y, marca_w, topo_h),
+        marca: faixa(esquerda, topo_y, marca_w, topo_item),
         aba_zen: faixa(esquerda, modos_y, modo_w, modos_h),
         aba_classico: faixa(esquerda + modo_w + espaco, modos_y, modo_w, modos_h),
-        botao_som: faixa(esquerda + lado - 2.0 * topo_h - espaco, topo_y, topo_h, topo_h),
-        botao_menu: faixa(esquerda + lado - topo_h, topo_y, topo_h, topo_h),
+        botao_som: faixa(esquerda + lado - 2.0 * topo_item - espaco, topo_y, topo_item, topo_item),
+        botao_menu: faixa(esquerda + lado - topo_item, topo_y, topo_item, topo_item),
         cartao_pontos: faixa(esquerda, painel_y, lado, painel_h),
         pontos: faixa(pontos_x, painel_y, pontos_w, painel_h),
         nivel: faixa(nivel_x, painel_y, nivel_w, painel_h),
@@ -1478,7 +1480,7 @@ mod tests_tela_jogo {
     fn o_tabuleiro_nao_muda_com_o_botao_menu() {
         // Posições da V2 (topo mais alto e cartões de modo embaixo), calculadas à mão: o tabuleiro
         // não se mexe com o botão ≡ nem entre os modos.
-        for ((largura, altura), (x, y, lado)) in [((540.0, 960.0), (16.2, 233.49, 507.6)), ((720.0, 1280.0), (21.6, 311.32, 676.8))] {
+        for ((largura, altura), (x, y, lado)) in [((540.0, 960.0), (16.2, 228.09, 507.6)), ((720.0, 1280.0), (21.6, 304.12, 676.8))] {
             let tabuleiro = tela_jogo(largura, altura, true).tabuleiro;
             for (obtido, esperado, nome) in [(tabuleiro.x, x, "x"), (tabuleiro.y, y, "y"), (tabuleiro.w, lado, "lado")] {
                 assert!((obtido - esperado).abs() < 0.01, "{largura}x{altura}: {nome} = {obtido}, esperado {esperado}");
