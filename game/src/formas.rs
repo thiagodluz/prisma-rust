@@ -4,6 +4,8 @@
 //! pequena, que o `render.rs` vira textura uma vez só, na abertura do app, e desenha esticada em
 //! "nove fatias" (os cantos mantêm o tamanho e o meio estica).
 
+use crate::layout::Rect;
+
 /// Uma cor em RGBA (vermelho, verde, azul e opacidade, de 0 a 255), sem pré-multiplicar.
 pub type Cor = [u8; 4];
 
@@ -130,9 +132,144 @@ pub fn pintar(receita: &Receita) -> Vec<u8> {
     imagem
 }
 
+/// Uma das nove partes de uma forma esticada: o pedaço da imagem (`origem`, em pixels dela) e o
+/// lugar onde ele é desenhado na tela (`destino`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fatia {
+    pub origem: Rect,
+    pub destino: Rect,
+}
+
+fn finito(valor: f32) -> f32 {
+    if valor.is_finite() {
+        valor
+    } else {
+        0.0
+    }
+}
+
+/// Divide uma imagem quadrada em nove fatias (3 × 3, de cima para baixo e da esquerda para a
+/// direita) e diz onde desenhar cada uma para preencher `destino`: os quatro cantos (de
+/// `canto_da_imagem` pixels na imagem) vão para cantos de `canto_do_destino` pixels, e as arestas
+/// e o miolo esticam. Um canto grande demais para o destino é reduzido (no máximo metade do
+/// menor lado), e uma entrada inválida (negativa, `NaN`) vira tamanho zero, nunca `NaN`.
+pub fn nove_fatias(lado_da_imagem: f32, canto_da_imagem: f32, destino: Rect, canto_do_destino: f32) -> [Fatia; 9] {
+    let (x, y) = (finito(destino.x), finito(destino.y));
+    let (w, h) = (finito(destino.w).max(0.0), finito(destino.h).max(0.0));
+    let lado = finito(lado_da_imagem).max(0.0);
+    let canto_d = finito(canto_do_destino).clamp(0.0, (w / 2.0).min(h / 2.0));
+    let canto_o = finito(canto_da_imagem).clamp(0.0, lado / 2.0);
+    let colunas_d = [x, x + canto_d, x + w - canto_d, x + w];
+    let linhas_d = [y, y + canto_d, y + h - canto_d, y + h];
+    let cortes_o = [0.0, canto_o, lado - canto_o, lado];
+    std::array::from_fn(|i| {
+        let (linha, coluna) = (i / 3, i % 3);
+        Fatia {
+            origem: Rect {
+                x: cortes_o[coluna],
+                y: cortes_o[linha],
+                w: cortes_o[coluna + 1] - cortes_o[coluna],
+                h: cortes_o[linha + 1] - cortes_o[linha],
+            },
+            destino: Rect {
+                x: colunas_d[coluna],
+                y: linhas_d[linha],
+                w: colunas_d[coluna + 1] - colunas_d[coluna],
+                h: linhas_d[linha + 1] - linhas_d[linha],
+            },
+        }
+    })
+}
+
+/// O pedaço de uma imagem (em pixels dela) que cobre a tela inteira sem deformar: a imagem é
+/// ampliada até preencher a tela e o que sobra é cortado, igualmente de cada lado. Tamanho
+/// inválido (zero, negativo, `NaN`) devolve `Rect::VAZIO`.
+pub fn cobrir(imagem_w: f32, imagem_h: f32, tela_w: f32, tela_h: f32) -> Rect {
+    let valido = |v: f32| v.is_finite() && v > 0.0;
+    if !(valido(imagem_w) && valido(imagem_h) && valido(tela_w) && valido(tela_h)) {
+        return Rect::VAZIO;
+    }
+    let escala = (tela_w / imagem_w).max(tela_h / imagem_h);
+    let (w, h) = (tela_w / escala, tela_h / escala);
+    Rect { x: (imagem_w - w) / 2.0, y: (imagem_h - h) / 2.0, w, h }
+}
+
+/// `area` com `margem` a mais em cada um dos quatro lados.
+pub fn expandir(area: Rect, margem: f32) -> Rect {
+    Rect { x: area.x - margem, y: area.y - margem, w: area.w + 2.0 * margem, h: area.h + 2.0 * margem }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn as_nove_fatias_cobrem_o_destino() {
+        let destino = Rect { x: 10.0, y: 20.0, w: 100.0, h: 60.0 };
+        let fatias = nove_fatias(64.0, 12.0, destino, 12.0);
+        let area: f32 = fatias.iter().map(|f| f.destino.w * f.destino.h).sum();
+        assert!((area - 6000.0).abs() < 1e-3, "a soma das áreas é a do destino: {area}");
+        for (i, a) in fatias.iter().enumerate() {
+            let d = a.destino;
+            assert!(d.x >= destino.x - 1e-3 && d.y >= destino.y - 1e-3, "fatia {i} fora do destino");
+            assert!(d.x + d.w <= destino.x + destino.w + 1e-3 && d.y + d.h <= destino.y + destino.h + 1e-3, "fatia {i} fora do destino");
+            for (j, b) in fatias.iter().enumerate().skip(i + 1) {
+                let e = b.destino;
+                let sobrepoe = d.x < e.x + e.w - 1e-3 && e.x < d.x + d.w - 1e-3 && d.y < e.y + e.h - 1e-3 && e.y < d.y + d.h - 1e-3;
+                assert!(!sobrepoe, "fatias {i} e {j} se sobrepõem");
+            }
+        }
+        for canto in [0, 2, 6, 8] {
+            assert_eq!((fatias[canto].destino.w, fatias[canto].destino.h), (12.0, 12.0), "canto {canto}");
+        }
+    }
+
+    #[test]
+    fn as_fatias_da_origem_cobrem_a_imagem() {
+        let fatias = nove_fatias(64.0, 12.0, Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 }, 12.0);
+        let area: f32 = fatias.iter().map(|f| f.origem.w * f.origem.h).sum();
+        assert!((area - 4096.0).abs() < 1e-3, "{area}");
+    }
+
+    #[test]
+    fn canto_grande_demais_e_reduzido() {
+        let fatias = nove_fatias(64.0, 12.0, Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 }, 20.0);
+        assert_eq!((fatias[0].destino.w, fatias[0].destino.h), (5.0, 5.0));
+        assert_eq!(fatias[4].destino.w, 0.0, "o miolo some");
+    }
+
+    #[test]
+    fn destino_sem_tamanho_nao_da_nan() {
+        for destino in [Rect::VAZIO, Rect { x: f32::NAN, y: 0.0, w: f32::NAN, h: 5.0 }, Rect { x: 0.0, y: 0.0, w: -4.0, h: 8.0 }] {
+            for fatia in nove_fatias(64.0, 12.0, destino, 12.0) {
+                for v in [fatia.destino.x, fatia.destino.y, fatia.destino.w, fatia.destino.h, fatia.origem.w, fatia.origem.h] {
+                    assert!(v.is_finite(), "{destino:?} gerou {v}");
+                }
+                assert!(fatia.destino.w >= 0.0 && fatia.destino.h >= 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn cobrir_preserva_a_proporcao_da_tela() {
+        let quadrada = cobrir(940.0, 1672.0, 1080.0, 1080.0);
+        assert_eq!((quadrada.w, quadrada.h, quadrada.y), (940.0, 940.0, 366.0));
+        let larga = cobrir(940.0, 1672.0, 2000.0, 500.0);
+        assert_eq!((larga.w, larga.h), (940.0, 235.0));
+        let celular = cobrir(940.0, 1672.0, 360.0, 640.0);
+        assert!((celular.w / celular.h - 360.0 / 640.0).abs() < 1e-4);
+        for recorte in [quadrada, larga, celular] {
+            assert!(recorte.x >= -1e-3 && recorte.y >= -1e-3 && recorte.x + recorte.w <= 940.0 + 1e-3 && recorte.y + recorte.h <= 1672.0 + 1e-3);
+        }
+        assert_eq!(cobrir(940.0, 1672.0, 0.0, 0.0), Rect::VAZIO);
+        assert_eq!(cobrir(0.0, 0.0, 360.0, 640.0), Rect::VAZIO);
+        assert_eq!(cobrir(940.0, 1672.0, f32::NAN, 640.0), Rect::VAZIO);
+    }
+
+    #[test]
+    fn expandir_aumenta_os_quatro_lados() {
+        assert_eq!(expandir(Rect { x: 10.0, y: 10.0, w: 20.0, h: 20.0 }, 5.0), Rect { x: 5.0, y: 5.0, w: 30.0, h: 30.0 });
+    }
 
     /// Receita simples para os testes: sem borda nem sombra, degradê de três cinzas.
     fn receita(lado: u32, raio: u32) -> Receita {

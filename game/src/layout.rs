@@ -21,7 +21,7 @@ pub struct Rect {
 
 impl Rect {
     /// Um retângulo sem tamanho, no canto da tela: o que devolvemos quando a tela não existe.
-    const VAZIO: Rect = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    pub const VAZIO: Rect = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
 
     /// O ponto (`x`, `y`) está dentro do retângulo? As bordas da esquerda e de cima contam
     /// como dentro; as da direita e de baixo, como fora (assim dois retângulos lado a lado
