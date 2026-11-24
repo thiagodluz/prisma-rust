@@ -538,23 +538,37 @@ fn casa_de(area: Rect, indice: usize) -> Rect {
     cell_rect(area, indice / SIZE, indice % SIZE)
 }
 
+/// A parte visível da casa (0,90 do passo da grade, no meio): é onde ficam os realces, o mesmo
+/// retângulo que as casas desenhadas em `desenhar_tabuleiro_vazio`.
+fn casa_visivel(area: Rect, indice: usize) -> Rect {
+    let passo = casa_de(area, indice);
+    let lado = 0.90 * passo.w;
+    Rect { x: passo.x + (passo.w - lado) / 2.0, y: passo.y + (passo.h - lado) / 2.0, w: lado, h: lado }
+}
+
+/// Pinta o fundo de um realce dentro da casa `indice`, arredondado como ela.
+fn pintar_realce(formas: &Formas, area: Rect, indice: usize, cor: Color) {
+    let casa = casa_visivel(area, indice);
+    desenhar_forma_tingida(&formas.solida, casa, 0.20 * casa.w, 0.0, cor);
+}
+
 /// Realces que ficam ATRÁS das pedras (para não "sujar" a cor delas): fundo da casa marcada,
-/// do dedo em cima e da Dica.
-fn desenhar_fundos_de_realce(app: &App, area: Rect) {
+/// do dedo em cima, do alvo do arrasto e da Dica.
+fn desenhar_fundos_de_realce(app: &App, formas: &Formas, area: Rect) {
     let gestos = app.gestos();
     if let Some(indice) = gestos.selecionada() {
-        let casa = casa_de(area, indice);
-        draw_rectangle(casa.x, casa.y, casa.w, casa.h, Color::new(1.0, 1.0, 1.0, 0.22));
+        pintar_realce(formas, area, indice, cor_de(rgba(0xf7edab5c)));
     }
     if let Some(indice) = gestos.pressionada() {
-        let casa = casa_de(area, indice);
-        draw_rectangle(casa.x, casa.y, casa.w, casa.h, Color::new(1.0, 1.0, 1.0, 0.14));
+        pintar_realce(formas, area, indice, cor_de(rgba(0xe5d8ff3d)));
+    }
+    if let Some(indice) = gestos.alvo_do_arrasto() {
+        pintar_realce(formas, area, indice, cor_de(rgba(0xc4ffe451)));
     }
     if let Some((a, b)) = app.dica() {
         let pulso = pulso_da_dica();
         for indice in [a, b] {
-            let casa = casa_de(area, indice);
-            draw_rectangle(casa.x, casa.y, casa.w, casa.h, com_alfa(DESTAQUE, 0.25 * pulso));
+            pintar_realce(formas, area, indice, com_alfa(cor_de(rgba(0xffe9933d)), pulso));
         }
     }
 }
@@ -568,17 +582,17 @@ fn pulso_da_dica() -> f32 {
 fn desenhar_contornos_de_realce(app: &App, area: Rect) {
     let gestos = app.gestos();
     if let Some(indice) = gestos.selecionada() {
-        let casa = casa_de(area, indice);
+        let casa = casa_visivel(area, indice);
         draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, WHITE);
     }
     if let Some(indice) = gestos.alvo_do_arrasto() {
-        let casa = casa_de(area, indice);
+        let casa = casa_visivel(area, indice);
         draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, com_alfa(WHITE, 0.8));
     }
     if let Some((a, b)) = app.dica() {
         let pulso = pulso_da_dica();
         for indice in [a, b] {
-            let casa = casa_de(area, indice);
+            let casa = casa_visivel(area, indice);
             draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 4.0, com_alfa(DESTAQUE, pulso));
         }
     }
@@ -1056,7 +1070,7 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
 
     desenhar_tabuleiro_vazio(&sprites.formas, tela);
     let tabuleiro = tela.grade;
-    desenhar_fundos_de_realce(app, tabuleiro);
+    desenhar_fundos_de_realce(app, &sprites.formas, tabuleiro);
     desenhar_pedras(app, sprites, tabuleiro);
     if let Some((passo, t)) = app.passo_atual() {
         desenhar_particulas(passo, t, tabuleiro);
