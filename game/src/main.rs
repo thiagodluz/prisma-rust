@@ -8,7 +8,9 @@ mod audio;
 mod cenas;
 mod contador;
 mod efeitos;
+mod formas;
 mod formato;
+mod icones;
 mod fundo;
 mod input;
 mod layout;
@@ -210,7 +212,9 @@ fn linha_de_toque(x: f32, y: f32, escala: f32) -> String {
 /// intensidade dos efeitos). Com a folha do Menu aberta entram
 /// `fechar_menu`, `aba_recordes` e `aba_creditos`.
 fn linhas_de_geometria(tela: &layout::TelaJogo, escala: f32, folha: Option<Folha>) -> Vec<String> {
-    let tabuleiro = tela.tabuleiro;
+    // O registro ainda se chama "tabuleiro", mas informa a GRADE das casas: é nela que o teste
+    // do celular virtual toca.
+    let tabuleiro = tela.grade;
     let mut linhas = vec![format!(
         "PRISMA_M1 tabuleiro x={:.0} y={:.0} lado={:.0}",
         tabuleiro.x * escala,
@@ -587,9 +591,9 @@ mod tests {
             linhas[0],
             format!(
                 "PRISMA_M1 tabuleiro x={:.0} y={:.0} lado={:.0}",
-                tela.tabuleiro.x * 2.0,
-                tela.tabuleiro.y * 2.0,
-                tela.tabuleiro.w * 2.0
+                tela.grade.x * 2.0,
+                tela.grade.y * 2.0,
+                tela.grade.w * 2.0
             )
         );
         let nomes: Vec<&str> = linhas[1..].iter().map(|linha| linha.split(' ').nth(1).unwrap()).collect();

@@ -9,14 +9,16 @@ use macroquad::prelude::*;
 use prisma_engine::{position, Board, Tile, SIZE};
 
 use crate::app::{App, Folha, Painel};
-use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
+use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, SPRITE_RATIO};
+use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
+use crate::icones::{self, Linha};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
 use crate::linha::{
     deslocamento_troca, embaralhar_alfa, fusao_da_casa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa,
     queda_deslocamento, queda_ms, resgate_da_casa, Passo, TipoVisual,
 };
 use crate::menu::{blocos_de_recordes, creditos};
-use crate::particulas::{ajustar, particulas, realce_da_faixa, Forma};
+use crate::particulas::{ajustar, particulas, realce_da_faixa, Forma as FormaDaParticula};
 use crate::preferencias::{orbe, segundos_restantes, Intensidade};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
@@ -43,6 +45,198 @@ const INTERRUPTOR_APAGADO: Color = Color::from_hex(0x464f7a);
 /// Todas as imagens já carregadas na placa de vídeo, uma `Texture2D` por `Sprite`.
 pub struct Sprites {
     texturas: HashMap<Sprite, Texture2D>,
+    formas: Formas,
+}
+
+/// Uma forma desenhada por código (retângulo arredondado com degradê, borda e sombra), pintada
+/// UMA vez em `Formas::load` e guardada como textura. Para ocupar qualquer tamanho sem entortar
+/// os cantos, `desenhar_forma` a corta em nove fatias.
+struct Forma {
+    textura: Texture2D,
+    /// O lado da imagem, em pixels dela.
+    lado: f32,
+    /// O tamanho do canto (sombra + raio) na imagem, em pixels dela.
+    canto: f32,
+}
+
+impl Forma {
+    fn nova(receita: Receita) -> Forma {
+        let lado = receita.lado as u16;
+        let textura = Texture2D::from_rgba8(lado, lado, &pintar(&receita));
+        textura.set_filter(FilterMode::Linear);
+        Forma { textura, lado: receita.lado as f32, canto: (receita.sombra + receita.raio) as f32 }
+    }
+}
+
+/// A foto de fundo e as formas do tabuleiro, prontas na placa de vídeo.
+struct Formas {
+    fundo: Texture2D,
+    moldura: Forma,
+    /// O painel escuro que fica dentro da moldura.
+    grade: Forma,
+    /// As duas casas do tabuleiro, de tons um pouco diferentes (listras verticais, como no JS).
+    casa_par: Forma,
+    casa_impar: Forma,
+    /// O cartão de vidro do painel de pontos.
+    cartao: Forma,
+    /// Um retângulo arredondado branco e liso, para ser tingido na hora de desenhar.
+    solida: Forma,
+    /// O fundo dos botões de baixo (Embaralhar, Dica, Novo jogo).
+    botao: Forma,
+}
+
+/// Uma cor `[r, g, b, a]` de `formas.rs` como `Color` do Macroquad.
+fn cor_de(cor: formas::Cor) -> Color {
+    Color::from_rgba(cor[0], cor[1], cor[2], cor[3])
+}
+
+impl Formas {
+    /// As receitas são as do CSS "illustrated" do Prisma em JS (`style.css`): `lado` é o tamanho
+    /// da imagem, `raio` e `borda` e `sombra` estão em pixels dela.
+    fn load() -> Formas {
+        let fundo = Texture2D::from_file_with_format(FUNDO_JPG, None);
+        fundo.set_filter(FilterMode::Linear);
+        let sem_borda = rgba(0);
+        let casa = |degrade| Receita {
+            lado: 64,
+            raio: 12,
+            borda: 0,
+            cor_da_borda: sem_borda,
+            degrade,
+            angulo: 155.0,
+            sombra: 0,
+            cor_da_sombra: sem_borda,
+        };
+        Formas {
+            fundo,
+            moldura: Forma::nova(Receita {
+                lado: 168,
+                raio: 22,
+                borda: 2,
+                cor_da_borda: rgba(0xcee6ff5c),
+                degrade: [rgba(0x7790bd65), rgba(0x202a4eff), rgba(0x785b9b72)],
+                angulo: 145.0,
+                sombra: 20,
+                cor_da_sombra: rgba(0x030616bd),
+            }),
+            grade: Forma::nova(Receita {
+                lado: 64,
+                raio: 14,
+                borda: 0,
+                cor_da_borda: sem_borda,
+                degrade: [rgba(0x0d142cff); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            casa_par: Forma::nova(casa([rgba(0xbfd5ff19), rgba(0x869ec912), rgba(0x4d67940b)])),
+            casa_impar: Forma::nova(casa([rgba(0xc8c1ff1b), rgba(0x8a94c913), rgba(0x4d67940b)])),
+            cartao: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff17),
+                degrade: [rgba(0xffffff0d); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            botao: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xb8a7ea70),
+                degrade: [rgba(0x60538763), rgba(0x443e6988), rgba(0x292a4cad)],
+                angulo: 155.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            solida: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 0,
+                cor_da_borda: sem_borda,
+                degrade: [rgba(0xffffffff); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+        }
+    }
+}
+
+/// Desenha `forma` cobrindo `area`, com cantos de `raio` pixels e uma sombra de `sombra` pixels
+/// em volta (a sombra fica FORA de `area`).
+fn desenhar_forma(forma: &Forma, area: Rect, raio: f32, sombra: f32) {
+    desenhar_forma_tingida(forma, area, raio, sombra, WHITE);
+}
+
+/// Como `desenhar_forma`, mas multiplicando a cor da forma por `tinta` (a forma `solida`, que é
+/// branca, vira qualquer cor).
+fn desenhar_forma_tingida(forma: &Forma, area: Rect, raio: f32, sombra: f32, tinta: Color) {
+    let destino = expandir(area, sombra);
+    for fatia in nove_fatias(forma.lado, forma.canto, destino, sombra + raio) {
+        if fatia.destino.w <= 0.0 || fatia.destino.h <= 0.0 {
+            continue;
+        }
+        let (o, d) = (fatia.origem, fatia.destino);
+        draw_texture_ex(
+            &forma.textura,
+            d.x,
+            d.y,
+            tinta,
+            DrawTextureParams {
+                dest_size: Some(vec2(d.w, d.h)),
+                source: Some(macroquad::math::Rect::new(o.x, o.y, o.w, o.h)),
+                ..Default::default()
+            },
+        );
+    }
+}
+
+/// Um retângulo com cor diferente em cada canto (o degradê vem da mistura entre eles):
+/// `cores` é cima-esquerda, cima-direita, baixo-direita, baixo-esquerda.
+fn desenhar_degrade(area: Rect, cores: [Color; 4]) {
+    let cantos = [(area.x, area.y), (area.x + area.w, area.y), (area.x + area.w, area.y + area.h), (area.x, area.y + area.h)];
+    let vertices = cantos.iter().zip(cores).map(|(&(x, y), cor)| Vertex::new(x, y, 0.0, 0.0, 0.0, cor)).collect();
+    draw_mesh(&Mesh { vertices, indices: vec![0, 1, 2, 0, 2, 3], texture: None });
+}
+
+/// A foto de fundo cobrindo a tela toda (cortando o que sobra, sem deformar), com o véu escuro
+/// por cima: mais leve em cima e mais pesado embaixo, como no JS.
+fn desenhar_fundo(formas: &Formas) {
+    let (largura, altura) = (screen_width(), screen_height());
+    let recorte = cobrir(formas.fundo.width(), formas.fundo.height(), largura, altura);
+    draw_texture_ex(
+        &formas.fundo,
+        0.0,
+        0.0,
+        WHITE,
+        DrawTextureParams {
+            dest_size: Some(vec2(largura, altura)),
+            source: Some(macroquad::math::Rect::new(recorte.x, recorte.y, recorte.w, recorte.h)),
+            ..Default::default()
+        },
+    );
+    let (cima, baixo) = (cor_de(rgba(0x0b102242)), cor_de(rgba(0x0b10226b)));
+    desenhar_degrade(Rect { x: 0.0, y: 0.0, w: largura, h: altura }, [cima, cima, baixo, baixo]);
+}
+
+/// A moldura brilhante, o painel escuro e as 64 casas do tabuleiro.
+fn desenhar_tabuleiro_vazio(formas: &Formas, tela: &TelaJogo) {
+    let moldura = tela.tabuleiro;
+    desenhar_forma(&formas.moldura, moldura, 0.059 * moldura.w, 0.05 * moldura.w);
+    desenhar_forma(&formas.grade, layout::fundo_da_grade(moldura), 0.04 * moldura.w, 0.0);
+    for linha in 0..SIZE {
+        for coluna in 0..SIZE {
+            let passo = cell_rect(tela.grade, linha, coluna);
+            let lado = 0.90 * passo.w;
+            let casa = Rect { x: passo.x + (passo.w - lado) / 2.0, y: passo.y + (passo.h - lado) / 2.0, w: lado, h: lado };
+            // O JS conta as casas a partir de 1; a "ímpar" do CSS é a de índice par daqui.
+            let forma = if (linha * SIZE + coluna) % 2 == 0 { &formas.casa_impar } else { &formas.casa_par };
+            desenhar_forma(forma, casa, 0.20 * lado, 0.0);
+        }
+    }
 }
 
 impl Sprites {
@@ -54,7 +248,7 @@ impl Sprites {
             // `None`: a biblioteca descobre sozinha que o arquivo é um PNG.
             .map(|sprite| (sprite, Texture2D::from_file_with_format(png_bytes(sprite), None)))
             .collect();
-        Sprites { texturas }
+        Sprites { texturas, formas: Formas::load() }
     }
 }
 
@@ -307,7 +501,7 @@ fn desenhar_particulas(passo: &Passo, t_ms: f32, area: Rect) {
         let (x, y) = (area.x + particula.x * lado, area.y + particula.y * lado);
         let tamanho = particula.tamanho * lado;
         match particula.forma {
-            Forma::Faisca => {
+            FormaDaParticula::Faisca => {
                 // Um quadrado girado, com um maior e mais fraco por baixo (o "brilho").
                 // O miolo usa a raiz do alfa: acende mais cedo e a faísca continua bem visível.
                 for (fator, fraqueza) in [(2.4, 0.3), (1.0, 1.0)] {
@@ -326,15 +520,15 @@ fn desenhar_particulas(passo: &Passo, t_ms: f32, area: Rect) {
                     );
                 }
             }
-            Forma::Anel => draw_circle_lines(x, y, tamanho / 2.0, (particula.espessura * lado).max(1.0), cor),
-            Forma::Linha => draw_rectangle_ex(
+            FormaDaParticula::Anel => draw_circle_lines(x, y, tamanho / 2.0, (particula.espessura * lado).max(1.0), cor),
+            FormaDaParticula::Linha => draw_rectangle_ex(
                 x,
                 y,
                 tamanho,
                 particula.espessura * lado,
                 DrawRectangleParams { offset: vec2(0.0, 0.5), rotation: particula.angulo, color: cor },
             ),
-            Forma::Veu => draw_rectangle(area.x, area.y, area.w, area.h, cor),
+            FormaDaParticula::Veu => draw_rectangle(area.x, area.y, area.w, area.h, cor),
         }
     }
 }
@@ -344,23 +538,37 @@ fn casa_de(area: Rect, indice: usize) -> Rect {
     cell_rect(area, indice / SIZE, indice % SIZE)
 }
 
+/// A parte visível da casa (0,90 do passo da grade, no meio): é onde ficam os realces, o mesmo
+/// retângulo que as casas desenhadas em `desenhar_tabuleiro_vazio`.
+fn casa_visivel(area: Rect, indice: usize) -> Rect {
+    let passo = casa_de(area, indice);
+    let lado = 0.90 * passo.w;
+    Rect { x: passo.x + (passo.w - lado) / 2.0, y: passo.y + (passo.h - lado) / 2.0, w: lado, h: lado }
+}
+
+/// Pinta o fundo de um realce dentro da casa `indice`, arredondado como ela.
+fn pintar_realce(formas: &Formas, area: Rect, indice: usize, cor: Color) {
+    let casa = casa_visivel(area, indice);
+    desenhar_forma_tingida(&formas.solida, casa, 0.20 * casa.w, 0.0, cor);
+}
+
 /// Realces que ficam ATRÁS das pedras (para não "sujar" a cor delas): fundo da casa marcada,
-/// do dedo em cima e da Dica.
-fn desenhar_fundos_de_realce(app: &App, area: Rect) {
+/// do dedo em cima, do alvo do arrasto e da Dica.
+fn desenhar_fundos_de_realce(app: &App, formas: &Formas, area: Rect) {
     let gestos = app.gestos();
     if let Some(indice) = gestos.selecionada() {
-        let casa = casa_de(area, indice);
-        draw_rectangle(casa.x, casa.y, casa.w, casa.h, Color::new(1.0, 1.0, 1.0, 0.22));
+        pintar_realce(formas, area, indice, cor_de(rgba(0xf7edab5c)));
     }
     if let Some(indice) = gestos.pressionada() {
-        let casa = casa_de(area, indice);
-        draw_rectangle(casa.x, casa.y, casa.w, casa.h, Color::new(1.0, 1.0, 1.0, 0.14));
+        pintar_realce(formas, area, indice, cor_de(rgba(0xe5d8ff3d)));
+    }
+    if let Some(indice) = gestos.alvo_do_arrasto() {
+        pintar_realce(formas, area, indice, cor_de(rgba(0xc4ffe451)));
     }
     if let Some((a, b)) = app.dica() {
         let pulso = pulso_da_dica();
         for indice in [a, b] {
-            let casa = casa_de(area, indice);
-            draw_rectangle(casa.x, casa.y, casa.w, casa.h, com_alfa(DESTAQUE, 0.25 * pulso));
+            pintar_realce(formas, area, indice, com_alfa(cor_de(rgba(0xffe9933d)), pulso));
         }
     }
 }
@@ -374,24 +582,24 @@ fn pulso_da_dica() -> f32 {
 fn desenhar_contornos_de_realce(app: &App, area: Rect) {
     let gestos = app.gestos();
     if let Some(indice) = gestos.selecionada() {
-        let casa = casa_de(area, indice);
+        let casa = casa_visivel(area, indice);
         draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, WHITE);
     }
     if let Some(indice) = gestos.alvo_do_arrasto() {
-        let casa = casa_de(area, indice);
+        let casa = casa_visivel(area, indice);
         draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, com_alfa(WHITE, 0.8));
     }
     if let Some((a, b)) = app.dica() {
         let pulso = pulso_da_dica();
         for indice in [a, b] {
-            let casa = casa_de(area, indice);
+            let casa = casa_visivel(area, indice);
             draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 4.0, com_alfa(DESTAQUE, pulso));
         }
     }
 }
 
 /// As abas, o painel de números e a barra de progresso.
-fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
+fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Formas) {
     let t = tela.texto;
     let zen = app.modo() == prisma_engine::Mode::Zen;
     botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
@@ -415,22 +623,28 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo) {
         desenhar_hamburguer(icone, WHITE);
     }
 
-    for (rotulo, valor, area) in [
-        ("PONTOS", &painel.pontos, tela.pontos),
-        ("NÍVEL", &painel.nivel, tela.nivel),
-        ("MELHOR", &painel.melhor, tela.melhor),
+    // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita.
+    let cartao = tela.cartao_pontos;
+    desenhar_forma(&formas.cartao, cartao, 0.045 * cartao.w, 0.0);
+    for (rotulo, valor, area, cor_do_valor, alinhamento) in [
+        ("PONTOS", &painel.pontos, tela.pontos, WHITE, Alinhamento::Esquerda),
+        ("NÍVEL", &painel.nivel, tela.nivel, cor_de(rgba(0xa2edddff)), Alinhamento::Centro),
+        ("MELHOR", &painel.melhor, tela.melhor, WHITE, Alinhamento::Direita),
     ] {
-        draw_rectangle(area.x, area.y, area.w, area.h, PAINEL);
         let em_cima = Rect { h: 0.38 * area.h, ..area };
         let embaixo = Rect { y: area.y + 0.38 * area.h, h: 0.62 * area.h, ..area };
-        escrever(rotulo, em_cima, 0.62 * t, TEXTO_SUAVE, Alinhamento::Centro);
-        escrever(valor, embaixo, 1.5 * t, WHITE, Alinhamento::Centro);
+        escrever(rotulo, em_cima, 0.62 * t, cor_de(rgba(0xb3b0d4ff)), alinhamento);
+        escrever(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento);
     }
 
+    // A barra de nível: trilho claro arredondado e, por cima, o preenchimento em degradê da
+    // esquerda (verde-água) para a direita (lilás), com a ponta direita reta.
     let barra = tela.barra;
-    draw_rectangle(barra.x, barra.y, barra.w, barra.h, ABA_INATIVA);
-    draw_rectangle(barra.x, barra.y, barra.w * painel.progresso, barra.h, BARRA_PREENCHIDA);
-    escrever(&painel.rotulo, tela.rotulo, 0.78 * t, TEXTO_SUAVE, Alinhamento::Centro);
+    desenhar_forma_tingida(&formas.solida, barra, barra.h / 2.0, 0.0, cor_de(rgba(0xffffff17)));
+    let progresso = if painel.progresso.is_finite() { painel.progresso.clamp(0.0, 1.0) } else { 0.0 };
+    let (esquerda, direita) = (cor_de(rgba(0x6be2d6ff)), cor_de(rgba(0xd09cffff)));
+    desenhar_degrade(Rect { w: barra.w * progresso, ..barra }, [esquerda, direita, direita, esquerda]);
+    escrever(&painel.rotulo, tela.rotulo, 0.78 * t, cor_de(rgba(0x9996b9ff)), Alinhamento::Direita);
     if let Some(ganho) = &painel.ganho {
         escrever(ganho, tela.rotulo, 0.9 * t, DESTAQUE, Alinhamento::Esquerda);
     }
@@ -528,6 +742,42 @@ fn desenhar_dialogo(tela: &TelaJogo) {
 /// `area` com `margem` pixels a menos em cada lado.
 fn encolher(area: Rect, margem: f32) -> Rect {
     Rect { x: area.x + margem, y: area.y + margem, w: (area.w - 2.0 * margem).max(0.0), h: (area.h - 2.0 * margem).max(0.0) }
+}
+
+/// Os desenhos dos três botões de baixo.
+#[derive(Clone, Copy)]
+enum Icone {
+    Embaralhar,
+    Dica,
+    NovoJogo,
+}
+
+/// Um botão de baixo: fundo arredondado, o ícone no alto e o rótulo embaixo. `ativo` falso deixa
+/// tudo a 40% de opacidade.
+fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icone, tamanho: f32, ativo: bool) {
+    let alfa = if ativo { 1.0 } else { 0.4 };
+    desenhar_forma_tingida(&formas.botao, area, 0.21 * area.h, 0.0, com_alfa(WHITE, alfa));
+    let cor = com_alfa(cor_de(rgba(0xeeeaffff)), alfa);
+    let lado = 0.38 * area.h;
+    let quadrado = Rect { x: area.x + (area.w - lado) / 2.0, y: area.y + 0.12 * area.h, w: lado, h: lado };
+    let linhas: Vec<Linha> = match icone {
+        Icone::Embaralhar => icones::embaralhar(quadrado),
+        Icone::Dica => icones::faisca(quadrado),
+        Icone::NovoJogo => icones::novo_jogo(quadrado),
+    };
+    let grossura = 0.07 * area.h;
+    for linha in &linhas {
+        for par in linha.windows(2) {
+            draw_line(par[0].0, par[0].1, par[1].0, par[1].1, grossura, cor);
+        }
+        // Uma bolinha em cada ponto arredonda as quinas e as pontas.
+        for &(x, y) in linha {
+            draw_circle(x, y, grossura / 2.0, cor);
+        }
+    }
+    let margem = 0.06 * area.w;
+    let embaixo = Rect { x: area.x + margem, y: area.y + 0.54 * area.h, w: area.w - 2.0 * margem, h: 0.38 * area.h };
+    escrever(rotulo, embaixo, tamanho, cor, Alinhamento::Centro);
 }
 
 /// Uma colcheia (♪) dentro do quadrado `area`: cabeça redonda, haste e bandeirinha.
@@ -814,12 +1064,13 @@ fn desenhar_guia_de_respiracao(app: &App, tela: &TelaJogo) {
 /// monta); aqui só se escolhe cor e posição.
 pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     clear_background(FUNDO);
+    desenhar_fundo(&sprites.formas);
     let painel = app.painel();
-    desenhar_cabecalho(app, &painel, tela);
+    desenhar_cabecalho(app, &painel, tela, &sprites.formas);
 
-    let tabuleiro = tela.tabuleiro;
-    draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, PAINEL);
-    desenhar_fundos_de_realce(app, tabuleiro);
+    desenhar_tabuleiro_vazio(&sprites.formas, tela);
+    let tabuleiro = tela.grade;
+    desenhar_fundos_de_realce(app, &sprites.formas, tabuleiro);
     desenhar_pedras(app, sprites, tabuleiro);
     if let Some((passo, t)) = app.passo_atual() {
         desenhar_particulas(passo, t, tabuleiro);
@@ -835,10 +1086,10 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     // Os botões de baixo. Com a partida acabada, a Dica fica apagada.
     let t = tela.texto;
     if let (true, Some(embaralhar)) = (painel.embaralhar_visivel, tela.botao_embaralhar) {
-        botao_da_tela(embaralhar, "Embaralhar", t, ABA_INATIVA, true);
+        desenhar_botao_de_acao(&sprites.formas, embaralhar, "Embaralhar", Icone::Embaralhar, t, true);
     }
-    botao_da_tela(tela.botao_dica, "Dica", t, ABA_INATIVA, painel.dica_ativa);
-    botao_da_tela(tela.botao_novo_jogo, "Novo jogo", t, ABA_INATIVA, true);
+    desenhar_botao_de_acao(&sprites.formas, tela.botao_dica, "Dica", Icone::Dica, t, painel.dica_ativa);
+    desenhar_botao_de_acao(&sprites.formas, tela.botao_novo_jogo, "Novo jogo", Icone::NovoJogo, t, true);
 
     desenhar_guia_de_respiracao(app, tela);
 

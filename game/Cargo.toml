@@ -11,6 +11,9 @@ license = "GPL-3.0-only"
 prisma_engine = { path = ".." }
 # Biblioteca que abre a janela, desenha, lê toque e (mais tarde) toca som.
 macroquad = { version = "0.4", features = ["audio"] }
+# O Macroquad só liga os leitores de PNG e TGA da crate `image`; ligar o de JPEG aqui (é a mesma
+# crate, o Cargo junta os dois pedidos) faz ele abrir também a foto de fundo `prisma-bg.jpg`.
+image = { version = "0.24", default-features = false, features = ["jpeg"] }
 # Ler e gravar os arquivos de partida e recordes (JSON), no mesmo formato do Prisma em JS.
 serde_json = "1"
 

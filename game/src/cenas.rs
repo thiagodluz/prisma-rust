@@ -20,7 +20,7 @@ fn tela() -> TelaJogo {
 
 /// O ponto do meio de uma casa, em pixels da tela de referência.
 fn centro(tela: &TelaJogo, casa: usize) -> (f32, f32) {
-    let retangulo = cell_rect(tela.tabuleiro, casa / SIZE, casa % SIZE);
+    let retangulo = cell_rect(tela.grade, casa / SIZE, casa % SIZE);
     (retangulo.x + retangulo.w / 2.0, retangulo.y + retangulo.h / 2.0)
 }
 

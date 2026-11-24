@@ -518,13 +518,13 @@ impl App {
                 self.apertar(botao);
                 return;
             }
-            // Qualquer toque no tabuleiro apaga a Dica.
-            if tela.tabuleiro.contem(x, y) {
+            // Qualquer toque nas casas apaga a Dica.
+            if tela.grade.contem(x, y) {
                 self.dica = None;
             }
         }
         let bloqueado = self.bloqueado();
-        if let Acao::Trocar(a, b) = self.gestos.tratar(evento, tela.tabuleiro, bloqueado) {
+        if let Acao::Trocar(a, b) = self.gestos.tratar(evento, tela.grade, bloqueado) {
             self.jogar(a, b);
         }
     }
@@ -1300,7 +1300,7 @@ mod tests {
 
     /// O ponto do meio de uma casa, em pixels da tela.
     fn centro(tela: &TelaJogo, casa: usize) -> (f32, f32) {
-        let retangulo = cell_rect(tela.tabuleiro, casa / SIZE, casa % SIZE);
+        let retangulo = cell_rect(tela.grade, casa / SIZE, casa % SIZE);
         (retangulo.x + retangulo.w / 2.0, retangulo.y + retangulo.h / 2.0)
     }
 
@@ -1410,6 +1410,31 @@ mod tests {
         assert_eq!(app.jogo().board, tabuleiro);
         assert_eq!(app.jogo().score, pontos);
         assert!(app.registro().contains(&"PRISMA_M1 jogada valida=false pontos=0 nivel=1".to_string()));
+    }
+
+    #[test]
+    fn o_toque_conta_a_casa_pela_grade_e_nao_pela_moldura() {
+        let tela = tela();
+        for casa in 0..SIZE * SIZE {
+            let mut app = App::com_sementes(7, 9);
+            let retangulo = cell_rect(tela.grade, casa / SIZE, casa % SIZE);
+            // Perto da borda de baixo e da direita da casa: quem contasse a partir da moldura erraria a casa.
+            let (x, y) = (retangulo.x + 0.9 * retangulo.w, retangulo.y + 0.9 * retangulo.h);
+            app.tocar(Evento::Baixo { x, y }, &tela);
+            app.tocar(Evento::Cima { x, y }, &tela);
+            assert_eq!(app.gestos().selecionada(), Some(casa), "casa {casa}");
+        }
+    }
+
+    #[test]
+    fn tocar_na_moldura_fora_da_grade_nao_marca_casa() {
+        let tela = tela();
+        let mut app = App::com_sementes(7, 9);
+        let (x, y) = (tela.tabuleiro.x + 1.0, tela.tabuleiro.y + 1.0);
+        assert!(tela.tabuleiro.contem(x, y) && !tela.grade.contem(x, y));
+        app.tocar(Evento::Baixo { x, y }, &tela);
+        app.tocar(Evento::Cima { x, y }, &tela);
+        assert_eq!(app.gestos().selecionada(), None, "a borda da moldura não é casa");
     }
 
     #[test]
