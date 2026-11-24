@@ -817,7 +817,7 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     let painel = app.painel();
     desenhar_cabecalho(app, &painel, tela);
 
-    let tabuleiro = tela.tabuleiro;
+    let tabuleiro = tela.grade;
     draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, PAINEL);
     desenhar_fundos_de_realce(app, tabuleiro);
     desenhar_pedras(app, sprites, tabuleiro);

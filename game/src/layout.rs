@@ -133,6 +133,12 @@ const FILA_MAXIMA: f32 = 0.15;
 const LARGURA_MAXIMA: f32 = 0.94;
 /// Tamanho base da letra: 4,5% do menor lado.
 const TEXTO: f32 = 0.045;
+/// A folga entre a moldura do tabuleiro e a grade das casas (3,5% da largura da moldura).
+const GRADE_FOLGA: f32 = 0.035;
+/// A folga entre a moldura e o painel escuro que fica dentro dela (2,1% da largura da moldura).
+const FUNDO_FOLGA: f32 = 0.021;
+/// A folga lateral das colunas do painel dentro do cartão de pontos (4,5% da largura).
+const CARTAO_FOLGA: f32 = 0.045;
 
 /// Onde fica cada controle da folha de Som, a janela que cobre da barra de progresso até os
 /// botões. Os controles do Zen (ligar e escolher Música e Ambiente, Respiração) só existem no
@@ -230,8 +236,14 @@ pub struct TelaJogo {
     /// A barra de progresso do nível e a linha de texto logo abaixo dela.
     pub barra: Rect,
     pub rotulo: Rect,
-    /// O tabuleiro: sempre um quadrado.
+    /// O cartão arredondado que guarda as três colunas do painel (a largura toda do tabuleiro).
+    pub cartao_pontos: Rect,
+    /// O tabuleiro, ou melhor, a moldura dele: sempre um quadrado, com a largura de tudo que fica
+    /// alinhado com ele. As casas ficam na `grade`, dentro dele.
     pub tabuleiro: Rect,
+    /// Onde ficam as 64 casas: sempre um quadrado, dentro do `tabuleiro`, com uma folga em volta
+    /// (a moldura). Toque e posição das pedras contam a partir dela, nunca do `tabuleiro`.
+    pub grade: Rect,
     /// Só existe no modo Zen (no Clássico não dá para embaralhar).
     pub botao_embaralhar: Option<Rect>,
     pub botao_dica: Rect,
@@ -266,7 +278,9 @@ impl TelaJogo {
         melhor: Rect::VAZIO,
         barra: Rect::VAZIO,
         rotulo: Rect::VAZIO,
+        cartao_pontos: Rect::VAZIO,
         tabuleiro: Rect::VAZIO,
+        grade: Rect::VAZIO,
         botao_embaralhar: None,
         botao_dica: Rect::VAZIO,
         botao_novo_jogo: Rect::VAZIO,
@@ -345,11 +359,13 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
 
     // Abas: duas metades com um espaço no meio, e os botões ♪ e ≡ (quadrados) no fim da linha.
     let aba_w = (lado - 2.0 * abas_h - 3.0 * espaco) / 2.0;
-    // Painel: três colunas, a dos pontos mais larga (os números crescem).
-    let util = lado - 2.0 * espaco;
-    let (pontos_w, nivel_w, melhor_w) = (0.40 * util, 0.24 * util, 0.36 * util);
-    let nivel_x = esquerda + pontos_w + espaco;
-    let melhor_x = nivel_x + nivel_w + espaco;
+    // Painel: um cartão com três colunas coladas: os pontos à esquerda, o nível no meio e o
+    // melhor à direita, com uma folga nas laterais do cartão.
+    let util = lado - 2.0 * CARTAO_FOLGA * lado;
+    let (pontos_w, nivel_w, melhor_w) = (0.36 * util, 0.28 * util, 0.36 * util);
+    let pontos_x = esquerda + CARTAO_FOLGA * lado;
+    let nivel_x = pontos_x + pontos_w;
+    let melhor_x = nivel_x + nivel_w;
     // Botões: a largura é a de "três botões"; com dois, eles ficam centrados.
     let botao_w = (lado - 2.0 * espaco) / 3.0;
     let quantos = if com_embaralhar { 3.0 } else { 2.0 };
@@ -362,6 +378,7 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
     };
 
     let tabuleiro = faixa(esquerda, tabuleiro_y, lado, lado);
+    let grade = encolher_rect(tabuleiro, GRADE_FOLGA * lado);
     let guia_respiracao = if com_embaralhar { faixa(esquerda, guia_y, lado, guia_h) } else { Rect::VAZIO };
     // A folha de Som cobre da barra de progresso até o fim dos botões.
     let folha = faixa(esquerda, barra_y, lado, botoes_y + botoes_h - barra_y);
@@ -393,12 +410,14 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
         aba_classico: faixa(esquerda + aba_w + espaco, abas_y, aba_w, abas_h),
         botao_som: faixa(esquerda + lado - 2.0 * abas_h - espaco, abas_y, abas_h, abas_h),
         botao_menu: faixa(esquerda + lado - abas_h, abas_y, abas_h, abas_h),
-        pontos: faixa(esquerda, painel_y, pontos_w, painel_h),
+        cartao_pontos: faixa(esquerda, painel_y, lado, painel_h),
+        pontos: faixa(pontos_x, painel_y, pontos_w, painel_h),
         nivel: faixa(nivel_x, painel_y, nivel_w, painel_h),
         melhor: faixa(melhor_x, painel_y, melhor_w, painel_h),
         barra: faixa(esquerda, barra_y, lado, barra_h),
         rotulo: faixa(esquerda, rotulo_y, lado, rotulo_h),
         tabuleiro,
+        grade,
         botao_embaralhar,
         botao_dica: faixa(botao_dica_x, botoes_y, botao_w, botoes_h),
         botao_novo_jogo: faixa(botao_dica_x + passo, botoes_y, botao_w, botoes_h),
@@ -412,6 +431,16 @@ pub fn tela_jogo_com(largura: f32, altura: f32, com_embaralhar: bool, vibrador: 
         dialogo_confirmar: faixa(dialogo.x + 2.0 * margem_d + escolha_w, escolha_y, escolha_w, escolha_h),
         texto: TEXTO * unidade,
     }
+}
+
+/// O painel escuro que fica dentro da moldura do tabuleiro (e por baixo da grade das casas).
+pub fn fundo_da_grade(tabuleiro: Rect) -> Rect {
+    encolher_rect(tabuleiro, FUNDO_FOLGA * tabuleiro.w)
+}
+
+/// `area` com `margem` a menos em cada um dos quatro lados.
+fn encolher_rect(area: Rect, margem: f32) -> Rect {
+    Rect { x: area.x + margem, y: area.y + margem, w: area.w - 2.0 * margem, h: area.h - 2.0 * margem }
 }
 
 /// Divide uma linha em duas partes lado a lado: a da esquerda com `esquerda_w` de largura e a
@@ -822,6 +851,64 @@ mod tests_tela_jogo {
     }
 
     #[test]
+    fn a_grade_fica_dentro_da_moldura() {
+        for (largura, altura) in TELAS {
+            for zen in [true, false] {
+                let tela = tela_jogo(largura, altura, zen);
+                let (moldura, grade) = (tela.tabuleiro, tela.grade);
+                assert!((grade.w - grade.h).abs() < 1e-3, "a grade é quadrada em {largura}x{altura}");
+                assert!(dentro(grade, moldura), "grade fora da moldura em {largura}x{altura}");
+                let folga = 0.035 * moldura.w;
+                assert!((grade.x - moldura.x - folga).abs() < 1e-2, "{largura}x{altura}");
+                assert!((grade.y - moldura.y - folga).abs() < 1e-2, "{largura}x{altura}");
+                assert!((grade.w - (moldura.w - 2.0 * folga)).abs() < 1e-2, "{largura}x{altura}");
+                let fundo = fundo_da_grade(moldura);
+                assert!(dentro(grade, fundo), "a grade cabe no painel escuro em {largura}x{altura}");
+                assert!(dentro(fundo, moldura), "o painel escuro cabe na moldura em {largura}x{altura}");
+            }
+        }
+    }
+
+    #[test]
+    fn o_cartao_de_pontos_cobre_as_tres_colunas() {
+        for (largura, altura) in TELAS {
+            let tela = tela_jogo(largura, altura, true);
+            let colunas = [tela.pontos, tela.nivel, tela.melhor];
+            for coluna in colunas {
+                assert!(dentro(coluna, tela.cartao_pontos), "coluna fora do cartão em {largura}x{altura}");
+            }
+            assert!(!se_cruzam(colunas[0], colunas[1]) && !se_cruzam(colunas[1], colunas[2]), "{largura}x{altura}");
+            // O cartão não encosta em nada da linha de cima nem da barra.
+            for (nome, outro) in [("aba_zen", tela.aba_zen), ("aba_classico", tela.aba_classico), ("botao_som", tela.botao_som), ("botao_menu", tela.botao_menu), ("barra", tela.barra), ("rotulo", tela.rotulo)] {
+                assert!(!se_cruzam(tela.cartao_pontos, outro), "o cartão cruza {nome} em {largura}x{altura}");
+            }
+            assert!(tela.cartao_pontos.x == tela.tabuleiro.x && (tela.cartao_pontos.w - tela.tabuleiro.w).abs() < 1e-3, "o cartão tem a largura da moldura");
+        }
+    }
+
+    #[test]
+    fn as_colunas_ficam_afastadas_das_bordas_do_cartao() {
+        for (largura, altura) in TELAS {
+            let tela = tela_jogo(largura, altura, true);
+            let (cartao, folga) = (tela.cartao_pontos, 0.045 * tela.tabuleiro.w);
+            assert!((tela.pontos.x - cartao.x - folga).abs() < 1e-2, "folga da esquerda em {largura}x{altura}");
+            let direita = tela.melhor.x + tela.melhor.w;
+            assert!((cartao.x + cartao.w - direita - folga).abs() < 1e-2, "folga da direita em {largura}x{altura}");
+            // As três colunas ocupam a faixa útil sem buracos: uma começa onde a anterior termina.
+            assert!((tela.nivel.x - (tela.pontos.x + tela.pontos.w)).abs() < 1e-2, "{largura}x{altura}");
+            assert!((tela.melhor.x - (tela.nivel.x + tela.nivel.w)).abs() < 1e-2, "{largura}x{altura}");
+        }
+    }
+
+    #[test]
+    fn a_borda_da_moldura_nao_e_casa() {
+        let tela = tela_jogo(540.0, 960.0, true);
+        let (x, y) = (tela.tabuleiro.x + 1.0, tela.tabuleiro.y + 1.0);
+        assert!(tela.tabuleiro.contem(x, y));
+        assert!(!tela.grade.contem(x, y), "o toque na borda da moldura não é da grade");
+    }
+
+    #[test]
     fn ordem_vertical() {
         for (largura, altura) in TELAS {
             let tela = tela_jogo(largura, altura, true);
@@ -890,9 +977,12 @@ mod tests_tela_jogo {
                 assert_eq!(tela.botao_embaralhar, None);
                 assert_eq!(tela.cartao_fim, vazio);
                 assert_eq!(tela.dialogo, vazio);
+                assert_eq!(tela.grade, vazio);
+                assert_eq!(tela.cartao_pontos, vazio);
                 assert_eq!(tela.texto, 0.0);
                 // Nenhum toque cai em lugar nenhum.
                 assert!(!tela.tabuleiro.contem(0.0, 0.0));
+                assert!(!tela.grade.contem(0.0, 0.0));
             }
         }
     }
