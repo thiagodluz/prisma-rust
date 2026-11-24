@@ -3,6 +3,9 @@
 
 use prisma_engine::{Tile, TileKind, COLORS};
 
+/// A foto de fundo do jogo (JPEG, 940×1672), embutida no programa.
+pub const FUNDO_JPG: &[u8] = include_bytes!("../assets/prisma-bg.jpg");
+
 /// Tamanho da casa do tabuleiro dentro de cada PNG, em pixels.
 pub const CELL_PX: u32 = 128;
 /// Tamanho do PNG: a casa mais uma margem de 16 px de cada lado (para a pedra não ser cortada).

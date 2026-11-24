@@ -9,14 +9,15 @@ use macroquad::prelude::*;
 use prisma_engine::{position, Board, Tile, SIZE};
 
 use crate::app::{App, Folha, Painel};
-use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, SPRITE_RATIO};
+use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, SPRITE_RATIO};
+use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
 use crate::linha::{
     deslocamento_troca, embaralhar_alfa, fusao_da_casa, fusao_ms, limpeza_da_casa, linhas_de_queda, nivel_faixa,
     queda_deslocamento, queda_ms, resgate_da_casa, Passo, TipoVisual,
 };
 use crate::menu::{blocos_de_recordes, creditos};
-use crate::particulas::{ajustar, particulas, realce_da_faixa, Forma};
+use crate::particulas::{ajustar, particulas, realce_da_faixa, Forma as FormaDaParticula};
 use crate::preferencias::{orbe, segundos_restantes, Intensidade};
 
 /// Cor de fundo da tela (a mesma do Prisma em JS).
@@ -43,6 +44,156 @@ const INTERRUPTOR_APAGADO: Color = Color::from_hex(0x464f7a);
 /// Todas as imagens já carregadas na placa de vídeo, uma `Texture2D` por `Sprite`.
 pub struct Sprites {
     texturas: HashMap<Sprite, Texture2D>,
+    formas: Formas,
+}
+
+/// Uma forma desenhada por código (retângulo arredondado com degradê, borda e sombra), pintada
+/// UMA vez em `Formas::load` e guardada como textura. Para ocupar qualquer tamanho sem entortar
+/// os cantos, `desenhar_forma` a corta em nove fatias.
+struct Forma {
+    textura: Texture2D,
+    /// O lado da imagem, em pixels dela.
+    lado: f32,
+    /// O tamanho do canto (sombra + raio) na imagem, em pixels dela.
+    canto: f32,
+}
+
+impl Forma {
+    fn nova(receita: Receita) -> Forma {
+        let lado = receita.lado as u16;
+        let textura = Texture2D::from_rgba8(lado, lado, &pintar(&receita));
+        textura.set_filter(FilterMode::Linear);
+        Forma { textura, lado: receita.lado as f32, canto: (receita.sombra + receita.raio) as f32 }
+    }
+}
+
+/// A foto de fundo e as formas do tabuleiro, prontas na placa de vídeo.
+struct Formas {
+    fundo: Texture2D,
+    moldura: Forma,
+    /// O painel escuro que fica dentro da moldura.
+    grade: Forma,
+    /// As duas casas do tabuleiro, de tons um pouco diferentes (listras verticais, como no JS).
+    casa_par: Forma,
+    casa_impar: Forma,
+}
+
+/// Uma cor `[r, g, b, a]` de `formas.rs` como `Color` do Macroquad.
+fn cor_de(cor: formas::Cor) -> Color {
+    Color::from_rgba(cor[0], cor[1], cor[2], cor[3])
+}
+
+impl Formas {
+    /// As receitas são as do CSS "illustrated" do Prisma em JS (`style.css`): `lado` é o tamanho
+    /// da imagem, `raio` e `borda` e `sombra` estão em pixels dela.
+    fn load() -> Formas {
+        let fundo = Texture2D::from_file_with_format(FUNDO_JPG, None);
+        fundo.set_filter(FilterMode::Linear);
+        let sem_borda = rgba(0);
+        let casa = |degrade| Receita {
+            lado: 64,
+            raio: 12,
+            borda: 0,
+            cor_da_borda: sem_borda,
+            degrade,
+            angulo: 155.0,
+            sombra: 0,
+            cor_da_sombra: sem_borda,
+        };
+        Formas {
+            fundo,
+            moldura: Forma::nova(Receita {
+                lado: 168,
+                raio: 22,
+                borda: 2,
+                cor_da_borda: rgba(0xcee6ff5c),
+                degrade: [rgba(0x7790bd65), rgba(0x202a4eff), rgba(0x785b9b72)],
+                angulo: 145.0,
+                sombra: 20,
+                cor_da_sombra: rgba(0x030616bd),
+            }),
+            grade: Forma::nova(Receita {
+                lado: 64,
+                raio: 14,
+                borda: 0,
+                cor_da_borda: sem_borda,
+                degrade: [rgba(0x0d142cff); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            casa_par: Forma::nova(casa([rgba(0xbfd5ff19), rgba(0x869ec912), rgba(0x4d67940b)])),
+            casa_impar: Forma::nova(casa([rgba(0xc8c1ff1b), rgba(0x8a94c913), rgba(0x4d67940b)])),
+        }
+    }
+}
+
+/// Desenha `forma` cobrindo `area`, com cantos de `raio` pixels e uma sombra de `sombra` pixels
+/// em volta (a sombra fica FORA de `area`).
+fn desenhar_forma(forma: &Forma, area: Rect, raio: f32, sombra: f32) {
+    let destino = expandir(area, sombra);
+    for fatia in nove_fatias(forma.lado, forma.canto, destino, sombra + raio) {
+        if fatia.destino.w <= 0.0 || fatia.destino.h <= 0.0 {
+            continue;
+        }
+        let (o, d) = (fatia.origem, fatia.destino);
+        draw_texture_ex(
+            &forma.textura,
+            d.x,
+            d.y,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(d.w, d.h)),
+                source: Some(macroquad::math::Rect::new(o.x, o.y, o.w, o.h)),
+                ..Default::default()
+            },
+        );
+    }
+}
+
+/// Um retângulo com cor diferente em cada canto (o degradê vem da mistura entre eles):
+/// `cores` é cima-esquerda, cima-direita, baixo-direita, baixo-esquerda.
+fn desenhar_degrade(area: Rect, cores: [Color; 4]) {
+    let cantos = [(area.x, area.y), (area.x + area.w, area.y), (area.x + area.w, area.y + area.h), (area.x, area.y + area.h)];
+    let vertices = cantos.iter().zip(cores).map(|(&(x, y), cor)| Vertex::new(x, y, 0.0, 0.0, 0.0, cor)).collect();
+    draw_mesh(&Mesh { vertices, indices: vec![0, 1, 2, 0, 2, 3], texture: None });
+}
+
+/// A foto de fundo cobrindo a tela toda (cortando o que sobra, sem deformar), com o véu escuro
+/// por cima: mais leve em cima e mais pesado embaixo, como no JS.
+fn desenhar_fundo(formas: &Formas) {
+    let (largura, altura) = (screen_width(), screen_height());
+    let recorte = cobrir(formas.fundo.width(), formas.fundo.height(), largura, altura);
+    draw_texture_ex(
+        &formas.fundo,
+        0.0,
+        0.0,
+        WHITE,
+        DrawTextureParams {
+            dest_size: Some(vec2(largura, altura)),
+            source: Some(macroquad::math::Rect::new(recorte.x, recorte.y, recorte.w, recorte.h)),
+            ..Default::default()
+        },
+    );
+    let (cima, baixo) = (cor_de(rgba(0x0b102242)), cor_de(rgba(0x0b10226b)));
+    desenhar_degrade(Rect { x: 0.0, y: 0.0, w: largura, h: altura }, [cima, cima, baixo, baixo]);
+}
+
+/// A moldura brilhante, o painel escuro e as 64 casas do tabuleiro.
+fn desenhar_tabuleiro_vazio(formas: &Formas, tela: &TelaJogo) {
+    let moldura = tela.tabuleiro;
+    desenhar_forma(&formas.moldura, moldura, 0.059 * moldura.w, 0.05 * moldura.w);
+    desenhar_forma(&formas.grade, layout::fundo_da_grade(moldura), 0.04 * moldura.w, 0.0);
+    for linha in 0..SIZE {
+        for coluna in 0..SIZE {
+            let passo = cell_rect(tela.grade, linha, coluna);
+            let lado = 0.90 * passo.w;
+            let casa = Rect { x: passo.x + (passo.w - lado) / 2.0, y: passo.y + (passo.h - lado) / 2.0, w: lado, h: lado };
+            // O JS conta as casas a partir de 1; a "ímpar" do CSS é a de índice par daqui.
+            let forma = if (linha * SIZE + coluna) % 2 == 0 { &formas.casa_impar } else { &formas.casa_par };
+            desenhar_forma(forma, casa, 0.20 * lado, 0.0);
+        }
+    }
 }
 
 impl Sprites {
@@ -54,7 +205,7 @@ impl Sprites {
             // `None`: a biblioteca descobre sozinha que o arquivo é um PNG.
             .map(|sprite| (sprite, Texture2D::from_file_with_format(png_bytes(sprite), None)))
             .collect();
-        Sprites { texturas }
+        Sprites { texturas, formas: Formas::load() }
     }
 }
 
@@ -307,7 +458,7 @@ fn desenhar_particulas(passo: &Passo, t_ms: f32, area: Rect) {
         let (x, y) = (area.x + particula.x * lado, area.y + particula.y * lado);
         let tamanho = particula.tamanho * lado;
         match particula.forma {
-            Forma::Faisca => {
+            FormaDaParticula::Faisca => {
                 // Um quadrado girado, com um maior e mais fraco por baixo (o "brilho").
                 // O miolo usa a raiz do alfa: acende mais cedo e a faísca continua bem visível.
                 for (fator, fraqueza) in [(2.4, 0.3), (1.0, 1.0)] {
@@ -326,15 +477,15 @@ fn desenhar_particulas(passo: &Passo, t_ms: f32, area: Rect) {
                     );
                 }
             }
-            Forma::Anel => draw_circle_lines(x, y, tamanho / 2.0, (particula.espessura * lado).max(1.0), cor),
-            Forma::Linha => draw_rectangle_ex(
+            FormaDaParticula::Anel => draw_circle_lines(x, y, tamanho / 2.0, (particula.espessura * lado).max(1.0), cor),
+            FormaDaParticula::Linha => draw_rectangle_ex(
                 x,
                 y,
                 tamanho,
                 particula.espessura * lado,
                 DrawRectangleParams { offset: vec2(0.0, 0.5), rotation: particula.angulo, color: cor },
             ),
-            Forma::Veu => draw_rectangle(area.x, area.y, area.w, area.h, cor),
+            FormaDaParticula::Veu => draw_rectangle(area.x, area.y, area.w, area.h, cor),
         }
     }
 }
@@ -814,11 +965,12 @@ fn desenhar_guia_de_respiracao(app: &App, tela: &TelaJogo) {
 /// monta); aqui só se escolhe cor e posição.
 pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     clear_background(FUNDO);
+    desenhar_fundo(&sprites.formas);
     let painel = app.painel();
     desenhar_cabecalho(app, &painel, tela);
 
+    desenhar_tabuleiro_vazio(&sprites.formas, tela);
     let tabuleiro = tela.grade;
-    draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, PAINEL);
     desenhar_fundos_de_realce(app, tabuleiro);
     desenhar_pedras(app, sprites, tabuleiro);
     if let Some((passo, t)) = app.passo_atual() {

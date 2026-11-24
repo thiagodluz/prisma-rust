@@ -10,6 +10,7 @@ As imagens desta pasta são **adaptações** das imagens do Prisma em JS
 | `burst-0.png` a `burst-6.png` | `burst-atlas.webp` (Pulso) |
 | `cross-0.png` a `cross-6.png` | `cross-atlas.webp` (Raio) |
 | `spectrum.png` | `spectrum-gem.webp` (Espectro) |
+| `prisma-bg.jpg` | `prisma-bg.jpg` (foto de fundo do jogo; copiada sem alteração) |
 
 ## O que foi alterado
 
