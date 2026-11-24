@@ -8,6 +8,7 @@ mod audio;
 mod cenas;
 mod contador;
 mod efeitos;
+mod formas;
 mod formato;
 mod fundo;
 mod input;
