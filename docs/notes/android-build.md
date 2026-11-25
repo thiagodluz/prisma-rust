@@ -59,8 +59,10 @@ chave fixa do app; ver "Assinatura").
 3. O app aparece como **Prisma (Rust)** (identificador `com.thiagodluz.prisma_game`, diferente
    do `com.thiagodluz.prisma` do JS, então os dois convivem).
 
-A release `apk-mais-recente` é apagada e recriada a cada envio para a `main`, sempre com o
-APK novo. Por segurança o fluxo também guarda o APK como artefato da execução
+A release `apk-mais-recente` é atualizada a cada envio para a `main`, mas só depois de o APK
+ser gerado e de os dois celulares virtuais (Android 34 e 30) jogarem sem erro (job `publicar`);
+se algum falhar, o APK anterior continua no link. A release não é apagada: a etiqueta é movida
+e o arquivo é substituído no lugar. Por segurança o fluxo também guarda o APK como artefato da execução
 (`prisma-debug-apk`, em zip).
 
 ## Assinatura (importante)
