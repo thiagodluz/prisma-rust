@@ -194,6 +194,9 @@ pub struct Painel {
     pub embaralhar_visivel: bool,
     /// A Dica não funciona com a partida acabada.
     pub dica_ativa: bool,
+    /// O progresso não está sendo salvo (pasta não achada, arquivo que não deu para ler ou a última
+    /// gravação falhou): a tela mostra um aviso fixo até voltar a gravar.
+    pub sem_salvar: bool,
 }
 
 /// Um valor que fica na tela por um tempo e some sozinho.
@@ -322,6 +325,8 @@ pub struct App {
     salvador: Salvador,
     /// Os erros de gravação da última vez que gravei, para não repetir a mesma linha no registro.
     ultimos_erros: Vec<String>,
+    /// A última gravação da partida falhou (some quando uma gravação dá certo).
+    gravacao_falhou: bool,
     /// Linhas "PRISMA_M1 ...", "PRISMA_M2 ..." e "PRISMA_M3 ..." que ainda não foram entregues (o
     /// teste do celular virtual lê).
     registros: Vec<String>,
@@ -396,6 +401,7 @@ impl App {
         ));
         let mut erros = Vec::new();
         app.gravar_recordes_que_mudaram(mudaram, &mut erros);
+        app.gravacao_falhou = !erros.is_empty();
         app.avisar_erros(erros);
         app
     }
@@ -414,6 +420,7 @@ impl App {
             recordes,
             salvador,
             ultimos_erros: Vec::new(),
+            gravacao_falhou: false,
             registros: vec![format!("PRISMA_M1 pronto modo={}", nome_do_modo(modo))],
             preferencias: Preferencias::default(),
             sons: Vec::new(),
@@ -818,7 +825,8 @@ impl App {
     /// Grava as preferências de som. Falha de gravação nunca interrompe o jogo: a escolha vale
     /// até fechar o app e o erro vai para o registro (uma vez, como os outros).
     fn gravar_preferencias(&mut self) {
-        let erros = self.salvador.gravar_preferencias(&self.preferencias).err().into_iter().collect();
+        let erros: Vec<String> = self.salvador.gravar_preferencias(&self.preferencias).err().into_iter().collect();
+        self.gravacao_falhou |= !erros.is_empty();
         self.avisar_erros(erros);
     }
 
@@ -947,6 +955,7 @@ impl App {
             erros.push(erro);
         }
         self.gravar_recordes_que_mudaram(recordes_mudaram, &mut erros);
+        self.gravacao_falhou = !erros.is_empty();
         self.avisar_erros(erros);
     }
 
@@ -1180,6 +1189,7 @@ impl App {
             dialogo: self.dialogo,
             embaralhar_visivel: self.modo == Mode::Zen,
             dica_ativa: !jogo.ended,
+            sem_salvar: self.gravacao_falhou || self.salvador.com_problema(),
         }
     }
 
@@ -2423,6 +2433,35 @@ mod tests {
         let registro = app.registro();
         assert_eq!(linhas_m2(&registro, "erro_ao_gravar").len(), 1, "o erro é avisado uma vez só: {registro:?}");
         assert!(linhas_m2(&registro, "gravado").is_empty(), "{registro:?}");
+    }
+
+    #[test]
+    fn o_painel_avisa_quando_o_progresso_nao_esta_sendo_salvo() {
+        // De propósito sem pasta (testes e fotos): sem aviso.
+        assert!(!App::abrir(Salvador::nenhum()).painel().sem_salvar);
+        // A pasta de dados não foi achada: avisa desde a abertura.
+        assert!(App::abrir(Salvador::sem_pasta()).painel().sem_salvar);
+        // Pasta boa: sem aviso; a gravação falha: avisa; volta a dar certo: o aviso some.
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        assert!(!app.painel().sem_salvar);
+        fs::create_dir_all(pasta.0.join("zen.json.tmp")).unwrap();
+        jogar_inteira(&mut app);
+        assert!(app.painel().sem_salvar, "a partida não foi gravada");
+        fs::remove_dir_all(pasta.0.join("zen.json.tmp")).unwrap();
+        jogar_inteira(&mut app);
+        assert!(!app.painel().sem_salvar, "gravou de novo: o aviso some sozinho");
+    }
+
+    #[test]
+    fn arquivo_ilegivel_na_abertura_avisa_e_nao_e_sobrescrito() {
+        let pasta = pasta_de_teste();
+        fs::create_dir_all(pasta.0.join("zen.json")).unwrap(); // existe, mas não se lê
+        let mut app = abrir(&pasta);
+        assert!(app.painel().sem_salvar, "o aviso já na abertura");
+        jogar_inteira(&mut app);
+        assert!(pasta.0.join("zen.json").is_dir(), "o que havia lá continua intacto");
+        assert!(app.painel().sem_salvar);
     }
 
     #[test]

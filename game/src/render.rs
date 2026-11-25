@@ -684,6 +684,9 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
     escrever(&painel.rotulo, tela.rotulo, 0.78 * t, cor_de(rgba(0x9996b9ff)), Alinhamento::Direita);
     if let Some(ganho) = &painel.ganho {
         escrever(ganho, tela.rotulo, 0.9 * t, DESTAQUE, Alinhamento::Esquerda);
+    } else if painel.sem_salvar {
+        // Fixo até voltar a gravar; o "+250" tem a vez quando aparece.
+        escrever("Não está salvando", tela.rotulo, 0.78 * t, cor_de(rgba(0xffc069ff)), Alinhamento::Esquerda);
     }
 }
 

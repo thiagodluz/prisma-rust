@@ -11,7 +11,9 @@
 use crate::formato::{json_para_partida, json_para_recordes, partida_para_json, recordes_para_json, Recordes};
 use crate::preferencias::{json_para_preferencias, preferencias_para_json, Preferencias};
 use prisma_engine::{Game, Mode, SavedMode};
+use std::cell::RefCell;
 use std::fs;
+use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 
 /// Arquivo maior que 1 MiB conta como estragado, sem nem ser lido inteiro.
@@ -35,6 +37,18 @@ pub enum Origem {
 #[derive(Clone, Debug)]
 pub struct Salvador {
     pasta: Option<PathBuf>,
+    /// A pasta de dados devia existir e não foi achada (diferente de `nenhum`, que é de propósito).
+    pasta_nao_achada: bool,
+    /// Arquivos que existem mas não deu para ler (permissão, armazenamento): podem ter um save
+    /// bom, então NUNCA são sobrescritos nesta execução. Um arquivo estragado de verdade não entra
+    /// aqui: ele ganha a cópia `.corrupt` e pode ser trocado.
+    protegidos: RefCell<Vec<String>>,
+}
+
+/// Só "não existe" (o arquivo, ou a pasta dele) conta como nada para ler. Qualquer outro erro é
+/// falha de acesso: o arquivo pode existir.
+fn e_ausencia(erro: &Error) -> bool {
+    matches!(erro.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
 }
 
 fn nome_da_partida(modo: Mode) -> &'static str {
@@ -68,12 +82,42 @@ fn gravar_com_seguranca(pasta: &Path, nome: &str, texto: &str) -> Result<(), Str
 impl Salvador {
     /// Um salvador que usa essa pasta (ela é criada na primeira gravação, se não existir).
     pub fn em(pasta: PathBuf) -> Salvador {
-        Salvador { pasta: Some(pasta) }
+        Salvador { pasta: Some(pasta), pasta_nao_achada: false, protegidos: RefCell::new(Vec::new()) }
     }
 
-    /// Um salvador que não lê nem grava nada.
+    /// Um salvador que não lê nem grava nada, de propósito (testes e fotos).
     pub fn nenhum() -> Salvador {
-        Salvador { pasta: None }
+        Salvador { pasta: None, pasta_nao_achada: false, protegidos: RefCell::new(Vec::new()) }
+    }
+
+    /// Como `nenhum`, mas porque a pasta de dados não foi achada: o jogador precisa ser avisado.
+    pub fn sem_pasta() -> Salvador {
+        Salvador { pasta_nao_achada: true, ..Salvador::nenhum() }
+    }
+
+    /// O progresso não está (ou pode não estar) sendo guardado por causa da pasta ou de um arquivo
+    /// que não deu para ler.
+    pub fn com_problema(&self) -> bool {
+        self.pasta_nao_achada || !self.protegidos.borrow().is_empty()
+    }
+
+    /// Marca o arquivo como intocável nesta execução e devolve o motivo.
+    fn proteger(&self, nome: &str, motivo: String) -> String {
+        let mut protegidos = self.protegidos.borrow_mut();
+        if !protegidos.iter().any(|protegido| protegido == nome) {
+            protegidos.push(nome.to_string());
+        }
+        motivo
+    }
+
+    /// Grava em duas etapas, a não ser que o arquivo esteja protegido (ver `protegidos`).
+    fn gravar(&self, pasta: &Path, nome: &str, texto: &str) -> Result<(), String> {
+        if self.protegidos.borrow().iter().any(|protegido| protegido == nome) {
+            return Err(format!(
+                "não gravei {nome}: não consegui ler o arquivo que já existe e ele foi preservado (reabra o jogo para tentar de novo)"
+            ));
+        }
+        gravar_com_seguranca(pasta, nome, texto)
     }
 
     pub fn tem_pasta(&self) -> bool {
@@ -95,7 +139,11 @@ impl Salvador {
         let Some(pasta) = &self.pasta else { return Ok(None) };
         let arquivo = pasta.join(nome);
         // Sem arquivo, ou pasta impossível (por exemplo, "dentro" de um arquivo): não há o que ler.
-        let Ok(dados) = fs::metadata(&arquivo) else { return Ok(None) };
+        let dados = match fs::metadata(&arquivo) {
+            Ok(dados) => dados,
+            Err(erro) if e_ausencia(&erro) => return Ok(None),
+            Err(erro) => return Err(self.proteger(nome, format!("não consegui acessar o arquivo: {erro}"))),
+        };
         if dados.len() > LIMITE_BYTES {
             return Err(self.marcar_estragado(nome, "o arquivo tem mais de 1 MiB"));
         }
@@ -103,7 +151,7 @@ impl Salvador {
             Ok(bytes) => String::from_utf8(bytes)
                 .map(Some)
                 .map_err(|_| self.marcar_estragado(nome, "o arquivo não é um texto válido")),
-            Err(erro) => Err(self.marcar_estragado(nome, format!("não consegui ler o arquivo: {erro}"))),
+            Err(erro) => Err(self.proteger(nome, format!("não consegui ler o arquivo: {erro}"))),
         }
     }
 
@@ -146,7 +194,7 @@ impl Salvador {
     /// Grava a partida no arquivo do modo do próprio jogo.
     pub fn gravar_partida(&self, jogo: &Game) -> Result<(), String> {
         let Some(pasta) = &self.pasta else { return Ok(()) };
-        gravar_com_seguranca(pasta, nome_da_partida(jogo.mode), &partida_para_json(&jogo.to_saved()))
+        self.gravar(pasta, nome_da_partida(jogo.mode), &partida_para_json(&jogo.to_saved()))
     }
 
     /// Os recordes do modo. Sem arquivo ou com arquivo estragado: zerados.
@@ -163,7 +211,7 @@ impl Salvador {
 
     pub fn gravar_recordes(&self, modo: Mode, recordes: &Recordes) -> Result<(), String> {
         let Some(pasta) = &self.pasta else { return Ok(()) };
-        gravar_com_seguranca(pasta, nome_dos_recordes(modo), &recordes_para_json(recordes))
+        self.gravar(pasta, nome_dos_recordes(modo), &recordes_para_json(recordes))
     }
 
     /// O modo em que o jogador estava. Arquivo ausente ou com qualquer coisa que não seja
@@ -181,7 +229,7 @@ impl Salvador {
             Mode::Zen => "zen",
             Mode::Classic => "classic",
         };
-        gravar_com_seguranca(pasta, ARQUIVO_MODO_ATIVO, nome)
+        self.gravar(pasta, ARQUIVO_MODO_ATIVO, nome)
     }
 
     /// As preferências de som. Sem arquivo (ou sem pasta): os padrões e `Origem::Novo`. Arquivo
@@ -201,7 +249,7 @@ impl Salvador {
 
     pub fn gravar_preferencias(&self, preferencias: &Preferencias) -> Result<(), String> {
         let Some(pasta) = &self.pasta else { return Ok(()) };
-        gravar_com_seguranca(pasta, ARQUIVO_PREFERENCIAS, &preferencias_para_json(preferencias))
+        self.gravar(pasta, ARQUIVO_PREFERENCIAS, &preferencias_para_json(preferencias))
     }
 }
 
@@ -579,5 +627,55 @@ mod tests {
         assert!(salvador.gravar_preferencias(&Preferencias::default()).is_err());
         assert_eq!(fs::read(pasta.0.join("som.json")).unwrap(), texto_antigo);
         assert_eq!(salvador.carregar_preferencias(), (boa, Origem::Arquivo));
+    }
+
+    // ----- Falha de acesso não é "arquivo novo" -----
+
+    #[test]
+    fn so_ausencia_de_arquivo_ou_de_pasta_conta_como_nada_para_ler() {
+        use std::io::{Error, ErrorKind};
+        assert!(e_ausencia(&Error::from(ErrorKind::NotFound)));
+        assert!(e_ausencia(&Error::from(ErrorKind::NotADirectory)));
+        for tipo in [ErrorKind::PermissionDenied, ErrorKind::Interrupted, ErrorKind::TimedOut, ErrorKind::Other] {
+            assert!(!e_ausencia(&Error::from(tipo)), "{tipo:?} é falha de acesso, não ausência");
+        }
+    }
+
+    #[test]
+    fn arquivo_que_nao_da_para_ler_fica_protegido_e_nao_e_sobrescrito() {
+        let pasta = pasta_de_teste();
+        fs::create_dir_all(&pasta.0).unwrap();
+        // Um "arquivo" que existe mas não se lê (é uma pasta): o mesmo caminho de uma permissão negada.
+        fs::create_dir_all(pasta.0.join("zen.json")).unwrap();
+        let salvador = Salvador::em(pasta.0.clone());
+        let mut jogo = Game::with_random(lcg_random(8));
+        assert!(matches!(salvador.carregar_partida(Mode::Zen, &mut jogo), Origem::Estragado(_)));
+        assert!(salvador.com_problema(), "o aviso de que o progresso não será salvo");
+        let erro = salvador.gravar_partida(&jogo).unwrap_err();
+        assert!(erro.contains("preservado"), "{erro}");
+        assert!(!pasta.0.join("zen.json.tmp").exists(), "nem o temporário chegou a ser escrito");
+        // Os outros arquivos continuam gravando normalmente.
+        assert_eq!(salvador.gravar_modo_ativo(Mode::Classic), Ok(()));
+    }
+
+    #[test]
+    fn arquivo_estragado_de_verdade_continua_sendo_substituido() {
+        let pasta = pasta_de_teste();
+        fs::create_dir_all(&pasta.0).unwrap();
+        fs::write(pasta.0.join("zen.json"), "lixo").unwrap();
+        let salvador = Salvador::em(pasta.0.clone());
+        let mut jogo = Game::with_random(lcg_random(8));
+        assert!(matches!(salvador.carregar_partida(Mode::Zen, &mut jogo), Origem::Estragado(_)));
+        assert!(!salvador.com_problema(), "lixo tem cópia .corrupt e pode ser trocado");
+        assert_eq!(salvador.gravar_partida(&jogo), Ok(()));
+        assert_eq!(fs::read_to_string(pasta.0.join("zen.json.corrupt")).unwrap(), "lixo");
+    }
+
+    #[test]
+    fn sem_pasta_achada_e_problema_mas_nenhum_de_proposito_nao() {
+        assert!(Salvador::sem_pasta().com_problema());
+        assert!(!Salvador::sem_pasta().tem_pasta());
+        assert!(!Salvador::nenhum().com_problema());
+        assert!(!Salvador::em(std::env::temp_dir()).com_problema());
     }
 }
