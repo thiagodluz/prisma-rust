@@ -145,7 +145,7 @@ fn abrir_com_arquivos(dados: Option<String>) -> App {
         Ok(pasta) => App::abrir(Salvador::em(pasta)),
         Err(erro) => {
             info!("PRISMA_M2 sem_pasta: {}", erro);
-            App::abrir(Salvador::nenhum())
+            App::abrir(Salvador::sem_pasta())
         }
     }
 }
