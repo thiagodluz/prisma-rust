@@ -166,6 +166,41 @@ fn o_fluxo_do_android_prepara_os_sons_e_confere_o_apk() {
     }
 }
 
+/// O texto de um job do fluxo: da linha `  nome:` (dois espaços) até o próximo job.
+fn job<'a>(texto: &'a str, nome: &str) -> &'a str {
+    let cabecalho = format!("  {nome}:");
+    let mut inicio = None;
+    let mut posicao = 0;
+    for linha in texto.split_inclusive('\n') {
+        let e_job = linha.starts_with("  ") && !linha.starts_with("   ") && linha.trim_end().ends_with(':');
+        match inicio {
+            None if linha.trim_end() == cabecalho => inicio = Some(posicao),
+            Some(comeco) if e_job => return &texto[comeco..posicao],
+            _ => {}
+        }
+        posicao += linha.len();
+    }
+    match inicio {
+        Some(comeco) => &texto[comeco..],
+        None => panic!("o fluxo não tem o job `{nome}`."),
+    }
+}
+
+/// O APK só vai para o endereço fixo da release depois que os emuladores passaram, e a release
+/// antiga nunca é apagada antes da nova estar pronta (senão o link some se algo falhar no meio).
+/// Aqui só se confere a forma do fluxo; quem o executa é o CI.
+#[test]
+fn o_fluxo_do_android_so_publica_depois_dos_emuladores_e_sem_apagar_a_release() {
+    let texto = ler(".github/workflows/android.yml");
+    let publicar = job(&texto, "publicar");
+    assert!(publicar.contains("needs: [apk, emulador]"), "o job `publicar` tem de esperar o apk e os emuladores.");
+    assert!(publicar.contains("refs/heads/main"), "só a main publica.");
+    assert!(publicar.contains("--clobber"), "o APK novo substitui o arquivo da release sem apagar a release.");
+    assert!(!texto.contains("gh release delete"), "apagar a release deixa o link fora do ar se a criação falhar.");
+    let apk = job(&texto, "apk");
+    assert!(!apk.contains("gh release"), "o job `apk` não pode mexer na release: os emuladores ainda não rodaram.");
+}
+
 /// O Android mínimo e o alvo ficam fixos: 26 (o ícone adaptativo e o vibrador novo valem a partir
 /// daí) e 34. As duas chaves têm de estar na seção do gerador de APK, senão ele as ignora.
 #[test]

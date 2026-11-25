@@ -220,28 +220,10 @@ jobs:
           path: apk-assinado/*.apk
           if-no-files-found: error
 
-      # Release de endereço fixo, para baixar o .apk direto no celular, sem zip e sem login:
-      # https://github.com/thiagodluz/prisma-rust/releases/download/apk-mais-recente/prisma-rust.apk
-      # A cada execução a release antiga é apagada e uma nova é criada com o APK mais recente.
-      # Só roda na branch main: um teste numa branch de trabalho não pode trocar o APK que o
-      # celular baixa pelo link fixo.
-      - name: Publicar na release "apk-mais-recente"
-        if: github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cp apk-assinado/prisma-rust.apk prisma-rust.apk
-          gh release delete apk-mais-recente --cleanup-tag --yes || true
-          gh release create apk-mais-recente prisma-rust.apk \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "APK mais recente (versão de teste)" \
-            --notes "Gerado automaticamente a partir do commit ${GITHUB_SHA::7}. É uma versão de teste, assinada com a chave fixa do app: instala por cima da anterior e mantém a partida salva. Se você ainda tem uma versão assinada com a chave antiga (de teste, que mudava a cada geração), desinstale-a uma vez antes de instalar esta."
-
   # Abre o APK num celular virtual e joga (Zen e Clássico, com toque e arrasto), conferindo
-  # as jogadas pelo registro do app; guarda o registro de erros e as fotos da tela. Roda depois
-  # da release, então um defeito no app não impede de baixar o APK, só deixa este teste
-  # vermelho. Duas versões do Android, para comparar.
+  # as jogadas pelo registro do app; guarda o registro de erros e as fotos da tela. Se ele
+  # ficar vermelho, o job `publicar` não roda e a release anterior continua no ar. Duas versões
+  # do Android, para comparar.
   emulador:
     needs: apk
     runs-on: ubuntu-latest
@@ -294,3 +276,42 @@ jobs:
           name: emulador-android-${{ matrix.api }}
           path: resultado
           if-no-files-found: ignore
+
+  # Release de endereço fixo, para baixar o .apk direto no celular, sem zip e sem login:
+  # https://github.com/thiagodluz/prisma-rust/releases/download/apk-mais-recente/prisma-rust.apk
+  # Só roda na main e só depois de o APK ser gerado E de os dois celulares virtuais jogarem sem
+  # erro: um APK que abre mal nunca chega ao link. A release antiga NÃO é apagada: o arquivo é
+  # substituído no lugar (a janela sem arquivo é de segundos, e se algo falhar antes o APK
+  # anterior continua lá). Um teste numa branch de trabalho nunca troca o APK do link fixo.
+  publicar:
+    needs: [apk, emulador]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Baixar o APK gerado
+        uses: actions/download-artifact@v4
+        with:
+          name: prisma-debug-apk
+          path: apk
+
+      - name: Publicar na release "apk-mais-recente"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          NOTAS="Gerado automaticamente a partir do commit ${GITHUB_SHA::7}, depois de passar nos celulares virtuais. É uma versão de teste, assinada com a chave fixa do app: instala por cima da anterior e mantém a partida salva. Se você ainda tem uma versão assinada com a chave antiga (de teste, que mudava a cada geração), desinstale-a uma vez antes de instalar esta."
+          cp apk/prisma-rust.apk prisma-rust.apk
+          if gh release view apk-mais-recente >/dev/null 2>&1; then
+            # A etiqueta passa a apontar para este commit e o arquivo é trocado; a release fica.
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/apk-mais-recente" -f sha="$GITHUB_SHA" -F force=true
+            gh release upload apk-mais-recente prisma-rust.apk --clobber
+            gh release edit apk-mais-recente --prerelease --title "APK mais recente (versão de teste)" --notes "$NOTAS"
+          else
+            gh release create apk-mais-recente prisma-rust.apk \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title "APK mais recente (versão de teste)" \
+              --notes "$NOTAS"
+          fi
