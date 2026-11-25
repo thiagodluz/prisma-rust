@@ -17,6 +17,11 @@ image = { version = "0.24", default-features = false, features = ["jpeg"] }
 # Ler e gravar os arquivos de partida e recordes (JSON), no mesmo formato do Prisma em JS.
 serde_json = "1"
 
+[dev-dependencies]
+# Só para o teste que confere se todo texto do jogo tem glifo na Roboto (já é usada pelo Macroquad,
+# então não traz nada novo para o Cargo.lock além de uma ligação).
+fontdue = "0.9"
+
 # Dados para o gerador de APK. Só o essencial por enquanto.
 [package.metadata.android]
 # O último pedaço do package_name TEM de ser o nome do programa (`name` lá em cima): é por ele

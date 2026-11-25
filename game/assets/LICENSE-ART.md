@@ -11,6 +11,7 @@ As imagens desta pasta são **adaptações** das imagens do Prisma em JS
 | `cross-0.png` a `cross-6.png` | `cross-atlas.webp` (Raio) |
 | `spectrum.png` | `spectrum-gem.webp` (Espectro) |
 | `prisma-bg.jpg` | `prisma-bg.jpg` (foto de fundo do jogo; copiada sem alteração) |
+| `marca.png` | `icon-192.png` (logo do topo; copiada sem alteração) |
 
 ## O que foi alterado
 
@@ -27,3 +28,10 @@ licença, como no projeto original.
 
 Quem redistribuir estas imagens ou adaptações delas deve atribuir a autoria a Thiago Luz,
 indicar a licença e manter a CC BY-SA 4.0 (ou uma licença compatível).
+
+## Fonte Roboto
+
+`Roboto-Regular.ttf` e `Roboto-Bold.ttf` são instâncias estáticas (peso 400 e 700, largura 100) da
+fonte variável Roboto do projeto Roboto (<https://github.com/googlefonts/roboto-classic>), geradas com
+`fonttools varLib.instancer`. A Roboto está sob a [SIL Open Font License 1.1](OFL.txt), e não sob a
+CC BY-SA das imagens acima.

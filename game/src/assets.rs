@@ -3,6 +3,9 @@
 
 use prisma_engine::{Tile, TileKind, COLORS};
 
+/// O logo do topo (PNG 192×192 com os cantos já arredondados), embutido no programa.
+pub const MARCA_PNG: &[u8] = include_bytes!("../assets/marca.png");
+
 /// A foto de fundo do jogo (JPEG, 940×1672), embutida no programa.
 pub const FUNDO_JPG: &[u8] = include_bytes!("../assets/prisma-bg.jpg");
 

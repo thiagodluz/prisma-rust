@@ -42,7 +42,18 @@ O aviso de áudio no terminal ("Can't open PCM device") é esperado aqui e não 
   pinta 7 formas e decodifica a foto ao abrir).
 - Legibilidade das letras sobre a foto num celular de verdade.
 
-## O que fica para a V2
+## V2 (pronta, falta o celular)
 
-Topo com logo e PRISMA, cartões de modo com ícone e frase, e a fonte Roboto (hoje a letra é a
-embutida do Macroquad, sem negrito nem espaçamento entre letras).
+- **Letra:** Roboto Regular e Bold embutidas (`game/assets/`, licença OFL em `OFL.txt`), tudo via
+  `texto.rs` (`desenhar`, `medir`, `tamanho_que_cabe`). A Roboto não tem ♫ nem ≡: esses símbolos
+  são desenhados por código (`icones.rs`). O teste `todo_texto_do_jogo_tem_glifo_na_roboto` confere
+  os caracteres não-ASCII entre aspas nos arquivos que escrevem texto (render, menu, app, cenas,
+  preferencias, fundo, layout) contra a Roboto; ao criar um arquivo novo com texto, some-o à lista.
+- **Topo:** logo (`marca.png`) + "PRISMA" em negrito com espaço entre letras + botões ♫ e ≡.
+  Em tela deitada os itens do topo encolhem para a marca ter largura.
+- **Cartões de modo** (Zen e Clássico) ficam embaixo, depois da guia de respiração: caixa com ícone
+  (lua e faísca desenhadas por código), nome em negrito e frase. Receitas novas em `Formas`:
+  `modo` e `modo_escolhido`. Altura `MODOS_ALTURA` = 0,13 (com 0,11 a frase ficava com 8 px).
+
+Só o celular confirma: a Roboto no Android (o CI tira as fotos), o tempo de abertura com duas
+fontes e a frase do Clássico (a mais longa) no menor celular.

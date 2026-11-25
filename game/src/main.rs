@@ -9,6 +9,7 @@ mod cenas;
 mod contador;
 mod efeitos;
 mod formas;
+mod texto;
 mod formato;
 mod icones;
 mod fundo;

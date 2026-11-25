@@ -9,7 +9,8 @@ use macroquad::prelude::*;
 use prisma_engine::{position, Board, Tile, SIZE};
 
 use crate::app::{App, Folha, Painel};
-use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, SPRITE_RATIO};
+use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, MARCA_PNG, SPRITE_RATIO};
+use crate::texto::{self, Peso};
 use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
 use crate::icones::{self, Linha};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
@@ -83,6 +84,14 @@ struct Formas {
     solida: Forma,
     /// O fundo dos botões de baixo (Embaralhar, Dica, Novo jogo).
     botao: Forma,
+    /// O fundo dos botões quadrados do topo (♫ e ≡), e o dele quando a folha está aberta.
+    botao_icone: Forma,
+    botao_icone_ativo: Forma,
+    /// O logo do topo.
+    marca: Texture2D,
+    /// Os cartões de modo (Zen e Clássico): o normal e o escolhido.
+    modo: Forma,
+    modo_escolhido: Forma,
 }
 
 /// Uma cor `[r, g, b, a]` de `formas.rs` como `Color` do Macroquad.
@@ -96,6 +105,8 @@ impl Formas {
     fn load() -> Formas {
         let fundo = Texture2D::from_file_with_format(FUNDO_JPG, None);
         fundo.set_filter(FilterMode::Linear);
+        let marca = Texture2D::from_file_with_format(MARCA_PNG, None);
+        marca.set_filter(FilterMode::Linear);
         let sem_borda = rgba(0);
         let casa = |degrade| Receita {
             lado: 64,
@@ -137,6 +148,47 @@ impl Formas {
                 borda: 1,
                 cor_da_borda: rgba(0xffffff17),
                 degrade: [rgba(0xffffff0d); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            botao_icone: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff27),
+                degrade: [rgba(0xffffff10); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            botao_icone_ativo: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xc4b2ffff),
+                degrade: [rgba(0xac9aff38); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            marca,
+            modo: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff23),
+                degrade: [rgba(0xffffff0b); 3],
+                angulo: 145.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
+            modo_escolhido: Forma::nova(Receita {
+                lado: 64,
+                raio: 12,
+                borda: 1,
+                cor_da_borda: rgba(0xad9bff99),
+                degrade: [rgba(0x756aad32); 3],
                 angulo: 145.0,
                 sombra: 0,
                 cor_da_sombra: sem_borda,
@@ -248,6 +300,7 @@ impl Sprites {
             // `None`: a biblioteca descobre sozinha que o arquivo é um PNG.
             .map(|sprite| (sprite, Texture2D::from_file_with_format(png_bytes(sprite), None)))
             .collect();
+        texto::carregar();
         Sprites { texturas, formas: Formas::load() }
     }
 }
@@ -327,27 +380,28 @@ enum Alinhamento {
 /// Escreve `texto` dentro de `area`, na vertical no meio. Se não couber na largura, a letra
 /// encolhe até caber.
 fn escrever(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento) {
+    escrever_com_peso(texto, area, tamanho, cor, alinhamento, Peso::Normal);
+}
+
+/// Como `escrever`, no peso dado (`Negrito` para rótulos de botão e valores).
+fn escrever_com_peso(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento, peso: Peso) {
     if tamanho < 1.0 || area.w <= 0.0 {
         return;
     }
-    let mut tamanho = tamanho;
-    let medida = measure_text(texto, None, tamanho as u16, 1.0);
-    if medida.width > area.w {
-        tamanho *= area.w / medida.width;
-        if tamanho < 1.0 {
-            return;
-        }
+    let tamanho = texto::tamanho_que_cabe(texto::medir(texto, tamanho, peso).width, area.w, tamanho);
+    if tamanho < 1.0 {
+        return;
     }
-    let medida = measure_text(texto, None, tamanho as u16, 1.0);
+    let medida = texto::medir(texto, tamanho, peso);
     // A altura vem de uma palavra de referência, para o texto não "pular" de acordo com as letras.
-    let referencia = measure_text("Ag", None, tamanho as u16, 1.0);
+    let referencia = texto::medir("Ag", tamanho, peso);
     let x = match alinhamento {
         Alinhamento::Esquerda => area.x,
         Alinhamento::Centro => area.x + (area.w - medida.width) / 2.0,
         Alinhamento::Direita => area.x + area.w - medida.width,
     };
     let y = area.y + (area.h - referencia.height) / 2.0 + referencia.offset_y;
-    draw_text(texto, x, y, tamanho, cor);
+    texto::desenhar(texto, x, y, tamanho, cor, peso);
 }
 
 /// Um botão da tela de jogo: retângulo com borda e rótulo no meio. `ativo` falso apaga o botão.
@@ -357,7 +411,7 @@ fn botao_da_tela(area: Rect, rotulo: &str, tamanho: f32, fundo: Color, ativo: bo
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, com_alfa(BORDA, alfa));
     let margem = 0.06 * area.w;
     let dentro = Rect { x: area.x + margem, y: area.y, w: area.w - 2.0 * margem, h: area.h };
-    escrever(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro);
+    escrever_com_peso(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro, Peso::Negrito);
 }
 
 /// Desenha a imagem de uma pedra no meio de `casa`, com `escala` e `alfa`, deslocada de
@@ -601,27 +655,10 @@ fn desenhar_contornos_de_realce(app: &App, area: Rect) {
 /// As abas, o painel de números e a barra de progresso.
 fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Formas) {
     let t = tela.texto;
+    desenhar_topo(formas, app, tela);
     let zen = app.modo() == prisma_engine::Mode::Zen;
-    botao_da_tela(tela.aba_zen, "Zen", 1.05 * t, if zen { ABA_ATIVA } else { ABA_INATIVA }, true);
-    botao_da_tela(tela.aba_classico, "Clássico", 1.05 * t, if zen { ABA_INATIVA } else { ABA_ATIVA }, true);
-    // O ♪ vira ✕ com a folha de Som aberta, e o ≡ vira ✕ com a do Menu aberta. Os quatro são
-    // desenhados com formas, não com letras: assim não dependem de a fonte embutida ter esses símbolos.
-    let som_aberto = app.folha() == Some(Folha::Som);
-    botao_da_tela(tela.botao_som, "", t, if som_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
-    let icone = encolher(tela.botao_som, 0.2 * tela.botao_som.h);
-    if som_aberto {
-        desenhar_xis(icone, WHITE);
-    } else {
-        desenhar_nota(icone, WHITE);
-    }
-    let menu_aberto = app.folha().is_some_and(Folha::e_do_menu);
-    botao_da_tela(tela.botao_menu, "", t, if menu_aberto { ABA_ATIVA } else { ABA_INATIVA }, true);
-    let icone = encolher(tela.botao_menu, 0.2 * tela.botao_menu.h);
-    if menu_aberto {
-        desenhar_xis(icone, WHITE);
-    } else {
-        desenhar_hamburguer(icone, WHITE);
-    }
+    desenhar_cartao_de_modo(formas, tela.aba_zen, Icone::Lua, "Zen", "Sem pressa, sem derrota", zen);
+    desenhar_cartao_de_modo(formas, tela.aba_classico, Icone::Faisca, "Clássico", "Sem cronômetro · pode acabar", !zen);
 
     // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita.
     let cartao = tela.cartao_pontos;
@@ -634,7 +671,7 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
         let em_cima = Rect { h: 0.38 * area.h, ..area };
         let embaixo = Rect { y: area.y + 0.38 * area.h, h: 0.62 * area.h, ..area };
         escrever(rotulo, em_cima, 0.62 * t, cor_de(rgba(0xb3b0d4ff)), alinhamento);
-        escrever(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento);
+        escrever_com_peso(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento, Peso::Negrito);
     }
 
     // A barra de nível: trilho claro arredondado e, por cima, o preenchimento em degradê da
@@ -650,13 +687,73 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
     }
 }
 
+/// A linha de topo: o logo e "PRISMA" à esquerda; à direita os botões ♫ e ≡. O ♫ vira ✕ com a
+/// folha de Som aberta, e o ≡ vira ✕ com a do Menu aberta. Os símbolos são desenhados com formas,
+/// não com letras: a Roboto não tem o ♫.
+fn desenhar_topo(formas: &Formas, app: &App, tela: &TelaJogo) {
+    desenhar_marca(formas, tela.marca);
+    let som_aberto = app.folha() == Some(Folha::Som);
+    let menu_aberto = app.folha().is_some_and(Folha::e_do_menu);
+    for (area, aberto) in [(tela.botao_som, som_aberto), (tela.botao_menu, menu_aberto)] {
+        let forma = if aberto { &formas.botao_icone_ativo } else { &formas.botao_icone };
+        desenhar_forma(forma, area, 0.316 * area.h, 0.0);
+    }
+    let cor = if som_aberto { WHITE } else { cor_de(rgba(0xd7d5f8ff)) };
+    let icone = encolher(tela.botao_som, 0.26 * tela.botao_som.h);
+    if som_aberto {
+        desenhar_xis(icone, cor);
+    } else {
+        desenhar_nota(icone, cor);
+    }
+    let cor = if menu_aberto { WHITE } else { cor_de(rgba(0xd7d5f8ff)) };
+    let icone = encolher(tela.botao_menu, 0.26 * tela.botao_menu.h);
+    if menu_aberto {
+        desenhar_xis(icone, cor);
+    } else {
+        desenhar_hamburguer(icone, cor);
+    }
+}
+
+/// O logo (quadrado, da altura da faixa) e "PRISMA" em negrito, com letras espaçadas (0,22 em).
+fn desenhar_marca(formas: &Formas, marca: Rect) {
+    if marca.w <= 0.0 || marca.h <= 0.0 {
+        return;
+    }
+    let lado = marca.h;
+    draw_texture_ex(
+        &formas.marca,
+        marca.x,
+        marca.y,
+        WHITE,
+        DrawTextureParams { dest_size: Some(vec2(lado, lado)), ..Default::default() },
+    );
+    let texto_x = marca.x + lado + 0.26 * lado;
+    let disponivel = marca.x + marca.w - texto_x;
+    let mut tamanho = 0.5 * lado;
+    let largura = |tamanho: f32| -> f32 {
+        "PRISMA".chars().map(|letra| texto::medir(&letra.to_string(), tamanho, Peso::Negrito).width + 0.22 * tamanho).sum::<f32>() - 0.22 * tamanho
+    };
+    tamanho = texto::tamanho_que_cabe(largura(tamanho), disponivel, tamanho);
+    if tamanho < 1.0 {
+        return;
+    }
+    let referencia = texto::medir("Ag", tamanho, Peso::Negrito);
+    let y = marca.y + (marca.h - referencia.height) / 2.0 + referencia.offset_y;
+    let mut x = texto_x;
+    for letra in "PRISMA".chars() {
+        let letra = letra.to_string();
+        texto::desenhar(&letra, x, y, tamanho, cor_de(rgba(0xf8f7ffff)), Peso::Negrito);
+        x += texto::medir(&letra, tamanho, Peso::Negrito).width + 0.22 * tamanho;
+    }
+}
+
 /// O aviso ("Supernova", "Tabuleiro reorganizado") numa pílula por cima do tabuleiro.
 fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
     let tamanho = tela.texto;
     if tamanho < 1.0 {
         return;
     }
-    let medida = measure_text(texto, None, tamanho as u16, 1.0);
+    let medida = texto::medir(texto, tamanho, Peso::Negrito);
     let margem = 0.7 * tamanho;
     let largura = (medida.width + 2.0 * margem).min(tela.tabuleiro.w);
     let altura = 2.2 * tamanho;
@@ -668,7 +765,7 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
     };
     draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.85));
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, BORDA);
-    escrever(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro);
+    escrever_com_peso(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro, Peso::Negrito);
 }
 
 /// A faixa "Nível N" no meio do tabuleiro, crescendo e sumindo conforme `t` (ms).
@@ -750,6 +847,8 @@ enum Icone {
     Embaralhar,
     Dica,
     NovoJogo,
+    Lua,
+    Faisca,
 }
 
 /// Um botão de baixo: fundo arredondado, o ícone no alto e o rótulo embaixo. `ativo` falso deixa
@@ -764,6 +863,8 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
         Icone::Embaralhar => icones::embaralhar(quadrado),
         Icone::Dica => icones::faisca(quadrado),
         Icone::NovoJogo => icones::novo_jogo(quadrado),
+        Icone::Lua => icones::lua(quadrado),
+        Icone::Faisca => icones::faisca(quadrado),
     };
     let grossura = 0.07 * area.h;
     for linha in &linhas {
@@ -777,7 +878,34 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
     }
     let margem = 0.06 * area.w;
     let embaixo = Rect { x: area.x + margem, y: area.y + 0.54 * area.h, w: area.w - 2.0 * margem, h: 0.38 * area.h };
-    escrever(rotulo, embaixo, tamanho, cor, Alinhamento::Centro);
+    escrever_com_peso(rotulo, embaixo, tamanho, cor, Alinhamento::Centro, Peso::Negrito);
+}
+
+/// Um cartão de modo: a caixa do ícone à esquerda e, ao lado, o nome (negrito) e a frase (menor).
+/// `escolhido` troca o fundo e a borda pelos do modo em uso.
+fn desenhar_cartao_de_modo(formas: &Formas, area: Rect, icone: Icone, nome: &str, frase: &str, escolhido: bool) {
+    let forma = if escolhido { &formas.modo_escolhido } else { &formas.modo };
+    desenhar_forma(forma, area, 0.28 * area.h, 0.0);
+    let folga = 0.2 * area.h;
+    let lado = 0.56 * area.h;
+    let caixa = Rect { x: area.x + folga, y: area.y + (area.h - lado) / 2.0, w: lado, h: lado };
+    desenhar_forma_tingida(&formas.solida, caixa, 0.30 * lado, 0.0, cor_de(rgba(0x9785e438)));
+    let cor_do_icone = cor_de(rgba(0xcfbdffff));
+    let grossura = 0.07 * lado;
+    for linha in &match icone {
+        Icone::Lua => icones::lua(encolher(caixa, 0.2 * lado)),
+        _ => icones::faisca(encolher(caixa, 0.2 * lado)),
+    } {
+        for par in linha.windows(2) {
+            draw_line(par[0].0, par[0].1, par[1].0, par[1].1, grossura, cor_do_icone);
+        }
+    }
+    let texto_x = caixa.x + caixa.w + 0.7 * folga;
+    let largura = area.x + area.w - folga * 0.6 - texto_x;
+    let nome_area = Rect { x: texto_x, y: area.y + 0.14 * area.h, w: largura, h: 0.38 * area.h };
+    let frase_area = Rect { x: texto_x, y: area.y + 0.52 * area.h, w: largura, h: 0.32 * area.h };
+    escrever_com_peso(nome, nome_area, 0.30 * area.h, WHITE, Alinhamento::Esquerda, Peso::Negrito);
+    escrever(frase, frase_area, 0.22 * area.h, cor_de(rgba(0xb9b5d4ff)), Alinhamento::Esquerda);
 }
 
 /// Uma colcheia (♪) dentro do quadrado `area`: cabeça redonda, haste e bandeirinha.
@@ -873,7 +1001,7 @@ fn quebrar_em_linhas(texto: &str, largura: f32, tamanho: f32) -> Vec<String> {
     let mut atual = String::new();
     for palavra in texto.split_whitespace() {
         let tentativa = if atual.is_empty() { palavra.to_string() } else { format!("{atual} {palavra}") };
-        if atual.is_empty() || measure_text(&tentativa, None, tamanho as u16, 1.0).width <= largura {
+        if atual.is_empty() || texto::medir(&tentativa, tamanho, Peso::Normal).width <= largura {
             atual = tentativa;
         } else {
             linhas.push(std::mem::replace(&mut atual, palavra.to_string()));

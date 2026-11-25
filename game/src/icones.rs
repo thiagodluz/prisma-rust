@@ -66,6 +66,42 @@ pub fn novo_jogo(area: Rect) -> Vec<Linha> {
     vec![arco, vec![perna(1.0), (ex, ey), perna(-1.0)]]
 }
 
+/// Lua (☾): um crescente aberto para cima e para a direita, uma polilinha fechada. É o que sobra
+/// de um círculo grande (raio 0,92 do raio da área) menos um círculo menor (0,82 do grande)
+/// deslocado 0,55 do raio grande para a abertura: o contorno é o arco de fora do grande e o
+/// arco de dentro do pequeno, que se encontram nos dois bicos.
+pub fn lua(area: Rect) -> Vec<Linha> {
+    let ((cx, cy), r) = centro_e_raio(area);
+    let grande = 0.92 * r;
+    let pequeno = 0.82 * grande;
+    let desvio = 0.55 * grande;
+    let direcao = -30.0_f32.to_radians();
+    let (centro_pequeno_x, centro_pequeno_y) = (cx + desvio * direcao.cos(), cy + desvio * direcao.sin());
+    // Onde os dois círculos se cruzam: a distância `a` do centro grande, ao longo da direção da
+    // abertura, e a meia-corda `h` para os lados.
+    let a = (grande * grande - pequeno * pequeno + desvio * desvio) / (2.0 * desvio.max(f32::EPSILON));
+    let h = (grande * grande - a * a).max(0.0).sqrt();
+    let meia_grande = h.atan2(a);
+    let meia_pequeno = h.atan2(a - desvio);
+    let passos = 20;
+    let arco = |centro: (f32, f32), raio: f32, de: f32, ate: f32| -> Vec<(f32, f32)> {
+        (0..=passos)
+            .map(|i| {
+                let angulo = de + (ate - de) * i as f32 / passos as f32;
+                (centro.0 + raio * angulo.cos(), centro.1 + raio * angulo.sin())
+            })
+            .collect()
+    };
+    let volta = 2.0 * std::f32::consts::PI;
+    // Por fora: o arco do círculo grande, pelo lado oposto à abertura, de um bico ao outro.
+    let mut contorno = arco((cx, cy), grande, direcao + meia_grande, direcao + volta - meia_grande);
+    // Por dentro: o arco do círculo pequeno, de volta ao primeiro bico, pelo lado do centro grande.
+    contorno.extend(arco((centro_pequeno_x, centro_pequeno_y), pequeno, direcao + volta - meia_pequeno, direcao + meia_pequeno));
+    let primeiro = contorno[0];
+    contorno.push(primeiro);
+    vec![contorno]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +116,45 @@ mod tests {
     /// Os três ícones, com o nome, para os testes que valem para todos.
     fn icones(area: Rect) -> [(&'static str, Vec<Linha>); 3] {
         [("embaralhar", embaralhar(area)), ("faisca", faisca(area)), ("novo_jogo", novo_jogo(area))]
+    }
+
+    /// O sentido para onde o crescente abre (para cima e para a direita, 30° acima da horizontal).
+    fn abertura() -> (f32, f32) {
+        let angulo = -30.0_f32.to_radians();
+        (angulo.cos(), angulo.sin())
+    }
+
+    #[test]
+    fn a_lua_cabe_na_area_e_e_uma_linha_so() {
+        let linhas = lua(AREA);
+        assert_eq!(linhas.len(), 1, "a lua é uma polilinha fechada só");
+        assert!(linhas[0].len() >= 20, "pontos de sobra para as curvas ficarem lisas");
+        assert_eq!(linhas[0].first(), linhas[0].last().or(None), "a linha fecha");
+        for (x, y) in todos(&linhas) {
+            assert!(x >= AREA.x - 0.5 && x <= AREA.x + AREA.w + 0.5, "x={x} fora");
+            assert!(y >= AREA.y - 0.5 && y <= AREA.y + AREA.h + 0.5, "y={y} fora");
+        }
+    }
+
+    #[test]
+    fn a_lua_e_um_crescente_aberto_para_cima_e_a_direita() {
+        let (cx, cy) = (AREA.x + AREA.w / 2.0, AREA.y + AREA.h / 2.0);
+        let (ux, uy) = abertura();
+        let projecoes: Vec<f32> = todos(&lua(AREA)).iter().map(|(x, y)| (x - cx) * ux + (y - cy) * uy).collect();
+        let para_a_abertura = projecoes.iter().cloned().fold(f32::MIN, f32::max);
+        let contra_a_abertura = projecoes.iter().cloned().fold(f32::MAX, f32::min);
+        let raio = 0.92 * AREA.w / 2.0;
+        assert!(para_a_abertura < 0.75 * raio, "a abertura é cortada: {para_a_abertura}");
+        assert!(-contra_a_abertura > 0.9 * raio, "o lado de trás é redondo e cheio: {contra_a_abertura}");
+    }
+
+    #[test]
+    fn a_lua_resiste_a_area_impossivel() {
+        for area in [Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }, Rect { x: f32::NAN, y: 1.0, w: f32::NAN, h: -4.0 }, Rect { x: 5.0, y: 5.0, w: -10.0, h: 10.0 }] {
+            for (x, y) in todos(&lua(area)) {
+                assert!(x.is_finite() && y.is_finite(), "ponto não finito para {area:?}");
+            }
+        }
     }
 
     #[test]
