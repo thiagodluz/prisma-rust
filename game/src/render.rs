@@ -10,7 +10,7 @@ use prisma_engine::{position, Board, Tile, SIZE};
 
 use crate::app::{App, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, MARCA_PNG, SPRITE_RATIO};
-use crate::texto::{self, Peso};
+use crate::texto::{self, Estilo};
 use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
 use crate::icones::{self, Linha};
 use crate::layout::{self, board_rect, cell_rect, Rect, TelaDiagnostico, TelaJogo};
@@ -380,28 +380,28 @@ enum Alinhamento {
 /// Escreve `texto` dentro de `area`, na vertical no meio. Se não couber na largura, a letra
 /// encolhe até caber.
 fn escrever(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento) {
-    escrever_com_peso(texto, area, tamanho, cor, alinhamento, Peso::Normal);
+    escrever_com_estilo(texto, area, tamanho, cor, alinhamento, Estilo::Texto);
 }
 
-/// Como `escrever`, no peso dado (`Negrito` para rótulos de botão e valores).
-fn escrever_com_peso(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento, peso: Peso) {
+/// Como `escrever`, no estilo dado (`TextoForte` para rótulos de botão e valores).
+fn escrever_com_estilo(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento, estilo: Estilo) {
     if tamanho < 1.0 || area.w <= 0.0 {
         return;
     }
-    let tamanho = texto::tamanho_que_cabe(texto::medir(texto, tamanho, peso).width, area.w, tamanho);
+    let tamanho = texto::tamanho_que_cabe(texto::medir(texto, tamanho, estilo).width, area.w, tamanho);
     if tamanho < 1.0 {
         return;
     }
-    let medida = texto::medir(texto, tamanho, peso);
+    let medida = texto::medir(texto, tamanho, estilo);
     // A altura vem de uma palavra de referência, para o texto não "pular" de acordo com as letras.
-    let referencia = texto::medir("Ag", tamanho, peso);
+    let referencia = texto::medir("Ag", tamanho, estilo);
     let x = match alinhamento {
         Alinhamento::Esquerda => area.x,
         Alinhamento::Centro => area.x + (area.w - medida.width) / 2.0,
         Alinhamento::Direita => area.x + area.w - medida.width,
     };
     let y = area.y + (area.h - referencia.height) / 2.0 + referencia.offset_y;
-    texto::desenhar(texto, x, y, tamanho, cor, peso);
+    texto::desenhar(texto, x, y, tamanho, cor, estilo);
 }
 
 /// Um botão da tela de jogo: retângulo com borda e rótulo no meio. `ativo` falso apaga o botão.
@@ -411,7 +411,7 @@ fn botao_da_tela(area: Rect, rotulo: &str, tamanho: f32, fundo: Color, ativo: bo
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, com_alfa(BORDA, alfa));
     let margem = 0.06 * area.w;
     let dentro = Rect { x: area.x + margem, y: area.y, w: area.w - 2.0 * margem, h: area.h };
-    escrever_com_peso(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro, Peso::Negrito);
+    escrever_com_estilo(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro, Estilo::TextoForte);
 }
 
 /// Desenha a imagem de uma pedra no meio de `casa`, com `escala` e `alfa`, deslocada de
@@ -671,7 +671,7 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
         let em_cima = Rect { h: 0.38 * area.h, ..area };
         let embaixo = Rect { y: area.y + 0.38 * area.h, h: 0.62 * area.h, ..area };
         escrever(rotulo, em_cima, 0.62 * t, cor_de(rgba(0xb3b0d4ff)), alinhamento);
-        escrever_com_peso(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento, Peso::Negrito);
+        escrever_com_estilo(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento, Estilo::Titulo);
     }
 
     // A barra de nível: trilho claro arredondado e, por cima, o preenchimento em degradê da
@@ -692,7 +692,7 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
 
 /// A linha de topo: o logo e "PRISMA" à esquerda; à direita os botões ♫ e ≡. O ♫ vira ✕ com a
 /// folha de Som aberta, e o ≡ vira ✕ com a do Menu aberta. Os símbolos são desenhados com formas,
-/// não com letras: a Roboto não tem o ♫.
+/// não com letras: as fontes não têm o ♫.
 fn desenhar_topo(formas: &Formas, app: &App, tela: &TelaJogo) {
     desenhar_marca(formas, tela.marca);
     let som_aberto = app.folha() == Some(Folha::Som);
@@ -734,19 +734,19 @@ fn desenhar_marca(formas: &Formas, marca: Rect) {
     let disponivel = marca.x + marca.w - texto_x;
     let mut tamanho = 0.5 * lado;
     let largura = |tamanho: f32| -> f32 {
-        "PRISMA".chars().map(|letra| texto::medir(&letra.to_string(), tamanho, Peso::Negrito).width + 0.22 * tamanho).sum::<f32>() - 0.22 * tamanho
+        "PRISMA".chars().map(|letra| texto::medir(&letra.to_string(), tamanho, Estilo::Titulo).width + 0.22 * tamanho).sum::<f32>() - 0.22 * tamanho
     };
     tamanho = texto::tamanho_que_cabe(largura(tamanho), disponivel, tamanho);
     if tamanho < 1.0 {
         return;
     }
-    let referencia = texto::medir("Ag", tamanho, Peso::Negrito);
+    let referencia = texto::medir("Ag", tamanho, Estilo::Titulo);
     let y = marca.y + (marca.h - referencia.height) / 2.0 + referencia.offset_y;
     let mut x = texto_x;
     for letra in "PRISMA".chars() {
         let letra = letra.to_string();
-        texto::desenhar(&letra, x, y, tamanho, cor_de(rgba(0xf8f7ffff)), Peso::Negrito);
-        x += texto::medir(&letra, tamanho, Peso::Negrito).width + 0.22 * tamanho;
+        texto::desenhar(&letra, x, y, tamanho, cor_de(rgba(0xf8f7ffff)), Estilo::Titulo);
+        x += texto::medir(&letra, tamanho, Estilo::Titulo).width + 0.22 * tamanho;
     }
 }
 
@@ -756,7 +756,7 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
     if tamanho < 1.0 {
         return;
     }
-    let medida = texto::medir(texto, tamanho, Peso::Negrito);
+    let medida = texto::medir(texto, tamanho, Estilo::TextoForte);
     let margem = 0.7 * tamanho;
     let largura = (medida.width + 2.0 * margem).min(tela.tabuleiro.w);
     let altura = 2.2 * tamanho;
@@ -768,7 +768,7 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
     };
     draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.85));
     draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, BORDA);
-    escrever_com_peso(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro, Peso::Negrito);
+    escrever_com_estilo(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro, Estilo::TextoForte);
 }
 
 /// A faixa "Nível N" no meio do tabuleiro, crescendo e sumindo conforme `t` (ms).
@@ -881,7 +881,7 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
     }
     let margem = 0.06 * area.w;
     let embaixo = Rect { x: area.x + margem, y: area.y + 0.54 * area.h, w: area.w - 2.0 * margem, h: 0.38 * area.h };
-    escrever_com_peso(rotulo, embaixo, tamanho, cor, Alinhamento::Centro, Peso::Negrito);
+    escrever_com_estilo(rotulo, embaixo, tamanho, cor, Alinhamento::Centro, Estilo::TextoForte);
 }
 
 /// Um cartão de modo: a caixa do ícone à esquerda e, ao lado, o nome (negrito) e a frase (menor).
@@ -907,7 +907,7 @@ fn desenhar_cartao_de_modo(formas: &Formas, area: Rect, icone: Icone, nome: &str
     let largura = area.x + area.w - folga * 0.6 - texto_x;
     let nome_area = Rect { x: texto_x, y: area.y + 0.14 * area.h, w: largura, h: 0.38 * area.h };
     let frase_area = Rect { x: texto_x, y: area.y + 0.52 * area.h, w: largura, h: 0.32 * area.h };
-    escrever_com_peso(nome, nome_area, 0.30 * area.h, WHITE, Alinhamento::Esquerda, Peso::Negrito);
+    escrever_com_estilo(nome, nome_area, 0.30 * area.h, WHITE, Alinhamento::Esquerda, Estilo::TextoForte);
     escrever(frase, frase_area, 0.22 * area.h, cor_de(rgba(0xb9b5d4ff)), Alinhamento::Esquerda);
 }
 
@@ -1004,7 +1004,7 @@ fn quebrar_em_linhas(texto: &str, largura: f32, tamanho: f32) -> Vec<String> {
     let mut atual = String::new();
     for palavra in texto.split_whitespace() {
         let tentativa = if atual.is_empty() { palavra.to_string() } else { format!("{atual} {palavra}") };
-        if atual.is_empty() || texto::medir(&tentativa, tamanho, Peso::Normal).width <= largura {
+        if atual.is_empty() || texto::medir(&tentativa, tamanho, Estilo::Texto).width <= largura {
             atual = tentativa;
         } else {
             linhas.push(std::mem::replace(&mut atual, palavra.to_string()));

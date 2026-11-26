@@ -187,7 +187,7 @@ jobs:
           exit "$ERRO"
 
       # Reprova o fluxo se o APK não tiver os 9 áudios (sem eles o Zen não teria música nem
-      # ambiente) ou se passar de 60 MB (a spec pede um APK de tamanho razoável).
+      # ambiente) ou se passar de 100 MB (limite do Thiago; hoje o APK tem uns 54 MB).
       - name: Conferir os sons e o tamanho do APK
         run: |
           set -eu
@@ -206,10 +206,10 @@ jobs:
             exit 1
           fi
           TAMANHO="$(stat -c %s "$APK")"
-          LIMITE=$((60 * 1024 * 1024))
-          echo "Tamanho do APK: $TAMANHO bytes (cerca de $((TAMANHO / 1024 / 1024)) MB); o limite é 60 MB."
+          LIMITE=$((100 * 1024 * 1024))
+          echo "Tamanho do APK: $TAMANHO bytes (cerca de $((TAMANHO / 1024 / 1024)) MB); o limite é 100 MB."
           if [ "$TAMANHO" -gt "$LIMITE" ]; then
-            echo "::error::O APK ficou com $((TAMANHO / 1024 / 1024)) MB, acima do limite de 60 MB."
+            echo "::error::O APK ficou com $((TAMANHO / 1024 / 1024)) MB, acima do limite de 100 MB."
             exit 1
           fi
 

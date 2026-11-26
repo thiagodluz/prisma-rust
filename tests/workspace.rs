@@ -147,7 +147,7 @@ fn os_creditos_de_audio_citam_os_9_trabalhos_e_a_licenca_cc_by() {
 #[test]
 fn o_fluxo_do_android_prepara_os_sons_e_confere_o_apk() {
     let texto = ler(".github/workflows/android.yml");
-    for trecho in ["Preparar os sons", "audio game/sons", "60 * 1024 * 1024"] {
+    for trecho in ["Preparar os sons", "audio game/sons", "100 * 1024 * 1024"] {
         assert!(texto.contains(trecho), ".github/workflows/android.yml não tem \"{trecho}\".");
     }
     let sons = [

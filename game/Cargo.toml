@@ -18,7 +18,7 @@ image = { version = "0.24", default-features = false, features = ["jpeg"] }
 serde_json = "1"
 
 [dev-dependencies]
-# Só para o teste que confere se todo texto do jogo tem glifo na Roboto (já é usada pelo Macroquad,
+# Só para o teste que confere se todo texto do jogo tem glifo nas fontes do jogo (o fontdue já é usado pelo Macroquad,
 # então não traz nada novo para o Cargo.lock além de uma ligação).
 fontdue = "0.9"
 
