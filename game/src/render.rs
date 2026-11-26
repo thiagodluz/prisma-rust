@@ -30,6 +30,30 @@ const PAINEL: Color = Color::from_hex(0x0d142c);
 const BOTAO: Color = Color::from_hex(0x2a3f8f);
 /// Cores da tela de jogo.
 const TEXTO_SUAVE: Color = Color::from_hex(0x9aa5d9);
+/// As três cores de texto do jogo, da mais forte à mais discreta; `PARES_DE_TEXTO` prova que
+/// cada uma se lê (4,5 para 1) sobre o fundo onde é usada.
+const HEX_TEXTO_PRINCIPAL: u32 = 0xf4f2ff;
+const HEX_TEXTO_SECUNDARIO: u32 = 0xc9c6e6;
+const HEX_TEXTO_ROTULO: u32 = 0xaaa6cf;
+const TEXTO_PRINCIPAL: Color = Color::from_hex(HEX_TEXTO_PRINCIPAL);
+const TEXTO_SECUNDARIO: Color = Color::from_hex(HEX_TEXTO_SECUNDARIO);
+const TEXTO_ROTULO: Color = Color::from_hex(HEX_TEXTO_ROTULO);
+/// Os fundos mais claros que o vidro pode ter atrás do texto: o fundo do painel (`0x2a2250`, mais
+/// claro que o real) e o do botão ativo (o lilás de `botao_icone_ativo` já misturado a ele).
+#[cfg(test)]
+const FUNDO_DO_PAINEL: u32 = 0x2a2250;
+#[cfg(test)]
+const FUNDO_DO_ATIVO: u32 = 0x463c76;
+/// (nome, cor do texto, fundo): o que o teste de contraste confere.
+#[cfg(test)]
+const PARES_DE_TEXTO: [(&str, u32, u32); 6] = [
+    ("texto principal no painel", HEX_TEXTO_PRINCIPAL, FUNDO_DO_PAINEL),
+    ("texto secundário no painel", HEX_TEXTO_SECUNDARIO, FUNDO_DO_PAINEL),
+    ("rótulo no painel", HEX_TEXTO_ROTULO, FUNDO_DO_PAINEL),
+    ("texto principal no botão ativo", HEX_TEXTO_PRINCIPAL, FUNDO_DO_ATIVO),
+    ("destaque dourado no painel", 0xffd166, FUNDO_DO_PAINEL),
+    ("aviso de não salvar no painel", 0xffc069, FUNDO_DO_PAINEL),
+];
 const ABA_ATIVA: Color = Color::from_hex(0x3b52c4);
 const ABA_INATIVA: Color = Color::from_hex(0x1a2350);
 const BARRA_PREENCHIDA: Color = Color::from_hex(0x7f93ff);
@@ -47,6 +71,47 @@ const INTERRUPTOR_APAGADO: Color = Color::from_hex(0x464f7a);
 pub struct Sprites {
     texturas: HashMap<Sprite, Texture2D>,
     formas: Formas,
+}
+
+/// O raio dos cantos (em pixels da imagem) e a sombra das formas de vidro: na tela, a sombra é
+/// sempre `SOMBRA_DO_VIDRO / RAIO_DO_VIDRO` do raio com que a forma é desenhada.
+const RAIO_DO_VIDRO: u32 = 12;
+const SOMBRA_DO_VIDRO: u32 = 6;
+
+/// A receita do vidro fosco: borda de 1 px, um degradê de três paradas com brilho no topo (o
+/// preenchimento mais claro e mais cheio), o preenchimento no meio e uma base mais escura, e uma
+/// sombra suave em volta.
+fn receita_de_vidro(raio: u32, preenchimento: formas::Cor, borda: formas::Cor) -> Receita {
+    let [r, g, b, a] = preenchimento;
+    let rumo = |canal: u8, alvo: u8, parte: f32| (canal as f32 + (alvo as f32 - canal as f32) * parte).round() as u8;
+    let topo = [rumo(r, 255, 0.35), rumo(g, 255, 0.35), rumo(b, 255, 0.35), (a as f32 * 1.5).round().min(255.0) as u8];
+    let base = [rumo(r, 0, 0.30), rumo(g, 0, 0.30), rumo(b, 0, 0.30), a];
+    Receita {
+        lado: 64,
+        raio,
+        borda: 1,
+        cor_da_borda: borda,
+        degrade: [topo, preenchimento, base],
+        angulo: 180.0,
+        sombra: SOMBRA_DO_VIDRO,
+        cor_da_sombra: rgba(0x03061633),
+    }
+}
+
+/// Desenha uma forma de vidro: com a sombra na proporção da receita.
+fn desenhar_vidro(forma: &Forma, area: Rect, raio: f32) {
+    desenhar_forma(forma, area, raio, raio * SOMBRA_DO_VIDRO as f32 / RAIO_DO_VIDRO as f32);
+}
+
+/// O tamanho de letra de um número do placar: o `tamanho` pedido, ou menos se `largura` (a
+/// largura que o texto tem a cada tamanho) não couber na coluna de `coluna_w`.
+fn tamanho_do_valor_com(largura: impl Fn(f32) -> f32, coluna_w: f32, tamanho: f32) -> f32 {
+    texto::tamanho_que_cabe(largura(tamanho), coluna_w, tamanho)
+}
+
+/// Como `tamanho_do_valor_com`, medindo com a fonte do título.
+fn tamanho_do_valor(valor: &str, coluna_w: f32, tamanho: f32) -> f32 {
+    tamanho_do_valor_com(|t| texto::medir(valor, t, Estilo::Titulo).width, coluna_w, tamanho)
 }
 
 /// Uma forma desenhada por código (retângulo arredondado com degradê, borda e sombra), pintada
@@ -80,6 +145,8 @@ struct Formas {
     casa_impar: Forma,
     /// O cartão de vidro do painel de pontos.
     cartao: Forma,
+    /// O trilho da barra de progresso (a parte vazia): vidro com borda fina.
+    trilho: Forma,
     /// Um retângulo arredondado branco e liso, para ser tingido na hora de desenhar.
     solida: Forma,
     /// O fundo dos botões de baixo (Embaralhar, Dica, Novo jogo).
@@ -142,57 +209,22 @@ impl Formas {
             }),
             casa_par: Forma::nova(casa([rgba(0xbfd5ff19), rgba(0x869ec912), rgba(0x4d67940b)])),
             casa_impar: Forma::nova(casa([rgba(0xc8c1ff1b), rgba(0x8a94c913), rgba(0x4d67940b)])),
-            cartao: Forma::nova(Receita {
-                lado: 64,
-                raio: 12,
+            cartao: Forma::nova(receita_de_vidro(RAIO_DO_VIDRO, rgba(0xffffff0d), rgba(0xffffff17))),
+            trilho: Forma::nova(Receita {
+                lado: 32,
+                raio: 4,
                 borda: 1,
-                cor_da_borda: rgba(0xffffff17),
-                degrade: [rgba(0xffffff0d); 3],
-                angulo: 145.0,
+                cor_da_borda: rgba(0xffffff26),
+                degrade: [rgba(0xffffff14); 3],
+                angulo: 180.0,
                 sombra: 0,
                 cor_da_sombra: sem_borda,
             }),
-            botao_icone: Forma::nova(Receita {
-                lado: 64,
-                raio: 12,
-                borda: 1,
-                cor_da_borda: rgba(0xffffff27),
-                degrade: [rgba(0xffffff10); 3],
-                angulo: 145.0,
-                sombra: 0,
-                cor_da_sombra: sem_borda,
-            }),
-            botao_icone_ativo: Forma::nova(Receita {
-                lado: 64,
-                raio: 12,
-                borda: 1,
-                cor_da_borda: rgba(0xc4b2ffff),
-                degrade: [rgba(0xac9aff38); 3],
-                angulo: 145.0,
-                sombra: 0,
-                cor_da_sombra: sem_borda,
-            }),
+            botao_icone: Forma::nova(receita_de_vidro(RAIO_DO_VIDRO, rgba(0xffffff10), rgba(0xffffff27))),
+            botao_icone_ativo: Forma::nova(receita_de_vidro(RAIO_DO_VIDRO, rgba(0xb8a8ff48), rgba(0xc4b2ffff))),
             marca,
-            modo: Forma::nova(Receita {
-                lado: 64,
-                raio: 12,
-                borda: 1,
-                cor_da_borda: rgba(0xffffff23),
-                degrade: [rgba(0xffffff0b); 3],
-                angulo: 145.0,
-                sombra: 0,
-                cor_da_sombra: sem_borda,
-            }),
-            modo_escolhido: Forma::nova(Receita {
-                lado: 64,
-                raio: 12,
-                borda: 1,
-                cor_da_borda: rgba(0xad9bff99),
-                degrade: [rgba(0x756aad32); 3],
-                angulo: 145.0,
-                sombra: 0,
-                cor_da_sombra: sem_borda,
-            }),
+            modo: Forma::nova(receita_de_vidro(RAIO_DO_VIDRO, rgba(0xffffff0b), rgba(0xffffff23))),
+            modo_escolhido: Forma::nova(receita_de_vidro(RAIO_DO_VIDRO, rgba(0x8678c040), rgba(0xc4b2ffff))),
             botao: Forma::nova(Receita {
                 lado: 64,
                 raio: 12,
@@ -402,6 +434,35 @@ fn escrever_com_estilo(texto: &str, area: Rect, tamanho: f32, cor: Color, alinha
     };
     let y = area.y + (area.h - referencia.height) / 2.0 + referencia.offset_y;
     texto::desenhar(texto, x, y, tamanho, cor, estilo);
+}
+
+/// Texto em letras espaçadas (`espaco` em "em", fração do tamanho), do jeito dos rótulos em
+/// maiúsculas do placar. Encolhe, se preciso, para caber na largura da área.
+fn escrever_espacado(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhamento: Alinhamento, espaco: f32) {
+    if tamanho < 1.0 || area.w <= 0.0 {
+        return;
+    }
+    let letras: Vec<String> = texto.chars().map(|letra| letra.to_string()).collect();
+    let largura = |tamanho: f32| -> f32 {
+        let soma: f32 = letras.iter().map(|letra| texto::medir(letra, tamanho, Estilo::TextoForte).width).sum();
+        soma + espaco * tamanho * letras.len().saturating_sub(1) as f32
+    };
+    let tamanho = texto::tamanho_que_cabe(largura(tamanho), area.w, tamanho);
+    if tamanho < 1.0 {
+        return;
+    }
+    let total = largura(tamanho);
+    let mut x = match alinhamento {
+        Alinhamento::Esquerda => area.x,
+        Alinhamento::Centro => area.x + (area.w - total) / 2.0,
+        Alinhamento::Direita => area.x + area.w - total,
+    };
+    let referencia = texto::medir("Ag", tamanho, Estilo::TextoForte);
+    let y = area.y + (area.h - referencia.height) / 2.0 + referencia.offset_y;
+    for letra in &letras {
+        texto::desenhar(letra, x, y, tamanho, cor, Estilo::TextoForte);
+        x += texto::medir(letra, tamanho, Estilo::TextoForte).width + espaco * tamanho;
+    }
 }
 
 /// Um botão da tela de jogo: retângulo com borda e rótulo no meio. `ativo` falso apaga o botão.
@@ -660,28 +721,35 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
     desenhar_cartao_de_modo(formas, tela.aba_zen, Icone::Lua, "Zen", "Sem pressa, sem derrota", zen);
     desenhar_cartao_de_modo(formas, tela.aba_classico, Icone::Faisca, "Clássico", "Sem cronômetro · pode acabar", !zen);
 
-    // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita.
+    // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita,
+    // separadas por duas divisórias finas.
     let cartao = tela.cartao_pontos;
-    desenhar_forma(&formas.cartao, cartao, 0.045 * cartao.w, 0.0);
+    desenhar_vidro(&formas.cartao, cartao, 0.045 * cartao.w);
+    for (esquerda, direita) in [(tela.pontos, tela.nivel), (tela.nivel, tela.melhor)] {
+        let x = ((esquerda.x + esquerda.w + direita.x) / 2.0).round();
+        draw_rectangle(x, cartao.y + 0.22 * cartao.h, 1.0, 0.56 * cartao.h, cor_de(rgba(0xffffff1f)));
+    }
     for (rotulo, valor, area, cor_do_valor, alinhamento) in [
-        ("PONTOS", &painel.pontos, tela.pontos, WHITE, Alinhamento::Esquerda),
+        ("PONTOS", &painel.pontos, tela.pontos, TEXTO_PRINCIPAL, Alinhamento::Esquerda),
         ("NÍVEL", &painel.nivel, tela.nivel, cor_de(rgba(0xa2edddff)), Alinhamento::Centro),
-        ("MELHOR", &painel.melhor, tela.melhor, WHITE, Alinhamento::Direita),
+        ("MELHOR", &painel.melhor, tela.melhor, TEXTO_PRINCIPAL, Alinhamento::Direita),
     ] {
-        let em_cima = Rect { h: 0.38 * area.h, ..area };
+        // 6% de respiro em cima; o rótulo ocupa o resto do terço de cima, o valor os dois de baixo.
+        let em_cima = Rect { y: area.y + 0.06 * area.h, h: 0.32 * area.h, ..area };
         let embaixo = Rect { y: area.y + 0.38 * area.h, h: 0.62 * area.h, ..area };
-        escrever(rotulo, em_cima, 0.62 * t, cor_de(rgba(0xb3b0d4ff)), alinhamento);
-        escrever_com_estilo(valor, embaixo, 1.5 * t, cor_do_valor, alinhamento, Estilo::Titulo);
+        escrever_espacado(rotulo, em_cima, 0.62 * t, TEXTO_ROTULO, alinhamento, 0.12);
+        let tamanho = tamanho_do_valor(valor, embaixo.w, 1.5 * t);
+        escrever_com_estilo(valor, embaixo, tamanho, cor_do_valor, alinhamento, Estilo::Titulo);
     }
 
-    // A barra de nível: trilho claro arredondado e, por cima, o preenchimento em degradê da
-    // esquerda (verde-água) para a direita (lilás), com a ponta direita reta.
+    // A barra de nível: trilho de vidro com borda fina e, por cima, o preenchimento em degradê
+    // da esquerda (verde-água) para a direita (lilás), com a ponta direita reta.
     let barra = tela.barra;
-    desenhar_forma_tingida(&formas.solida, barra, barra.h / 2.0, 0.0, cor_de(rgba(0xffffff17)));
+    desenhar_forma(&formas.trilho, barra, barra.h / 2.0, 0.0);
     let progresso = if painel.progresso.is_finite() { painel.progresso.clamp(0.0, 1.0) } else { 0.0 };
     let (esquerda, direita) = (cor_de(rgba(0x6be2d6ff)), cor_de(rgba(0xd09cffff)));
     desenhar_degrade(Rect { w: barra.w * progresso, ..barra }, [esquerda, direita, direita, esquerda]);
-    escrever(&painel.rotulo, tela.rotulo, 0.78 * t, cor_de(rgba(0x9996b9ff)), Alinhamento::Direita);
+    escrever(&painel.rotulo, tela.rotulo, 0.86 * t, TEXTO_SECUNDARIO, Alinhamento::Direita);
     if let Some(ganho) = &painel.ganho {
         escrever(ganho, tela.rotulo, 0.9 * t, DESTAQUE, Alinhamento::Esquerda);
     } else if painel.sem_salvar {
@@ -699,7 +767,7 @@ fn desenhar_topo(formas: &Formas, app: &App, tela: &TelaJogo) {
     let menu_aberto = app.folha().is_some_and(Folha::e_do_menu);
     for (area, aberto) in [(tela.botao_som, som_aberto), (tela.botao_menu, menu_aberto)] {
         let forma = if aberto { &formas.botao_icone_ativo } else { &formas.botao_icone };
-        desenhar_forma(forma, area, 0.316 * area.h, 0.0);
+        desenhar_vidro(forma, area, 0.316 * area.h);
     }
     let cor = if som_aberto { WHITE } else { cor_de(rgba(0xd7d5f8ff)) };
     let icone = encolher(tela.botao_som, 0.26 * tela.botao_som.h);
@@ -813,7 +881,7 @@ fn desenhar_fim(nivel: &str, pontos: &str, tela: &TelaJogo) {
         h: (ate - de) * cartao.h,
     };
     escrever("Fim de partida", linha(0.05, 0.26), 1.5 * t, WHITE, Alinhamento::Centro);
-    escrever("Não há mais jogadas possíveis nesta partida.", linha(0.27, 0.41), 0.72 * t, TEXTO_SUAVE, Alinhamento::Centro);
+    escrever("Não há mais jogadas possíveis nesta partida.", linha(0.27, 0.41), 0.72 * t, TEXTO_SECUNDARIO, Alinhamento::Centro);
     escrever(&format!("Nível {nivel}   |   {pontos} pontos"), linha(0.43, 0.62), 1.1 * t, DESTAQUE, Alinhamento::Centro);
     botao_da_tela(tela.botao_jogar_novamente, "Jogar novamente", 1.0 * t, ABA_ATIVA, true);
 }
@@ -832,7 +900,7 @@ fn desenhar_dialogo(tela: &TelaJogo) {
         h: (ate - de) * dialogo.h,
     };
     escrever("Começar novo jogo?", linha(0.08, 0.32), 1.35 * t, WHITE, Alinhamento::Centro);
-    escrever("O progresso da partida atual será substituído.", linha(0.34, 0.50), 0.72 * t, TEXTO_SUAVE, Alinhamento::Centro);
+    escrever("O progresso da partida atual será substituído.", linha(0.34, 0.50), 0.72 * t, TEXTO_SECUNDARIO, Alinhamento::Centro);
     botao_da_tela(tela.dialogo_cancelar, "Cancelar", t, ABA_INATIVA, true);
     botao_da_tela(tela.dialogo_confirmar, "Novo jogo", t, ABA_ATIVA, true);
 }
@@ -888,7 +956,7 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
 /// `escolhido` troca o fundo e a borda pelos do modo em uso.
 fn desenhar_cartao_de_modo(formas: &Formas, area: Rect, icone: Icone, nome: &str, frase: &str, escolhido: bool) {
     let forma = if escolhido { &formas.modo_escolhido } else { &formas.modo };
-    desenhar_forma(forma, area, 0.28 * area.h, 0.0);
+    desenhar_vidro(forma, area, 0.28 * area.h);
     let folga = 0.2 * area.h;
     let lado = 0.56 * area.h;
     let caixa = Rect { x: area.x + folga, y: area.y + (area.h - lado) / 2.0, w: lado, h: lado };
@@ -1150,7 +1218,7 @@ fn desenhar_folha_do_menu(app: &App, aba: Folha, tela: &TelaJogo) {
         let linhas_por_bloco: Vec<usize> = blocos.iter().map(|bloco| bloco.linhas.len()).collect();
         let lugares = layout::repartir_recordes(conteudo, t, &linhas_por_bloco);
         for (bloco, lugar) in blocos.iter().zip(&lugares) {
-            escrever(bloco.titulo, lugar.legenda, 0.95 * t, TEXTO_SUAVE, Alinhamento::Esquerda);
+            escrever(bloco.titulo, lugar.legenda, 0.95 * t, TEXTO_SECUNDARIO, Alinhamento::Esquerda);
             for (linha, area) in bloco.linhas.iter().zip(&lugar.cartoes) {
                 desenhar_cartao(*area);
                 let margem = 0.5 * t;
@@ -1160,7 +1228,7 @@ fn desenhar_folha_do_menu(app: &App, aba: Folha, tela: &TelaJogo) {
             }
         }
     } else {
-        escrever_paragrafos(&creditos(env!("CARGO_PKG_VERSION")), conteudo, 0.95 * t, TEXTO_SUAVE);
+        escrever_paragrafos(&creditos(env!("CARGO_PKG_VERSION")), conteudo, 0.95 * t, TEXTO_SECUNDARIO);
     }
 }
 
@@ -1187,7 +1255,7 @@ fn desenhar_guia_de_respiracao(app: &App, tela: &TelaJogo) {
     let em_cima = Rect { x: texto_x, y: area.y, w: largura_do_texto, h: 0.55 * area.h };
     let embaixo = Rect { y: area.y + 0.55 * area.h, h: 0.40 * area.h, ..em_cima };
     escrever(estado.fase.texto(), em_cima, 1.1 * t, WHITE, Alinhamento::Esquerda);
-    escrever(&segundos_restantes(estado.restante_s), embaixo, 0.8 * t, TEXTO_SUAVE, Alinhamento::Esquerda);
+    escrever(&segundos_restantes(estado.restante_s), embaixo, 0.8 * t, TEXTO_SECUNDARIO, Alinhamento::Esquerda);
 }
 
 /// Desenha a tela de jogo inteira: abas, painel, tabuleiro, botões e, por cima, avisos, o
@@ -1234,5 +1302,53 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     }
     if painel.dialogo {
         desenhar_dialogo(tela);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn todo_texto_passa_de_4_5_para_1_de_contraste() {
+        for (nome, texto, fundo) in PARES_DE_TEXTO {
+            let (t, f) = (cor_de_hex(texto), cor_de_hex(fundo));
+            let razao = crate::contraste::razao(t, f);
+            assert!(razao >= 4.5, "{nome}: contraste {razao:.2} (texto {texto:06x} sobre {fundo:06x})");
+        }
+    }
+
+    fn cor_de_hex(hex: u32) -> [u8; 3] {
+        [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
+    }
+
+    #[test]
+    fn o_vidro_tem_brilho_no_topo_borda_fina_e_sombra_suave() {
+        let receita = receita_de_vidro(12, rgba(0xffffff0d), rgba(0xffffff17));
+        assert_eq!(receita.borda, 1);
+        assert_eq!(receita.sombra, 6);
+        assert_eq!(receita.cor_da_sombra[..3], [0x03, 0x06, 0x16]);
+        let soma = |c: formas::Cor| (c[0] as u32 + c[1] as u32 + c[2] as u32) * c[3] as u32;
+        let [topo, meio, base] = receita.degrade;
+        assert!(soma(topo) > soma(meio) && soma(meio) > soma(base), "topo > meio > base: {topo:?} {meio:?} {base:?}");
+        assert!(topo[3] >= meio[3], "o brilho do topo não some");
+        assert!(receita.cor_da_sombra[3] > 0 && receita.cor_da_sombra[3] < 0x60, "sombra suave");
+    }
+
+    /// A largura de um texto em Sora Bold, medida sem janela (o Macroquad exige uma para medir).
+    fn largura_em_sora(texto: &str, tamanho: f32) -> f32 {
+        let fonte = fontdue::Font::from_bytes(texto::TITULO, fontdue::FontSettings::default()).expect("Sora carrega");
+        texto.chars().map(|c| fonte.metrics(c, tamanho).advance_width).sum()
+    }
+
+    #[test]
+    fn o_placar_encolhe_numero_enorme_para_caber_na_coluna() {
+        let valor = "12.345.678";
+        let tamanho = tamanho_do_valor_com(|t| largura_em_sora(valor, t), 100.0, 40.0);
+        assert!(tamanho <= 40.0);
+        assert!(largura_em_sora(valor, tamanho) <= 100.5, "largura {}", largura_em_sora(valor, tamanho));
+        assert!(tamanho < 40.0, "esse número não cabe a 40 px: tem de encolher");
+        // Número curto: a letra não muda.
+        assert_eq!(tamanho_do_valor_com(|t| largura_em_sora("4.321", t), 100.0, 20.0), 20.0);
     }
 }

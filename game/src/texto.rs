@@ -9,7 +9,7 @@ use std::cell::RefCell;
 // Estáticas e reduzidas ao Latim (ver `docs/notes/visual.md`).
 const TEXTO: &[u8] = include_bytes!("../assets/Inter-Regular.ttf");
 const TEXTO_FORTE: &[u8] = include_bytes!("../assets/Inter-SemiBold.ttf");
-const TITULO: &[u8] = include_bytes!("../assets/Sora-Bold.ttf");
+pub(crate) const TITULO: &[u8] = include_bytes!("../assets/Sora-Bold.ttf");
 
 /// O estilo da letra: texto comum, texto forte (rótulos e botões) e título (marca, números grandes
 /// e títulos de caixas).

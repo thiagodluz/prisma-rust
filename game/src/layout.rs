@@ -124,7 +124,7 @@ const TOPO_ALTURA: f32 = 0.105;
 /// Os cartões de modo (Zen e Clássico), embaixo de tudo.
 const MODOS_ALTURA: f32 = 0.13;
 const PAINEL_ALTURA: f32 = 0.11;
-const BARRA_ALTURA: f32 = 0.022;
+const BARRA_ALTURA: f32 = 0.030;
 const ROTULO_ALTURA: f32 = 0.05;
 const BOTOES_ALTURA: f32 = 0.10;
 /// Espaço entre uma peça e a seguinte (e margem em cima e embaixo do conjunto).
@@ -1224,6 +1224,15 @@ mod tests_tela_jogo {
     }
 
     #[test]
+    fn a_barra_de_progresso_e_mais_alta_que_o_traco_de_antes() {
+        for (largura, altura) in [(360.0_f32, 640.0_f32), (1080.0, 2400.0)] {
+            let tela = tela_jogo(largura, altura, true);
+            let lado_menor = largura.min(altura);
+            assert!(tela.barra.h >= 0.028 * lado_menor, "{largura}x{altura}: barra de {}", tela.barra.h);
+        }
+    }
+
+    #[test]
     fn a_casa_continua_confortavel_ao_toque() {
         for (largura, altura) in CELULARES {
             let tela = tela_jogo(largura, altura, true);
@@ -1478,9 +1487,9 @@ mod tests_tela_jogo {
 
     #[test]
     fn o_tabuleiro_nao_muda_com_o_botao_menu() {
-        // Posições da V2 (topo mais alto e cartões de modo embaixo), calculadas à mão: o tabuleiro
+        // Posições da V3 (a barra de progresso mais alta empurra o tabuleiro 0,4% da largura para baixo), à mão: o tabuleiro
         // não se mexe com o botão ≡ nem entre os modos.
-        for ((largura, altura), (x, y, lado)) in [((540.0, 960.0), (16.2, 228.09, 507.6)), ((720.0, 1280.0), (21.6, 304.12, 676.8))] {
+        for ((largura, altura), (x, y, lado)) in [((540.0, 960.0), (16.2, 230.25, 507.6)), ((720.0, 1280.0), (21.6, 307.0, 676.8))] {
             let tabuleiro = tela_jogo(largura, altura, true).tabuleiro;
             for (obtido, esperado, nome) in [(tabuleiro.x, x, "x"), (tabuleiro.y, y, "y"), (tabuleiro.w, lado, "lado")] {
                 assert!((obtido - esperado).abs() < 0.01, "{largura}x{altura}: {nome} = {obtido}, esperado {esperado}");
