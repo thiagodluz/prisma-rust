@@ -93,7 +93,7 @@ mod tests {
         ];
         let mut achados = Vec::new();
         for (nome, fonte) in arquivos {
-            let producao = fonte.split("#[cfg(test)]").next().unwrap_or(fonte);
+            let producao = fonte.split("\n#[cfg(test)]\nmod ").next().unwrap_or(fonte);
             for linha in producao.lines() {
                 let mut dentro = false;
                 let mut anterior = ' ';
@@ -125,6 +125,14 @@ mod tests {
                 assert!(fonte.lookup_glyph_index(c) != 0, "{arquivo}: '{c}' (U+{:04X}) não existe na fonte {nome}", c as u32);
             }
         }
+    }
+
+    #[test]
+    fn a_varredura_le_o_codigo_de_producao_do_render_inteiro() {
+        // O render tem itens `#[cfg(test)]` soltos antes do fim do código de produção: a varredura
+        // não pode parar neles (o "Í" de "NÍVEL" fica bem depois do primeiro).
+        let achados = caracteres_de_texto_do_jogo();
+        assert!(achados.contains(&("render.rs", 'Í')), "a varredura parou cedo demais no render.rs: {achados:?}");
     }
 
     #[test]
