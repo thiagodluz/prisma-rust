@@ -718,8 +718,8 @@ fn desenhar_cabecalho(app: &App, painel: &Painel, tela: &TelaJogo, formas: &Form
     let t = tela.texto;
     desenhar_topo(formas, app, tela);
     let zen = app.modo() == prisma_engine::Mode::Zen;
-    desenhar_cartao_de_modo(formas, tela.aba_zen, Icone::Lua, "Zen", "Sem pressa, sem derrota", zen);
-    desenhar_cartao_de_modo(formas, tela.aba_classico, Icone::Faisca, "Clássico", "Sem cronômetro · pode acabar", !zen);
+    desenhar_cartao_de_modo(formas, tela.aba_zen, Icone::Lua, "Zen", FRASE_ZEN, zen);
+    desenhar_cartao_de_modo(formas, tela.aba_classico, Icone::Faisca, "Clássico", FRASE_CLASSICO, !zen);
 
     // O cartão de vidro com as três colunas: pontos à esquerda, nível no meio, melhor à direita,
     // separadas por duas divisórias finas.
@@ -922,13 +922,38 @@ enum Icone {
     Faisca,
 }
 
+/// A frase embaixo do nome de cada modo, nos cartões. A do Clássico é a mais comprida: o teste
+/// confere que ela cabe nos cartões de todos os tamanhos de tela.
+const FRASE_ZEN: &str = "Sem derrota";
+const FRASE_CLASSICO: &str = "Pode acabar";
+/// O rótulo dos botões de ação: tamanho (em `tela.texto`) e margem lateral (em largura do botão).
+const ROTULO_DO_BOTAO: f32 = 0.9;
+const MARGEM_DO_BOTAO: f32 = 0.1;
+
+/// Um rótulo cabe na largura se, ao `tamanho` pedido, a largura que ele tem (`largura_do_texto`,
+/// dada a cada tamanho) não passa de `largura`.
+#[cfg(test)]
+fn rotulo_cabe_com(largura_do_texto: impl Fn(f32) -> f32, largura: f32, tamanho: f32) -> bool {
+    largura > 0.0 && largura_do_texto(tamanho) <= largura + 0.5
+}
+
+/// Onde ficam, num cartão de modo, a caixa do ícone, o x onde começa o texto e a largura útil dele.
+fn colunas_do_cartao_de_modo(area: Rect) -> (Rect, f32, f32) {
+    let folga = 0.2 * area.h;
+    let lado = 0.56 * area.h;
+    let caixa = Rect { x: area.x + folga, y: area.y + (area.h - lado) / 2.0, w: lado, h: lado };
+    let texto_x = caixa.x + caixa.w + 0.7 * folga;
+    let largura = area.x + area.w - folga * 0.6 - texto_x;
+    (caixa, texto_x, largura)
+}
+
 /// Um botão de baixo: fundo arredondado, o ícone no alto e o rótulo embaixo. `ativo` falso deixa
 /// tudo a 40% de opacidade.
 fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icone, tamanho: f32, ativo: bool) {
     let alfa = if ativo { 1.0 } else { 0.4 };
     desenhar_forma_tingida(&formas.botao, area, 0.21 * area.h, 0.0, com_alfa(WHITE, alfa));
     let cor = com_alfa(cor_de(rgba(0xeeeaffff)), alfa);
-    let lado = 0.38 * area.h;
+    let lado = 0.36 * area.h;
     let quadrado = Rect { x: area.x + (area.w - lado) / 2.0, y: area.y + 0.12 * area.h, w: lado, h: lado };
     let linhas: Vec<Linha> = match icone {
         Icone::Embaralhar => icones::embaralhar(quadrado),
@@ -947,9 +972,9 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
             draw_circle(x, y, grossura / 2.0, cor);
         }
     }
-    let margem = 0.06 * area.w;
+    let margem = MARGEM_DO_BOTAO * area.w;
     let embaixo = Rect { x: area.x + margem, y: area.y + 0.54 * area.h, w: area.w - 2.0 * margem, h: 0.38 * area.h };
-    escrever_com_estilo(rotulo, embaixo, tamanho, cor, Alinhamento::Centro, Estilo::TextoForte);
+    escrever_com_estilo(rotulo, embaixo, ROTULO_DO_BOTAO * tamanho, cor, Alinhamento::Centro, Estilo::TextoForte);
 }
 
 /// Um cartão de modo: a caixa do ícone à esquerda e, ao lado, o nome (negrito) e a frase (menor).
@@ -957,9 +982,8 @@ fn desenhar_botao_de_acao(formas: &Formas, area: Rect, rotulo: &str, icone: Icon
 fn desenhar_cartao_de_modo(formas: &Formas, area: Rect, icone: Icone, nome: &str, frase: &str, escolhido: bool) {
     let forma = if escolhido { &formas.modo_escolhido } else { &formas.modo };
     desenhar_vidro(forma, area, 0.28 * area.h);
-    let folga = 0.2 * area.h;
-    let lado = 0.56 * area.h;
-    let caixa = Rect { x: area.x + folga, y: area.y + (area.h - lado) / 2.0, w: lado, h: lado };
+    let (caixa, texto_x, largura) = colunas_do_cartao_de_modo(area);
+    let lado = caixa.w;
     desenhar_forma_tingida(&formas.solida, caixa, 0.30 * lado, 0.0, cor_de(rgba(0x9785e438)));
     let cor_do_icone = cor_de(rgba(0xcfbdffff));
     let grossura = 0.07 * lado;
@@ -971,12 +995,10 @@ fn desenhar_cartao_de_modo(formas: &Formas, area: Rect, icone: Icone, nome: &str
             draw_line(par[0].0, par[0].1, par[1].0, par[1].1, grossura, cor_do_icone);
         }
     }
-    let texto_x = caixa.x + caixa.w + 0.7 * folga;
-    let largura = area.x + area.w - folga * 0.6 - texto_x;
     let nome_area = Rect { x: texto_x, y: area.y + 0.14 * area.h, w: largura, h: 0.38 * area.h };
     let frase_area = Rect { x: texto_x, y: area.y + 0.52 * area.h, w: largura, h: 0.32 * area.h };
-    escrever_com_estilo(nome, nome_area, 0.30 * area.h, WHITE, Alinhamento::Esquerda, Estilo::TextoForte);
-    escrever(frase, frase_area, 0.22 * area.h, cor_de(rgba(0xb9b5d4ff)), Alinhamento::Esquerda);
+    escrever_com_estilo(nome, nome_area, 0.30 * area.h, TEXTO_PRINCIPAL, Alinhamento::Esquerda, Estilo::TextoForte);
+    escrever(frase, frase_area, 0.24 * area.h, TEXTO_SECUNDARIO, Alinhamento::Esquerda);
 }
 
 /// Uma colcheia (♪) dentro do quadrado `area`: cabeça redonda, haste e bandeirinha.
@@ -1350,5 +1372,59 @@ mod tests {
         assert!(tamanho < 40.0, "esse número não cabe a 40 px: tem de encolher");
         // Número curto: a letra não muda.
         assert_eq!(tamanho_do_valor_com(|t| largura_em_sora("4.321", t), 100.0, 20.0), 20.0);
+    }
+
+    /// A largura de um texto em Inter (Texto ou TextoForte), medida sem janela.
+    fn largura_em_inter(estilo: Estilo, texto: &str, tamanho: f32) -> f32 {
+        let bytes = match estilo {
+            Estilo::TextoForte => texto::TEXTO_FORTE,
+            _ => texto::TEXTO,
+        };
+        let fonte = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).expect("Inter carrega");
+        texto.chars().map(|c| fonte.metrics(c, tamanho).advance_width).sum()
+    }
+
+    /// As telas em pé: o Android do jogo é travado em retrato. Em tela deitada (800×600, só no
+    /// computador) a coluna do jogo fica estreita e o texto encolhe até sumir: não é reprovado aqui.
+    const TELAS_DO_TESTE: [(f32, f32); 4] = [(320.0, 480.0), (360.0, 640.0), (540.0, 960.0), (1080.0, 2400.0)];
+
+    #[test]
+    fn os_rotulos_dos_botoes_cabem_em_todas_as_telas() {
+        for (largura, altura) in TELAS_DO_TESTE {
+            for com_embaralhar in [true, false] {
+                let tela = layout::tela_jogo(largura, altura, com_embaralhar);
+                let mut botoes = vec![("Dica", tela.botao_dica), ("Novo jogo", tela.botao_novo_jogo)];
+                if let Some(embaralhar) = tela.botao_embaralhar {
+                    botoes.push(("Embaralhar", embaralhar));
+                }
+                for (rotulo, area) in botoes {
+                    let tamanho = ROTULO_DO_BOTAO * tela.texto;
+                    let util = area.w * (1.0 - 2.0 * MARGEM_DO_BOTAO);
+                    let medida = |t: f32| largura_em_inter(Estilo::TextoForte, rotulo, t);
+                    if largura >= 360.0 {
+                        assert!(rotulo_cabe_com(medida, util, tamanho), "{largura}x{altura}: \"{rotulo}\" a {tamanho:.1} px não cabe em {util:.1} px");
+                    } else {
+                        // O menor celular: o rótulo pode encolher, mas continua legível (70% do texto).
+                        let desenhado = texto::tamanho_que_cabe(medida(tamanho), util, tamanho);
+                        assert!(desenhado >= 0.7 * tela.texto, "{largura}x{altura}: \"{rotulo}\" encolheria para {desenhado:.1} px");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_frase_de_cada_modo_cabe_nos_cartoes() {
+        for (largura, altura) in TELAS_DO_TESTE {
+            let tela = layout::tela_jogo(largura, altura, false);
+            for (frase, area) in [(FRASE_ZEN, tela.aba_zen), (FRASE_CLASSICO, tela.aba_classico)] {
+                let (_, _, util) = colunas_do_cartao_de_modo(area);
+                let minimo = 0.20 * area.h;
+                assert!(
+                    rotulo_cabe_com(|t| largura_em_inter(Estilo::Texto, frase, t), util, minimo),
+                    "{largura}x{altura}: \"{frase}\" a {minimo:.1} px não cabe em {util:.1} px (encurte a frase)"
+                );
+            }
+        }
     }
 }
