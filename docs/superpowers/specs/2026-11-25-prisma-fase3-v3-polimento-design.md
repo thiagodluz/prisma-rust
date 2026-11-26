@@ -35,7 +35,7 @@ pedida é de app acabado, não de enfeite.
 
 - Enfeite demais: brilho forte, muitas bordas, cores novas que brigam com o fundo roxo.
 - Texto que cabia e agora corta, ou botão menor para o toque que o de hoje.
-- Abertura do app mais lenta, ou APK acima do limite de 60 MB do CI (hoje 54,7 MB).
+- Abertura do app mais lenta, ou APK acima de 100 MB (limite definido pelo Thiago; hoje 54,7 MB).
 - Tela de celular pequeno (360×640) pior que a de hoje.
 
 ## Restrições
@@ -47,7 +47,8 @@ pedida é de app acabado, não de enfeite.
   "dançarem".
 - Fontes livres (OFL), embutidas, com licença em `LICENSE-ART.md` e `game/assets/OFL.txt`. Só os
   pesos usados, reduzidos ao Latino para o APK crescer pouco (meta: no máximo +1 MB no total,
-  contando que a Roboto sai).
+  contando que a Roboto sai). O limite de 100 MB do Thiago sobra, mas fonte inteira sem
+  necessidade continua sendo desperdício.
 - O teste que confere os glifos de todo texto (`todo_texto_do_jogo_tem_glifo_na_roboto`) passa
   a conferir as fontes novas; ♫ e ≡ continuam desenhados por código.
 - Fotos de todas as cenas em 360×640 e 1080×2400 sem corte, sobreposição ou quadradinho.
