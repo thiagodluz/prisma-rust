@@ -161,7 +161,7 @@ Fluxo do Android na branch do M4. A primeira execução ainda mostrava só um mo
 a segunda, já com a correção dos dois blocos (Zen e Clássico), passou nos 3 jobs e a foto do
 Android 34 mostra os dois blocos, cada um com os seus números e nada cortado:
 
-- **APK:** 48.744.723 bytes (cerca de 46 MB; o limite é 60 MB), assinado com a chave fixa.
+- **APK:** 48.744.723 bytes (cerca de 46 MB; o limite era 60 MB; desde a V3 é 100 MB), assinado com a chave fixa.
 - **`aapt2 dump badging`:** `minSdkVersion` 26, `targetSdkVersion` 34 e o ícone de todas as
   densidades apontando para `res/mipmap-anydpi-v26/ic_launcher.xml` (ícone adaptativo).
 - **Fase 11 no Android 34 (x86_64):** o menu abriu, mostrou Recordes e Créditos e fechou; ligar a

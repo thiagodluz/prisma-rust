@@ -47,7 +47,7 @@ chave fixa do app; ver "Assinatura").
   Eles não ficam no git: o passo **"Preparar os sons"** do fluxo os recria com
   `prisma_tools audio game/sons` antes de gerar o APK (veja `docs/notes/audio.md`).
   Depois de assinar, o passo **"Conferir os sons e o tamanho do APK"** reprova se faltar algum
-  dos 9 arquivos dentro do APK ou se o APK passar de **60 MB**, e imprime o tamanho.
+  dos 9 arquivos dentro do APK ou se o APK passar de **100 MB**, e imprime o tamanho.
 
 ## Instalar no celular
 

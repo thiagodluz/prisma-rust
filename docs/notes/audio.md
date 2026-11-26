@@ -59,7 +59,7 @@ parada antes de a nova carregar (`parar` em `game/src/audio.rs`).
 
 Os sons somam uns 15 MB. O APK sem eles tinha 26,9 MB; com os 9 sons ele ficou com
 **48 084 723 bytes (uns 46 MiB; o fluxo escreve "cerca de 45 MB")**, medido no CI. O fluxo reprova
-acima de **60 MB**.
+acima de **100 MB** (era 60 MB até a V3).
 
 ## Linhas que o app escreve no registro
 

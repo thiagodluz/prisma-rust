@@ -143,7 +143,7 @@ Dois fluxos pequenos: (1) testes (`cargo test --workspace`); (2) Android (Docker
 - **M4 · Acabamento.** Vibração, partículas, intensidade de efeitos do Zen, ícone final. Feito: além dos quatro itens, o aviso "Carregando…", o botão ≡ com Recordes e Créditos e as versões do Android (minSdk 26, targetSdk 34). Detalhes no design `2026-11-22-prisma-fase2-m4-design.md` e em `docs/notes/acabamento.md`; o celular virtual ganhou a fase 11.
 - **Depois, se ele quiser:** estilo "Anterior", menu de desenvolvedor (os cheats já existem no motor), release assinada, Play Store.
 
-- **Fase 3 · Visual.** Depois do M4, a tela do Rust passa a imitar a do JS ("Novo"), em duas etapas (V1: tabuleiro, cores e botões, feita; V2: topo, cartões de modo e letra Roboto, feita, falta testar no celular) e depois o estilo "Anterior". Veja `2026-11-23-prisma-fase3-visual-design.md` e `docs/notes/visual.md`.
+- **Fase 3 · Visual.** Depois do M4, a tela do Rust passa a imitar a do JS ("Novo"), em duas etapas (V1: tabuleiro, cores e botões, feita; V2: topo, cartões de modo e letra, feita; V3: polimento com vidro fosco, fontes Inter e Sora e anel luminoso, feita, falta testar no celular; o estilo "Anterior" foi descartado). Veja `2026-11-23-prisma-fase3-visual-design.md` e `docs/notes/visual.md`.
 
 Cada marco recebe o seu plano de implementação só quando o anterior termina, para aproveitar o que foi aprendido.
 

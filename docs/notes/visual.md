@@ -44,11 +44,11 @@ O aviso de áudio no terminal ("Can't open PCM device") é esperado aqui e não 
 
 ## V2 (pronta, falta o celular)
 
-- **Letra:** Roboto Regular e Bold embutidas (`game/assets/`, licença OFL em `OFL.txt`), tudo via
-  `texto.rs` (`desenhar`, `medir`, `tamanho_que_cabe`). A Roboto não tem ♫ nem ≡: esses símbolos
-  são desenhados por código (`icones.rs`). O teste `todo_texto_do_jogo_tem_glifo_na_roboto` confere
+- **Letra (trocada na V3, veja abaixo):** Roboto Regular e Bold embutidas, tudo via
+  `texto.rs` (`desenhar`, `medir`, `tamanho_que_cabe`). A fonte não tem ♫ nem ≡: esses símbolos
+  são desenhados por código (`icones.rs`). O teste `todo_texto_do_jogo_tem_glifo_nas_fontes_embutidas` confere
   os caracteres não-ASCII entre aspas nos arquivos que escrevem texto (render, menu, app, cenas,
-  preferencias, fundo, layout) contra a Roboto; ao criar um arquivo novo com texto, some-o à lista.
+  preferencias, fundo, layout) contra as fontes; ao criar um arquivo novo com texto, some-o à lista.
 - **Topo:** logo (`marca.png`) + "PRISMA" em negrito com espaço entre letras + botões ♫ e ≡.
   Em tela deitada os itens do topo encolhem para a marca ter largura.
 - **Cartões de modo** (Zen e Clássico) ficam embaixo, depois da guia de respiração: caixa com ícone
@@ -57,3 +57,39 @@ O aviso de áudio no terminal ("Can't open PCM device") é esperado aqui e não 
 
 Só o celular confirma: a Roboto no Android (o CI tira as fotos), o tempo de abertura com duas
 fontes e a frase do Clássico (a mais longa) no menor celular.
+
+## V3 (pronta, falta o celular)
+
+Objetivo do Thiago: "profissional e polido", mantendo o layout e as pedras.
+
+- **Fontes (`texto.rs`, `game/assets/`):** três estilos em `enum Estilo`. `Texto` = Inter Regular
+  (frases, rótulos), `TextoForte` = Inter SemiBold (botões, nomes), `Titulo` = Sora Bold ("PRISMA",
+  números do placar, títulos de cartões e folhas). São instâncias estáticas reduzidas ao Latim
+  (ASCII, Latin-1 e pontuação comum), sem hinting e sem recursos OpenType, ~17 KB cada; licenças
+  OFL em `OFL-Inter.txt` e `OFL-Sora.txt`, créditos em `LICENSE-ART.md`. O Macroquad não tem
+  números tabulares, então o placar usa Sora (números de largura parecida). O teste de glifos
+  confere as três fontes; se uma fonte falhar ao carregar, vale a padrão do Macroquad.
+- **Vidro fosco (`render.rs`):** `receita_de_vidro(raio, preenchimento, borda)` = borda de 1 px,
+  degradê de três paradas (brilho no topo, base mais escura) e sombra suave de 6 px; alimenta
+  `cartao`, `botao_icone(_ativo)`, `modo(_escolhido)`. `desenhar_vidro` passa a sombra na
+  proporção da receita (se passasse 0 a sombra seria espremida para dentro). `painel` (raio 20) é
+  o vidro grande do cartão de fim, do diálogo, das folhas e do aviso; `botao_principal` é o
+  degradê azul-lilás de "Jogar novamente", "Novo jogo" e da aba aberta (`0x4d5df0`→`0x7c4fe6`,
+  escurecido em relação ao plano para o texto branco passar de 4,5 para 1).
+- **Contraste:** `contraste::razao` (WCAG) e `PARES_DE_TEXTO` (nome, texto, fundo) em
+  `render.rs`; o teste exige 4,5 para 1 em todos. Cores de texto: `TEXTO_PRINCIPAL`,
+  `TEXTO_SECUNDARIO`, `TEXTO_ROTULO`. Ao criar uma cor de texto nova, some-a aos pares.
+- **Placar e barra:** rótulos em `TEXTO_ROTULO` com letras espaçadas, números em Sora que encolhem
+  (`tamanho_do_valor`) para caber na coluna, duas divisórias; barra de progresso mais alta
+  (`BARRA_ALTURA` 0,030) com trilho de vidro.
+- **Botões e cartões de modo:** rótulos a 0,9 do texto com margem de 10%; frases curtas
+  ("Sem derrota", "Pode acabar") porque as antigas não cabiam no celular de 360 px. Os testes
+  conferem as telas em pé (320×480 a 1080×2400); em tela deitada (800×600, só no computador) a
+  coluna do jogo fica estreita e o texto encolhe, como já era antes.
+- **Anel (`Formas.anel`, `anel_da_casa`):** borda branca e brilho lilás em volta da casa
+  selecionada; o alvo do arrasto usa o anel verde-água a 80% e a Dica o dourado pulsando.
+- **Película do fim:** arredondada como a moldura do tabuleiro (`raio_da_moldura`).
+- **Limite do APK:** 100 MB (decisão do Thiago).
+
+Só o celular confirma: as fontes no Android (o CI tira as fotos), o tempo de abertura (agora ~14
+formas pintadas ao abrir), o vidro agradar aos olhos e as frases curtas dos cartões de modo.
