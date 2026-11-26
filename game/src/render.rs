@@ -32,6 +32,10 @@ const BOTAO: Color = Color::from_hex(0x2a3f8f);
 const TEXTO_SUAVE: Color = Color::from_hex(0x9aa5d9);
 /// As três cores de texto do jogo, da mais forte à mais discreta; `PARES_DE_TEXTO` prova que
 /// cada uma se lê (4,5 para 1) sobre o fundo onde é usada.
+/// O degradê do botão principal (Jogar novamente, Novo jogo, aba ativa), nas duas pontas.
+const HEX_PRINCIPAL_A: u32 = 0x4d5df0;
+const HEX_PRINCIPAL_B: u32 = 0x7c4fe6;
+const HEX_PRINCIPAL_M: u32 = 0x6456eb;
 const HEX_TEXTO_PRINCIPAL: u32 = 0xf4f2ff;
 const HEX_TEXTO_SECUNDARIO: u32 = 0xc9c6e6;
 const HEX_TEXTO_ROTULO: u32 = 0xaaa6cf;
@@ -46,31 +50,53 @@ const FUNDO_DO_PAINEL: u32 = 0x2a2250;
 const FUNDO_DO_ATIVO: u32 = 0x463c76;
 /// (nome, cor do texto, fundo): o que o teste de contraste confere.
 #[cfg(test)]
-const PARES_DE_TEXTO: [(&str, u32, u32); 6] = [
+const PARES_DE_TEXTO: [(&str, u32, u32); 8] = [
     ("texto principal no painel", HEX_TEXTO_PRINCIPAL, FUNDO_DO_PAINEL),
     ("texto secundário no painel", HEX_TEXTO_SECUNDARIO, FUNDO_DO_PAINEL),
     ("rótulo no painel", HEX_TEXTO_ROTULO, FUNDO_DO_PAINEL),
     ("texto principal no botão ativo", HEX_TEXTO_PRINCIPAL, FUNDO_DO_ATIVO),
     ("destaque dourado no painel", 0xffd166, FUNDO_DO_PAINEL),
     ("aviso de não salvar no painel", 0xffc069, FUNDO_DO_PAINEL),
+    ("rótulo do botão principal (começo do degradê)", 0xffffff, HEX_PRINCIPAL_A),
+    ("rótulo do botão principal (fim do degradê)", 0xffffff, HEX_PRINCIPAL_B),
 ];
-const ABA_ATIVA: Color = Color::from_hex(0x3b52c4);
-const ABA_INATIVA: Color = Color::from_hex(0x1a2350);
-const BARRA_PREENCHIDA: Color = Color::from_hex(0x7f93ff);
+const BARRA_PREENCHIDA: Color = Color::from_hex(0xa28fff);
 const DESTAQUE: Color = Color::from_hex(0xffd166);
-const CARTAO: Color = Color::from_hex(0x182046);
-const BORDA: Color = Color::from_hex(0x4a63d6);
-/// O fundo da folha de Som: quase opaco, para as pedras de trás não atrapalharem a leitura.
-const FOLHA: Color = Color::new(0.04, 0.06, 0.16, 0.985);
-/// O traço das barras de volume (a parte vazia) e o interruptor desligado: um azul mais claro
-/// que o das linhas, para se verem sobre elas.
-const TRILHO: Color = Color::from_hex(0x2b3a7a);
-const INTERRUPTOR_APAGADO: Color = Color::from_hex(0x464f7a);
+/// O traço das barras de volume (a parte vazia) e o interruptor desligado: branco translúcido,
+/// que se vê sobre o vidro das linhas.
+const TRILHO: Color = Color::new(1.0, 1.0, 1.0, 0.16);
+const INTERRUPTOR_APAGADO: Color = Color::new(1.0, 1.0, 1.0, 0.22);
 
 /// Todas as imagens já carregadas na placa de vídeo, uma `Texture2D` por `Sprite`.
 pub struct Sprites {
     texturas: HashMap<Sprite, Texture2D>,
     formas: Formas,
+}
+
+/// O vidro grande: raio dos cantos e sombra, em pixels da imagem (na tela, a sombra é sempre
+/// `SOMBRA_DO_PAINEL / RAIO_DO_PAINEL` do raio com que o painel é desenhado).
+const RAIO_DO_PAINEL: u32 = 20;
+const SOMBRA_DO_PAINEL: u32 = 14;
+
+/// Desenha o vidro grande em `area`, com cantos de raio `raio` (em pixels da tela).
+fn desenhar_painel(formas: &Formas, area: Rect, raio: f32) {
+    desenhar_forma(&formas.painel, area, raio, raio * SOMBRA_DO_PAINEL as f32 / RAIO_DO_PAINEL as f32);
+}
+
+/// O raio dos cantos da moldura do tabuleiro: o do vidro dela e o da película do fim de partida.
+fn raio_da_moldura(tabuleiro: Rect) -> f32 {
+    0.059 * tabuleiro.w
+}
+
+/// Onde, com que cantos e com que opacidade se escurece o tabuleiro no fim da partida: a moldura
+/// toda, arredondada como ela.
+fn pelicula_do_fim(tabuleiro: Rect) -> (Rect, f32, f32) {
+    (tabuleiro, raio_da_moldura(tabuleiro), 0.55)
+}
+
+/// Escurece `area` com cantos arredondados de raio `raio`: preto com opacidade `alfa`.
+fn pelicula(formas: &Formas, area: Rect, raio: f32, alfa: f32) {
+    desenhar_forma_tingida(&formas.solida, area, raio, 0.0, Color::new(0.0, 0.0, 0.0, alfa));
 }
 
 /// O raio dos cantos (em pixels da imagem) e a sombra das formas de vidro: na tela, a sombra é
@@ -147,6 +173,10 @@ struct Formas {
     cartao: Forma,
     /// O trilho da barra de progresso (a parte vazia): vidro com borda fina.
     trilho: Forma,
+    /// O vidro grande e quase opaco do cartão de fim, do diálogo e das folhas de Som e Menu.
+    painel: Forma,
+    /// O botão que pede a ação principal (Jogar novamente, Novo jogo, aba aberta): degradê azul-lilás.
+    botao_principal: Forma,
     /// O anel luminoso das casas marcadas: sem preenchimento, borda branca e um brilho lilás por fora.
     anel: Forma,
     /// Um retângulo arredondado branco e liso, para ser tingido na hora de desenhar.
@@ -212,6 +242,26 @@ impl Formas {
             casa_par: Forma::nova(casa([rgba(0xbfd5ff19), rgba(0x869ec912), rgba(0x4d67940b)])),
             casa_impar: Forma::nova(casa([rgba(0xc8c1ff1b), rgba(0x8a94c913), rgba(0x4d67940b)])),
             cartao: Forma::nova(receita_de_vidro(RAIO_DO_VIDRO, rgba(0xffffff0d), rgba(0xffffff17))),
+            painel: Forma::nova(Receita {
+                lado: 96,
+                raio: RAIO_DO_PAINEL,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff2e),
+                degrade: [rgba(0x2b2560fa), rgba(0x1a1844f8), rgba(0x121033f8)],
+                angulo: 180.0,
+                sombra: SOMBRA_DO_PAINEL,
+                cor_da_sombra: rgba(0x03061666),
+            }),
+            botao_principal: Forma::nova(Receita {
+                lado: 64,
+                raio: 14,
+                borda: 1,
+                cor_da_borda: rgba(0xffffff59),
+                degrade: [rgba((HEX_PRINCIPAL_A << 8) | 0xff), rgba((HEX_PRINCIPAL_M << 8) | 0xff), rgba((HEX_PRINCIPAL_B << 8) | 0xff)],
+                angulo: 135.0,
+                sombra: 0,
+                cor_da_sombra: sem_borda,
+            }),
             anel: Forma::nova(Receita {
                 lado: 64,
                 raio: RAIO_DO_ANEL,
@@ -321,7 +371,7 @@ fn desenhar_fundo(formas: &Formas) {
 /// A moldura brilhante, o painel escuro e as 64 casas do tabuleiro.
 fn desenhar_tabuleiro_vazio(formas: &Formas, tela: &TelaJogo) {
     let moldura = tela.tabuleiro;
-    desenhar_forma(&formas.moldura, moldura, 0.059 * moldura.w, 0.05 * moldura.w);
+    desenhar_forma(&formas.moldura, moldura, raio_da_moldura(moldura), 0.05 * moldura.w);
     desenhar_forma(&formas.grade, layout::fundo_da_grade(moldura), 0.04 * moldura.w, 0.0);
     for linha in 0..SIZE {
         for coluna in 0..SIZE {
@@ -477,14 +527,15 @@ fn escrever_espacado(texto: &str, area: Rect, tamanho: f32, cor: Color, alinhame
     }
 }
 
-/// Um botão da tela de jogo: retângulo com borda e rótulo no meio. `ativo` falso apaga o botão.
-fn botao_da_tela(area: Rect, rotulo: &str, tamanho: f32, fundo: Color, ativo: bool) {
+/// Um botão da tela de jogo: vidro com o rótulo no meio. `principal` usa o degradê azul-lilás
+/// (a ação que a tela espera); `ativo` falso apaga o botão.
+fn botao_da_tela(formas: &Formas, area: Rect, rotulo: &str, tamanho: f32, principal: bool, ativo: bool) {
     let alfa = if ativo { 1.0 } else { 0.4 };
-    draw_rectangle(area.x, area.y, area.w, area.h, com_alfa(fundo, alfa));
-    draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, com_alfa(BORDA, alfa));
+    let forma = if principal { &formas.botao_principal } else { &formas.botao };
+    desenhar_forma_tingida(forma, area, 0.21 * area.h, 0.0, com_alfa(WHITE, alfa));
     let margem = 0.06 * area.w;
     let dentro = Rect { x: area.x + margem, y: area.y, w: area.w - 2.0 * margem, h: area.h };
-    escrever_com_estilo(rotulo, dentro, tamanho, com_alfa(WHITE, alfa), Alinhamento::Centro, Estilo::TextoForte);
+    escrever_com_estilo(rotulo, dentro, tamanho, com_alfa(TEXTO_PRINCIPAL, alfa), Alinhamento::Centro, Estilo::TextoForte);
 }
 
 /// Desenha a imagem de uma pedra no meio de `casa`, com `escala` e `alfa`, deslocada de
@@ -848,7 +899,7 @@ fn desenhar_marca(formas: &Formas, marca: Rect) {
 }
 
 /// O aviso ("Supernova", "Tabuleiro reorganizado") numa pílula por cima do tabuleiro.
-fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
+fn desenhar_aviso(formas: &Formas, texto: &str, tela: &TelaJogo) {
     let tamanho = tela.texto;
     if tamanho < 1.0 {
         return;
@@ -863,13 +914,12 @@ fn desenhar_aviso(texto: &str, tela: &TelaJogo) {
         w: largura,
         h: altura,
     };
-    draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.85));
-    draw_rectangle_lines(area.x, area.y, area.w, area.h, 2.0, BORDA);
-    escrever_com_estilo(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, WHITE, Alinhamento::Centro, Estilo::TextoForte);
+    desenhar_painel(formas, area, 0.45 * area.h);
+    escrever_com_estilo(texto, Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area }, tamanho, TEXTO_PRINCIPAL, Alinhamento::Centro, Estilo::TextoForte);
 }
 
 /// A faixa "Nível N" no meio do tabuleiro, crescendo e sumindo conforme `t` (ms).
-fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo, intensidade: Intensidade) {
+fn desenhar_faixa_de_nivel(formas: &Formas, nivel: u32, t: f32, tela: &TelaJogo, intensidade: Intensidade) {
     let (escala, alfa) = nivel_faixa(t);
     let tabuleiro = tela.tabuleiro;
     let largura = 0.8 * tabuleiro.w * escala;
@@ -882,56 +932,54 @@ fn desenhar_faixa_de_nivel(nivel: u32, t: f32, tela: &TelaJogo, intensidade: Int
     };
     // A sombra e o brilho roxo em volta da faixa mudam com a intensidade (Suave, Padrão, Vibrante).
     let (sombra, brilho) = realce_da_faixa(intensidade);
+    let raio = 0.3 * area.h;
     let passo = 0.012 * tabuleiro.w;
     for camada in 1..=4 {
         let folga = camada as f32 * passo;
         let cor = Color::new(0.71, 0.64, 1.0, 0.11 * brilho * alfa);
-        draw_rectangle(area.x - folga, area.y - folga, area.w + 2.0 * folga, area.h + 2.0 * folga, cor);
+        desenhar_forma_tingida(&formas.solida, expandir(area, folga), raio + folga, 0.0, cor);
     }
     let desce = 0.025 * tabuleiro.h * sombra;
-    draw_rectangle(area.x, area.y + desce, area.w, area.h, Color::new(0.1, 0.09, 0.25, 0.45 * sombra * alfa));
-    draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.04, 0.06, 0.16, 0.95 * alfa));
-    draw_rectangle_lines(area.x, area.y, area.w, area.h, 3.0, com_alfa(DESTAQUE, alfa));
-    escrever(&format!("Nível {nivel}"), area, 2.4 * tela.texto * escala, com_alfa(DESTAQUE, alfa), Alinhamento::Centro);
+    desenhar_forma_tingida(&formas.solida, Rect { y: area.y + desce, ..area }, raio, 0.0, Color::new(0.1, 0.09, 0.25, 0.45 * sombra * alfa));
+    desenhar_forma_tingida(&formas.painel, area, raio, raio * SOMBRA_DO_PAINEL as f32 / RAIO_DO_PAINEL as f32, com_alfa(WHITE, alfa));
+    escrever_com_estilo(&format!("Nível {nivel}"), area, 2.4 * tela.texto * escala, com_alfa(DESTAQUE, alfa), Alinhamento::Centro, Estilo::Titulo);
 }
 
-/// O cartão de "Fim de partida", com o tabuleiro escurecido atrás.
-fn desenhar_fim(nivel: &str, pontos: &str, tela: &TelaJogo) {
+/// O cartão de "Fim de partida", com o tabuleiro escurecido atrás (nos cantos da moldura).
+fn desenhar_fim(formas: &Formas, nivel: &str, pontos: &str, tela: &TelaJogo) {
     let t = tela.texto;
-    let tabuleiro = tela.tabuleiro;
-    draw_rectangle(tabuleiro.x, tabuleiro.y, tabuleiro.w, tabuleiro.h, Color::new(0.0, 0.0, 0.0, 0.55));
+    let (area, raio, alfa) = pelicula_do_fim(tela.tabuleiro);
+    pelicula(formas, area, raio, alfa);
     let cartao = tela.cartao_fim;
-    draw_rectangle(cartao.x, cartao.y, cartao.w, cartao.h, CARTAO);
-    draw_rectangle_lines(cartao.x, cartao.y, cartao.w, cartao.h, 2.0, BORDA);
+    desenhar_painel(formas, cartao, 0.08 * cartao.w.min(cartao.h * 1.6));
     let linha = |de: f32, ate: f32| Rect {
         x: cartao.x + 0.05 * cartao.w,
         y: cartao.y + de * cartao.h,
         w: 0.9 * cartao.w,
         h: (ate - de) * cartao.h,
     };
-    escrever("Fim de partida", linha(0.05, 0.26), 1.5 * t, WHITE, Alinhamento::Centro);
+    escrever_com_estilo("Fim de partida", linha(0.05, 0.26), 1.5 * t, TEXTO_PRINCIPAL, Alinhamento::Centro, Estilo::Titulo);
     escrever("Não há mais jogadas possíveis nesta partida.", linha(0.27, 0.41), 0.72 * t, TEXTO_SECUNDARIO, Alinhamento::Centro);
     escrever(&format!("Nível {nivel}   |   {pontos} pontos"), linha(0.43, 0.62), 1.1 * t, DESTAQUE, Alinhamento::Centro);
-    botao_da_tela(tela.botao_jogar_novamente, "Jogar novamente", 1.0 * t, ABA_ATIVA, true);
+    botao_da_tela(formas, tela.botao_jogar_novamente, "Jogar novamente", t, true, true);
 }
 
 /// A pergunta "Começar novo jogo?", com a tela inteira escurecida atrás.
-fn desenhar_dialogo(tela: &TelaJogo) {
+fn desenhar_dialogo(formas: &Formas, tela: &TelaJogo) {
     let t = tela.texto;
     draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.0, 0.0, 0.0, 0.6));
     let dialogo = tela.dialogo;
-    draw_rectangle(dialogo.x, dialogo.y, dialogo.w, dialogo.h, CARTAO);
-    draw_rectangle_lines(dialogo.x, dialogo.y, dialogo.w, dialogo.h, 2.0, BORDA);
+    desenhar_painel(formas, dialogo, 0.08 * dialogo.w.min(dialogo.h * 1.6));
     let linha = |de: f32, ate: f32| Rect {
         x: dialogo.x + 0.05 * dialogo.w,
         y: dialogo.y + de * dialogo.h,
         w: 0.9 * dialogo.w,
         h: (ate - de) * dialogo.h,
     };
-    escrever("Começar novo jogo?", linha(0.08, 0.32), 1.35 * t, WHITE, Alinhamento::Centro);
+    escrever_com_estilo("Começar novo jogo?", linha(0.08, 0.32), 1.35 * t, TEXTO_PRINCIPAL, Alinhamento::Centro, Estilo::Titulo);
     escrever("O progresso da partida atual será substituído.", linha(0.34, 0.50), 0.72 * t, TEXTO_SECUNDARIO, Alinhamento::Centro);
-    botao_da_tela(tela.dialogo_cancelar, "Cancelar", t, ABA_INATIVA, true);
-    botao_da_tela(tela.dialogo_confirmar, "Novo jogo", t, ABA_ATIVA, true);
+    botao_da_tela(formas, tela.dialogo_cancelar, "Cancelar", t, false, true);
+    botao_da_tela(formas, tela.dialogo_confirmar, "Novo jogo", t, true, true);
 }
 
 // ---- Folha de Som e guia de respiração -----------------------------------------------------------
@@ -1058,10 +1106,9 @@ fn desenhar_xis(area: Rect, cor: Color) {
     draw_line(area.x + area.w, area.y, area.x, area.y + area.h, grossura, cor);
 }
 
-/// Uma linha da folha: retângulo escuro com borda.
-fn desenhar_cartao(area: Rect) {
-    draw_rectangle(area.x, area.y, area.w, area.h, CARTAO);
-    draw_rectangle_lines(area.x, area.y, area.w, area.h, 1.5, com_alfa(BORDA, 0.6));
+/// Uma linha da folha: vidro fosco.
+fn desenhar_cartao(formas: &Formas, area: Rect) {
+    desenhar_vidro(&formas.cartao, area, 0.22 * area.h);
 }
 
 /// O interruptor (liga/desliga) encostado na direita de `area`, no meio na vertical.
@@ -1080,16 +1127,16 @@ fn desenhar_interruptor(area: Rect, ligado: bool) {
 }
 
 /// Uma linha "nome ......... [interruptor]".
-fn desenhar_linha_com_interruptor(area: Rect, rotulo: &str, ligado: bool, t: f32) {
-    desenhar_cartao(area);
+fn desenhar_linha_com_interruptor(formas: &Formas, area: Rect, rotulo: &str, ligado: bool, t: f32) {
+    desenhar_cartao(formas, area);
     let texto = Rect { x: area.x + 0.18 * area.h, w: area.w - 0.18 * area.h - 0.46 * 1.8 * area.h - 0.5 * area.h, ..area };
     escrever(rotulo, texto, 0.95 * t, WHITE, Alinhamento::Esquerda);
     desenhar_interruptor(area, ligado);
 }
 
 /// O botão que passa para a próxima opção: o nome atual e um triângulo "para a frente".
-fn desenhar_botao_de_escolha(area: Rect, nome: &str, t: f32) {
-    botao_da_tela(area, "", t, ABA_INATIVA, true);
+fn desenhar_botao_de_escolha(formas: &Formas, area: Rect, nome: &str, t: f32) {
+    botao_da_tela(formas, area, "", t, false, true);
     let texto = Rect { x: area.x + 0.18 * area.h, w: area.w - 0.18 * area.h - 0.72 * area.h, ..area };
     escrever(nome, texto, 0.95 * t, WHITE, Alinhamento::Esquerda);
     let (cx, cy, r) = (area.x + area.w - 0.36 * area.h, area.y + area.h / 2.0, 0.13 * area.h);
@@ -1099,8 +1146,8 @@ fn desenhar_botao_de_escolha(area: Rect, nome: &str, t: f32) {
 /// A linha de volume. Ela toda é a barra: o começo é 0 e o fim é 100 (é assim que o dedo é
 /// lido). Em cima o nome e o número; embaixo o traço, que vai de ponta a ponta, com a bolinha
 /// na posição do volume.
-fn desenhar_linha_de_volume(area: Rect, rotulo: &str, volume: u8, t: f32) {
-    desenhar_cartao(area);
+fn desenhar_linha_de_volume(formas: &Formas, area: Rect, rotulo: &str, volume: u8, t: f32) {
+    desenhar_cartao(formas, area);
     let margem = 0.18 * area.h;
     let texto = Rect { x: area.x + margem, y: area.y + 0.06 * area.h, w: area.w - 2.0 * margem, h: 0.5 * area.h };
     let nome = Rect { w: 0.62 * texto.w, ..texto };
@@ -1155,7 +1202,7 @@ fn escrever_em_linhas(texto: &str, area: Rect, tamanho: f32, cor: Color) {
 /// A folha de Som, por cima do tabuleiro e dos botões. Só desenha o que o `App` já decidiu
 /// (valores, interruptores, avisos); o lugar de cada coisa vem de `tela.som`, o mesmo que serve
 /// para ler o toque.
-fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
+fn desenhar_folha_de_som(formas: &Formas, app: &App, tela: &TelaJogo) {
     let som = &tela.som;
     if som.folha.w <= 0.0 || som.folha.h <= 0.0 {
         return;
@@ -1163,40 +1210,39 @@ fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
     let t = som.texto;
     let preferencias = app.preferencias();
     let folha = som.folha;
-    draw_rectangle(folha.x, folha.y, folha.w, folha.h, FOLHA);
-    draw_rectangle_lines(folha.x, folha.y, folha.w, folha.h, 2.0, BORDA);
+    desenhar_painel(formas, folha, 0.04 * folha.w);
 
     // No lugar do título aparece o aviso (o do Testar ou o de áudio), se houver.
     match app.aviso_da_folha() {
         Some(aviso) => escrever_em_linhas(aviso, som.titulo, 0.9 * t, DESTAQUE),
-        None => escrever("Som", som.titulo, 1.5 * t, WHITE, Alinhamento::Esquerda),
+        None => escrever_com_estilo("Som", som.titulo, 1.5 * t, TEXTO_PRINCIPAL, Alinhamento::Esquerda, Estilo::Titulo),
     }
-    botao_da_tela(som.fechar, "", t, ABA_INATIVA, true);
+    botao_da_tela(formas, som.fechar, "", t, false, true);
     desenhar_xis(encolher(som.fechar, 0.3 * som.fechar.h), WHITE);
 
-    desenhar_linha_com_interruptor(som.sons_do_jogo, "Sons do jogo", preferencias.sons_do_jogo, t);
-    botao_da_tela(som.testar, "Testar som", t, ABA_ATIVA, true);
+    desenhar_linha_com_interruptor(formas, som.sons_do_jogo, "Sons do jogo", preferencias.sons_do_jogo, t);
+    botao_da_tela(formas, som.testar, "Testar som", t, true, true);
 
-    desenhar_linha_de_volume(som.barra_efeitos, "Volume dos efeitos", preferencias.volumes.efeitos, t);
+    desenhar_linha_de_volume(formas, som.barra_efeitos, "Volume dos efeitos", preferencias.volumes.efeitos, t);
 
     if let Some(area) = som.vibracao {
-        desenhar_linha_com_interruptor(area, "Vibração", preferencias.vibracao, t);
+        desenhar_linha_com_interruptor(formas, area, "Vibração", preferencias.vibracao, t);
     }
 
     if let (Some(liga), Some(escolhe)) = (som.liga_musica, som.escolhe_musica) {
-        desenhar_linha_com_interruptor(liga, "Música", preferencias.musica_ligada, t);
-        desenhar_botao_de_escolha(escolhe, preferencias.musica.texto(), t);
+        desenhar_linha_com_interruptor(formas, liga, "Música", preferencias.musica_ligada, t);
+        desenhar_botao_de_escolha(formas, escolhe, preferencias.musica.texto(), t);
     }
-    desenhar_linha_de_volume(som.barra_musica, "Volume da música", preferencias.volumes.musica, t);
+    desenhar_linha_de_volume(formas, som.barra_musica, "Volume da música", preferencias.volumes.musica, t);
 
     if let (Some(liga), Some(escolhe)) = (som.liga_ambiente, som.escolhe_ambiente) {
-        desenhar_linha_com_interruptor(liga, "Ambiente", preferencias.ambiente_ligado, t);
-        desenhar_botao_de_escolha(escolhe, preferencias.ambiente.texto(), t);
+        desenhar_linha_com_interruptor(formas, liga, "Ambiente", preferencias.ambiente_ligado, t);
+        desenhar_botao_de_escolha(formas, escolhe, preferencias.ambiente.texto(), t);
     }
-    desenhar_linha_de_volume(som.barra_ambiente, "Volume do ambiente", preferencias.volumes.ambiente, t);
+    desenhar_linha_de_volume(formas, som.barra_ambiente, "Volume do ambiente", preferencias.volumes.ambiente, t);
 
     if let Some(area) = som.respiracao {
-        desenhar_cartao(area);
+        desenhar_cartao(formas, area);
         let margem = 0.18 * area.h;
         let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area };
         let valor = preferencias.respiracao.texto();
@@ -1208,7 +1254,7 @@ fn desenhar_folha_de_som(app: &App, tela: &TelaJogo) {
 
     // A intensidade dos efeitos visuais (só no Zen): o nome à esquerda e o valor escolhido à direita.
     if let Some(area) = som.efeitos {
-        desenhar_cartao(area);
+        desenhar_cartao(formas, area);
         let margem = 0.18 * area.h;
         let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..area };
         escrever("Intensidade", Rect { w: 0.45 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
@@ -1246,20 +1292,19 @@ fn escrever_paragrafos(paragrafos: &[String], area: Rect, tamanho: f32, cor: Col
 
 /// A folha do Menu, no mesmo lugar da de Som: as abas Recordes e Créditos, o ✕ e, embaixo, o
 /// conteúdo da aba aberta (`aba`). Os Recordes são os do modo em que o jogador está.
-fn desenhar_folha_do_menu(app: &App, aba: Folha, tela: &TelaJogo) {
+fn desenhar_folha_do_menu(formas: &Formas, app: &App, aba: Folha, tela: &TelaJogo) {
     let menu = &tela.menu;
     if menu.folha.w <= 0.0 || menu.folha.h <= 0.0 {
         return;
     }
     let t = menu.texto;
     let folha = menu.folha;
-    draw_rectangle(folha.x, folha.y, folha.w, folha.h, FOLHA);
-    draw_rectangle_lines(folha.x, folha.y, folha.w, folha.h, 2.0, BORDA);
+    desenhar_painel(formas, folha, 0.04 * folha.w);
 
     let recordes_ativos = aba == Folha::Recordes;
-    botao_da_tela(menu.aba_recordes, "Recordes", 1.05 * t, if recordes_ativos { ABA_ATIVA } else { ABA_INATIVA }, true);
-    botao_da_tela(menu.aba_creditos, "Créditos", 1.05 * t, if recordes_ativos { ABA_INATIVA } else { ABA_ATIVA }, true);
-    botao_da_tela(menu.fechar, "", t, ABA_INATIVA, true);
+    botao_da_tela(formas, menu.aba_recordes, "Recordes", 1.05 * t, recordes_ativos, true);
+    botao_da_tela(formas, menu.aba_creditos, "Créditos", 1.05 * t, !recordes_ativos, true);
+    botao_da_tela(formas, menu.fechar, "", t, false, true);
     desenhar_xis(encolher(menu.fechar, 0.3 * menu.fechar.h), WHITE);
 
     let conteudo = menu.conteudo;
@@ -1271,7 +1316,7 @@ fn desenhar_folha_do_menu(app: &App, aba: Folha, tela: &TelaJogo) {
         for (bloco, lugar) in blocos.iter().zip(&lugares) {
             escrever(bloco.titulo, lugar.legenda, 0.95 * t, TEXTO_SECUNDARIO, Alinhamento::Esquerda);
             for (linha, area) in bloco.linhas.iter().zip(&lugar.cartoes) {
-                desenhar_cartao(*area);
+                desenhar_cartao(formas, *area);
                 let margem = 0.5 * t;
                 let dentro = Rect { x: area.x + margem, w: area.w - 2.0 * margem, ..*area };
                 escrever(linha.rotulo, Rect { w: 0.62 * dentro.w, ..dentro }, 0.95 * t, WHITE, Alinhamento::Esquerda);
@@ -1327,10 +1372,10 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     }
     desenhar_contornos_de_realce(app, &sprites.formas, tabuleiro);
     if let Some(aviso) = &painel.aviso {
-        desenhar_aviso(aviso, tela);
+        desenhar_aviso(&sprites.formas, aviso, tela);
     }
     if let Some((crate::linha::Passo::Nivel { nivel }, t)) = app.passo_atual() {
-        desenhar_faixa_de_nivel(*nivel, t, tela, app.intensidade());
+        desenhar_faixa_de_nivel(&sprites.formas, *nivel, t, tela, app.intensidade());
     }
 
     // Os botões de baixo. Com a partida acabada, a Dica fica apagada.
@@ -1344,15 +1389,15 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     desenhar_guia_de_respiracao(app, tela);
 
     if let Some((nivel, pontos)) = &painel.fim {
-        desenhar_fim(nivel, pontos, tela);
+        desenhar_fim(&sprites.formas, nivel, pontos, tela);
     }
     match app.folha() {
-        Some(Folha::Som) => desenhar_folha_de_som(app, tela),
-        Some(aba) => desenhar_folha_do_menu(app, aba, tela),
+        Some(Folha::Som) => desenhar_folha_de_som(&sprites.formas, app, tela),
+        Some(aba) => desenhar_folha_do_menu(&sprites.formas, app, aba, tela),
         None => {}
     }
     if painel.dialogo {
-        desenhar_dialogo(tela);
+        desenhar_dialogo(&sprites.formas, tela);
     }
 }
 
@@ -1479,6 +1524,18 @@ mod tests {
                     "{largura}x{altura} casa {indice}: o anel {anel:?} invade as vizinhas (passo {passo:?})"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_pelicula_do_fim_segue_o_raio_da_moldura() {
+        for (largura, altura) in [(360.0, 640.0), (1080.0, 2400.0)] {
+            let moldura = layout::tela_jogo(largura, altura, true).tabuleiro;
+            assert!(raio_da_moldura(moldura) > 0.0);
+            let (area, raio, alfa) = pelicula_do_fim(moldura);
+            assert_eq!(area, moldura, "a película cobre a moldura inteira");
+            assert_eq!(raio, raio_da_moldura(moldura), "e arredonda como ela");
+            assert!(alfa > 0.0 && alfa < 1.0);
         }
     }
 }
