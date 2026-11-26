@@ -147,6 +147,8 @@ struct Formas {
     cartao: Forma,
     /// O trilho da barra de progresso (a parte vazia): vidro com borda fina.
     trilho: Forma,
+    /// O anel luminoso das casas marcadas: sem preenchimento, borda branca e um brilho lilás por fora.
+    anel: Forma,
     /// Um retângulo arredondado branco e liso, para ser tingido na hora de desenhar.
     solida: Forma,
     /// O fundo dos botões de baixo (Embaralhar, Dica, Novo jogo).
@@ -210,6 +212,16 @@ impl Formas {
             casa_par: Forma::nova(casa([rgba(0xbfd5ff19), rgba(0x869ec912), rgba(0x4d67940b)])),
             casa_impar: Forma::nova(casa([rgba(0xc8c1ff1b), rgba(0x8a94c913), rgba(0x4d67940b)])),
             cartao: Forma::nova(receita_de_vidro(RAIO_DO_VIDRO, rgba(0xffffff0d), rgba(0xffffff17))),
+            anel: Forma::nova(Receita {
+                lado: 64,
+                raio: RAIO_DO_ANEL,
+                borda: 3,
+                cor_da_borda: rgba(0xffffffff),
+                degrade: [sem_borda; 3],
+                angulo: 180.0,
+                sombra: BRILHO_DO_ANEL,
+                cor_da_sombra: rgba(0xc4b2ff55),
+            }),
             trilho: Forma::nova(Receita {
                 lado: 32,
                 raio: 4,
@@ -661,6 +673,26 @@ fn casa_visivel(area: Rect, indice: usize) -> Rect {
     Rect { x: passo.x + (passo.w - lado) / 2.0, y: passo.y + (passo.h - lado) / 2.0, w: lado, h: lado }
 }
 
+/// O anel das casas marcadas: o raio dos cantos e o brilho, em pixels da imagem do anel. Na tela
+/// o brilho tem sempre `BRILHO_DO_ANEL / RAIO_DO_ANEL` do raio com que o anel é desenhado.
+const RAIO_DO_ANEL: u32 = 12;
+const BRILHO_DO_ANEL: u32 = 8;
+
+/// A casa visível aumentada de 4% do lado em cada ponta: o anel fica folgado em volta da pedra
+/// e o brilho tem para onde sair sem sujar a vizinha.
+fn anel_da_casa(area: Rect, indice: usize) -> Rect {
+    let casa = casa_visivel(area, indice);
+    expandir(casa, 0.04 * casa.w)
+}
+
+/// Desenha o anel luminoso em volta da casa `indice`, multiplicando as cores do anel por `tinta`
+/// (branco puro deixa o anel como é; as outras cores o tingem, e o alfa da tinta o apaga).
+fn desenhar_anel(formas: &Formas, area: Rect, indice: usize, tinta: Color) {
+    let anel = anel_da_casa(area, indice);
+    let raio = 0.22 * anel.w;
+    desenhar_forma_tingida(&formas.anel, anel, raio, raio * BRILHO_DO_ANEL as f32 / RAIO_DO_ANEL as f32, tinta);
+}
+
 /// Pinta o fundo de um realce dentro da casa `indice`, arredondado como ela.
 fn pintar_realce(formas: &Formas, area: Rect, indice: usize, cor: Color) {
     let casa = casa_visivel(area, indice);
@@ -694,21 +726,18 @@ fn pulso_da_dica() -> f32 {
 }
 
 /// Realces que ficam POR CIMA das pedras: contornos da casa marcada, do alvo do arrasto e da Dica.
-fn desenhar_contornos_de_realce(app: &App, area: Rect) {
+fn desenhar_contornos_de_realce(app: &App, formas: &Formas, area: Rect) {
     let gestos = app.gestos();
     if let Some(indice) = gestos.selecionada() {
-        let casa = casa_visivel(area, indice);
-        draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, WHITE);
+        desenhar_anel(formas, area, indice, WHITE);
     }
     if let Some(indice) = gestos.alvo_do_arrasto() {
-        let casa = casa_visivel(area, indice);
-        draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 3.0, com_alfa(WHITE, 0.8));
+        desenhar_anel(formas, area, indice, com_alfa(cor_de(rgba(0xc4ffe4ff)), 0.8));
     }
     if let Some((a, b)) = app.dica() {
         let pulso = pulso_da_dica();
         for indice in [a, b] {
-            let casa = casa_visivel(area, indice);
-            draw_rectangle_lines(casa.x, casa.y, casa.w, casa.h, 4.0, com_alfa(DESTAQUE, pulso));
+            desenhar_anel(formas, area, indice, com_alfa(DESTAQUE, pulso));
         }
     }
 }
@@ -1296,7 +1325,7 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     if let Some((passo, t)) = app.passo_atual() {
         desenhar_particulas(passo, t, tabuleiro);
     }
-    desenhar_contornos_de_realce(app, tabuleiro);
+    desenhar_contornos_de_realce(app, &sprites.formas, tabuleiro);
     if let Some(aviso) = &painel.aviso {
         desenhar_aviso(aviso, tela);
     }
@@ -1423,6 +1452,31 @@ mod tests {
                 assert!(
                     rotulo_cabe_com(|t| largura_em_inter(Estilo::Texto, frase, t), util, minimo),
                     "{largura}x{altura}: \"{frase}\" a {minimo:.1} px não cabe em {util:.1} px (encurte a frase)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn o_anel_da_casa_e_maior_que_a_casa_e_cabe_no_tabuleiro() {
+        for (largura, altura) in [(360.0, 640.0), (1080.0, 2400.0)] {
+            let tela = layout::tela_jogo(largura, altura, true);
+            let moldura = tela.tabuleiro;
+            for indice in [0, 7, 56, 63] {
+                let casa = casa_visivel(tela.grade, indice);
+                let anel = anel_da_casa(tela.grade, indice);
+                let envolve = anel.x < casa.x && anel.y < casa.y && anel.x + anel.w > casa.x + casa.w && anel.y + anel.h > casa.y + casa.h;
+                assert!(envolve, "{largura}x{altura} casa {indice}: o anel {anel:?} não envolve a casa {casa:?}");
+                let dentro = anel.x >= moldura.x - 2.0
+                    && anel.y >= moldura.y - 2.0
+                    && anel.x + anel.w <= moldura.x + moldura.w + 2.0
+                    && anel.y + anel.h <= moldura.y + moldura.h + 2.0;
+                assert!(dentro, "{largura}x{altura} casa {indice}: o anel {anel:?} passa da moldura {moldura:?}");
+                // E não invade a casa do lado: fica dentro do passo da própria casa.
+                let passo = casa_de(tela.grade, indice);
+                assert!(
+                    anel.x >= passo.x && anel.y >= passo.y && anel.x + anel.w <= passo.x + passo.w && anel.y + anel.h <= passo.y + passo.h,
+                    "{largura}x{altura} casa {indice}: o anel {anel:?} invade as vizinhas (passo {passo:?})"
                 );
             }
         }
