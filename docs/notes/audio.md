@@ -54,7 +54,7 @@ parada antes de a nova carregar (`parar` em `game/src/audio.rs`).
 | Onde | Caminho |
 | --- | --- |
 | No git | nenhum (só os créditos, em `docs/CREDITOS-AUDIO.md`) |
-| No PC (para jogar e testar) | `game/sons/musica/*.ogg` e `game/sons/ambiente/*.ogg`; a variável `PRISMA_SONS` troca a pasta |
+| No PC (para jogar e testar) | a pasta de `PRISMA_SONS` ou, sem a variável, a pasta `sons` ao lado do executável; dentro dela, `musica/*.ogg` e `ambiente/*.ogg` (o comando `audio game/sons` prepara essa pasta) |
 | Dentro do APK | `assets/musica/*.ogg` e `assets/ambiente/*.ogg` (`assets = "sons"` em `game/Cargo.toml`) |
 
 Os sons somam uns 15 MB. O APK sem eles tinha 26,9 MB; com os 9 sons ele ficou com
@@ -95,8 +95,10 @@ Para o celular virtual (e para quem lê o `logcat`) o app escreve linhas `PRISMA
 ## Como jogar com som no PC
 
 ```
-cargo run --release -p prisma_game
+PRISMA_SONS=game/sons cargo run --release -p prisma_game
 ```
 
-(depois de rodar o comando `audio` acima uma vez). Sem a pasta `game/sons` o jogo abre normal,
-só que sem música e ambiente, com o aviso na folha.
+(depois de rodar o comando `audio` acima uma vez). Sem a variável, o jogo procura uma pasta
+`sons` ao lado do executável (em `cargo run`, é `target/release/sons`), então para levar o jogo
+para outro lugar copie o executável junto com a pasta `sons`. Sem a pasta de sons o jogo abre
+normal, só que sem música e ambiente, com o aviso na folha.
