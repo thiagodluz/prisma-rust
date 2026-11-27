@@ -29,9 +29,12 @@ licença, como no projeto original.
 Quem redistribuir estas imagens ou adaptações delas deve atribuir a autoria a Thiago Luz,
 indicar a licença e manter a CC BY-SA 4.0 (ou uma licença compatível).
 
-## Fonte Roboto
+## Fontes Inter e Sora
 
-`Roboto-Regular.ttf` e `Roboto-Bold.ttf` são instâncias estáticas (peso 400 e 700, largura 100) da
-fonte variável Roboto do projeto Roboto (<https://github.com/googlefonts/roboto-classic>), geradas com
-`fonttools varLib.instancer`. A Roboto está sob a [SIL Open Font License 1.1](OFL.txt), e não sob a
-CC BY-SA das imagens acima.
+`Inter-Regular.ttf` e `Inter-SemiBold.ttf` são instâncias estáticas (peso 400 e 600, `opsz` 14) da
+fonte variável Inter, de The Inter Project Authors (<https://github.com/rsms/inter>); `Sora-Bold.ttf`
+é a instância de peso 700 da fonte variável Sora, de The Sora Project Authors
+(<https://github.com/sora-xor/sora-font>). Todas foram geradas com `fonttools varLib.instancer` e
+reduzidas ao Latim (ASCII, Latin-1 e pontuação comum) com `pyftsubset`, sem hinting e sem recursos
+OpenType. Estão sob a [SIL Open Font License 1.1](OFL-Inter.txt) (Inter) e a
+[SIL Open Font License 1.1](OFL-Sora.txt) (Sora), e não sob a CC BY-SA das imagens acima.

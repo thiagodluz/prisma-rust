@@ -7,6 +7,8 @@ mod assets;
 mod audio;
 mod cenas;
 mod contador;
+#[cfg(test)]
+mod contraste;
 mod efeitos;
 mod formas;
 mod texto;
