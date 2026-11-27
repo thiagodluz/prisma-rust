@@ -4313,6 +4313,19 @@ mod tests {
     }
 
     #[test]
+    fn save_estragado_sem_copia_corrupt_avisa_e_nao_e_sobrescrito() {
+        let pasta = pasta_de_teste();
+        fs::create_dir_all(pasta.0.join("zen.json.corrupt")).unwrap();
+        fs::write(pasta.0.join("zen.json"), "lixo").unwrap();
+        let mut app = abrir(&pasta);
+        assert!(app.painel().sem_salvar, "o aviso já na abertura: a cópia do save ruim falhou");
+        jogar_inteira(&mut app);
+        assert!(app.jogo().score > 0, "o jogo continua jogável");
+        assert!(app.painel().sem_salvar);
+        assert_eq!(ler(&pasta, "zen.json"), "lixo", "o arquivo ruim não foi trocado");
+    }
+
+    #[test]
     fn arquivo_de_preferencias_estragado_abre_com_padroes_e_o_jogo_funciona() {
         for conteudo in ["lixo", "", "[]", "{\"audio\":"] {
             let pasta = pasta_de_teste();
