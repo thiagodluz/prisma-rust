@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use macroquad::prelude::*;
 use prisma_engine::{position, Board, Tile, SIZE};
 
-use crate::app::{App, Folha, Painel};
+use crate::app::{App, Foco, Folha, Painel};
 use crate::assets::{all_sprites, png_bytes, sprite_for, Sprite, FUNDO_JPG, MARCA_PNG, SPRITE_RATIO};
 use crate::texto::{self, Estilo};
 use crate::formas::{self, cobrir, expandir, nove_fatias, pintar, rgba, Receita};
@@ -1453,6 +1453,22 @@ pub fn draw_jogo(app: &App, sprites: &Sprites, tela: &TelaJogo) {
     }
     if painel.dialogo {
         desenhar_dialogo(&sprites.formas, tela);
+    }
+    desenhar_foco_do_teclado(app, &sprites.formas, tela);
+}
+
+/// O contorno do teclado (só depois de usar o teclado): numa casa, o anel verde-água; num botão
+/// ou numa barra de volume, o anel em volta dele, 3 px para fora.
+fn desenhar_foco_do_teclado(app: &App, formas: &Formas, tela: &TelaJogo) {
+    let verde_agua = cor_de(rgba(0x8ff5e6ff));
+    match app.retangulo_do_foco(tela) {
+        Some((Foco::Casa(casa), _)) => desenhar_anel(formas, tela.grade, casa, verde_agua),
+        Some((_, area)) => {
+            let anel = expandir(area, 3.0);
+            let raio = 0.3 * anel.w.min(anel.h);
+            desenhar_forma_tingida(&formas.anel, anel, raio, raio * BRILHO_DO_ANEL as f32 / RAIO_DO_ANEL as f32, verde_agua);
+        }
+        None => {}
     }
 }
 

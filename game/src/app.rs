@@ -1249,10 +1249,8 @@ impl App {
             },
             Tecla::Confirmar => match self.foco {
                 Some(Foco::Casa(casa)) => self.confirmar_casa(casa),
-                Some(Foco::Botao(botao)) => {
-                    if self.botoes_visiveis(tela).iter().any(|(visivel, _)| *visivel == botao) {
-                        self.apertar(botao);
-                    }
+                Some(Foco::Botao(botao)) if self.botoes_visiveis(tela).iter().any(|(visivel, _)| *visivel == botao) => {
+                    self.apertar(botao)
                 }
                 _ => {}
             },

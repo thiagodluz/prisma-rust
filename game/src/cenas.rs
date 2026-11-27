@@ -6,7 +6,7 @@
 
 use crate::app::{App, Botao};
 use crate::formato::Recordes;
-use crate::input::Evento;
+use crate::input::{Evento, Tecla};
 use crate::layout::{cell_rect, tela_jogo, TelaJogo};
 use crate::linha::{duracao_ms, Passo, TipoVisual};
 use crate::preferencias::{Canal, Intensidade, Preferencias, Respiracao};
@@ -108,6 +108,11 @@ fn recordes_do_zen_da_cena() -> Recordes {
     Recordes { pontuacao: 98_765, nivel: 6, jogada: 3_200, terminadas: 0 }
 }
 
+/// A tela das cenas que usam o teclado (só a ordem dos botões importa, e ela é a mesma em toda tela).
+fn tela_da_cena() -> TelaJogo {
+    tela_jogo(360.0, 640.0, true)
+}
+
 /// Libera e abre a aba Ferramentas (7 toques na versão, nos Créditos).
 fn liberar_ferramentas(app: &mut App) {
     app.apertar(Botao::Menu);
@@ -122,7 +127,8 @@ fn liberar_ferramentas(app: &mut App) {
 /// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
 /// `som-classico`, `som-aviso`, `respiracao`, `recordes`, `creditos`, `particulas-pulso`,
 /// `particulas-raio`, `particulas-espectro`, `particulas-espectro-suave`,
-/// `particulas-espectro-vibrante`, `particulas-supernova`, `ferramentas` e `escolher-casa`.
+/// `particulas-espectro-vibrante`, `particulas-supernova`, `ferramentas`, `escolher-casa`,
+/// `teclado` e `teclado-botao`.
 pub fn cena(nome: &str) -> Option<App> {
     let mut app = App::com_sementes(7, 9);
     match nome {
@@ -196,6 +202,14 @@ pub fn cena(nome: &str) -> Option<App> {
             app.apertar(Botao::Menu);
             app.apertar(Botao::AbaCreditos);
         }
+        // O contorno do teclado numa casa (a primeira seta põe o foco no meio do tabuleiro).
+        "teclado" => app.tecla(Tecla::Direita, &tela_da_cena()),
+        // O contorno do teclado no botão Novo jogo (Tab até ele).
+        "teclado-botao" => {
+            for _ in 0..6 {
+                app.tecla(Tecla::Proximo, &tela_da_cena());
+            }
+        }
         // A aba Ferramentas aberta, depois de um cheat (o Desfazer aceso e a partida marcada).
         "ferramentas" => {
             liberar_ferramentas(&mut app);
@@ -258,8 +272,10 @@ mod tests {
     use crate::preferencias::Fase;
     use prisma_engine::Mode;
 
-    const NOMES: [&str; 24] = [
+    const NOMES: [&str; 26] = [
         "inicio",
+        "teclado",
+        "teclado-botao",
         "ferramentas",
         "escolher-casa",
         "selecionada",
@@ -371,6 +387,13 @@ mod tests {
         let guia = respiracao.guia_respiracao().expect("o guia está ligado");
         assert_eq!(guia.fase, Fase::Inspire);
         assert_eq!(guia.restante_s, 2);
+    }
+
+    #[test]
+    fn as_cenas_do_teclado() {
+        use crate::app::Foco;
+        assert_eq!(cena("teclado").unwrap().foco_visivel(), Some(Foco::Casa(27)));
+        assert_eq!(cena("teclado-botao").unwrap().foco_visivel(), Some(Foco::Botao(Botao::NovoJogo)));
     }
 
     #[test]
