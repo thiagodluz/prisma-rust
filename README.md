@@ -28,7 +28,7 @@ com acabamento em vidro fosco e fontes próprias (`docs/notes/visual.md`).
   não troca nenhuma pedra;
 - teclado no PC: setas, Enter/Espaço, Tab e Esc (`docs/notes/teclado-e-gestos.md`).
 
-**Ainda não tem:** versão para navegador e importação das partidas do app em JS.
+**Ainda não tem:** versão para navegador.
 
 ### Experimentar
 
@@ -36,10 +36,12 @@ com acabamento em vidro fosco e fontes próprias (`docs/notes/visual.md`).
   <https://github.com/thiagodluz/prisma-rust/releases/download/apk-mais-recente/prisma-rust.apk>
   e só é atualizado depois de passar nos celulares virtuais. Detalhes em
   `docs/notes/android-build.md`.
-- **PC:** `cargo run -p prisma_game` (no Linux precisa dos arquivos de desenvolvimento do ALSA). As
-  músicas e ambientes não ficam no git: `cargo run --manifest-path tools/Cargo.toml -- audio game/sons`
-  baixa e prepara tudo; sem isso o jogo funciona com efeitos e avisa que falta a faixa. Para
-  usar outra pasta de sons, defina `PRISMA_SONS`.
+- **PC:** `PRISMA_SONS=game/sons cargo run -p prisma_game` (no Linux precisa dos arquivos de
+  desenvolvimento do ALSA). As músicas e ambientes não ficam no git:
+  `cargo run --manifest-path tools/Cargo.toml -- audio game/sons` baixa e prepara tudo; sem isso o
+  jogo funciona com efeitos e avisa que falta a faixa. O jogo procura os sons na pasta de
+  `PRISMA_SONS` e, se a variável não existir, numa pasta `sons` ao lado do executável. Para levar
+  o jogo para outro lugar, copie o executável junto com a pasta `sons`.
 - **Testes:** `cargo test --workspace` e `cargo test --manifest-path tools/Cargo.toml`.
 
 ## Licenças

@@ -15,7 +15,7 @@ pub enum Faixa {
 }
 
 impl Faixa {
-    /// Onde o arquivo fica, dentro da pasta dos sons (`game/sons` no PC, os assets no Android).
+    /// Onde o arquivo fica, dentro da pasta dos sons (a pasta `sons` no PC, os assets no Android).
     pub fn caminho(&self) -> &'static str {
         match self {
             Faixa::Musica(Musica::MagicPuzzle) => "musica/magic-puzzle.ogg",

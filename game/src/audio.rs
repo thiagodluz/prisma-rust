@@ -70,19 +70,24 @@ fn carregar_bytes(bytes: &[u8]) -> Result<Sound, String> {
     }
 }
 
-/// A pasta dos sons no PC: a da variável `PRISMA_SONS` (se tiver valor) ou `game/sons`.
+/// A pasta dos sons no PC: a da variável `PRISMA_SONS` (se tiver valor) ou a pasta `sons` ao lado
+/// do executável. Sem saber onde o executável está, a `sons` do diretório atual.
 #[cfg(not(target_os = "android"))]
-fn pasta_dos_sons_com(variavel: Option<std::ffi::OsString>) -> std::path::PathBuf {
+fn pasta_dos_sons_com(variavel: Option<std::ffi::OsString>, executavel: Option<std::path::PathBuf>) -> std::path::PathBuf {
     match variavel {
         Some(pasta) if !pasta.is_empty() => std::path::PathBuf::from(pasta),
-        _ => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sons"),
+        _ => {
+            let ao_lado = executavel.as_deref().and_then(std::path::Path::parent);
+            ao_lado.unwrap_or_else(|| std::path::Path::new(".")).join("sons")
+        }
     }
 }
 
 /// Lê os bytes de uma faixa no PC: direto do disco, na pasta dos sons.
 #[cfg(not(target_os = "android"))]
 async fn ler_faixa(caminho: &str) -> Result<Vec<u8>, String> {
-    let arquivo = pasta_dos_sons_com(std::env::var_os("PRISMA_SONS")).join(caminho);
+    let pasta = pasta_dos_sons_com(std::env::var_os("PRISMA_SONS"), std::env::current_exe().ok());
+    let arquivo = pasta.join(caminho);
     std::fs::read(&arquivo).map_err(|erro| format!("não consegui ler {}: {erro}", arquivo.display()))
 }
 
@@ -280,11 +285,23 @@ mod tests {
 
     #[cfg(not(target_os = "android"))]
     #[test]
-    fn a_pasta_dos_sons_no_pc_e_game_sons_ou_a_da_variavel() {
+    fn a_pasta_dos_sons_no_pc_e_a_da_variavel_ou_a_sons_ao_lado_do_executavel() {
         use std::ffi::OsString;
-        let padrao = pasta_dos_sons_com(None);
-        assert!(padrao.ends_with("game/sons") || padrao.ends_with("game\\sons"), "{padrao:?}");
-        assert_eq!(pasta_dos_sons_com(Some(OsString::new())), padrao, "variável vazia vale como ausente");
-        assert_eq!(pasta_dos_sons_com(Some(OsString::from("/tmp/meus-sons"))), std::path::PathBuf::from("/tmp/meus-sons"));
+        use std::path::PathBuf;
+        let exe = || Some(PathBuf::from("/jogos/prisma/prisma_game"));
+        let ao_lado = PathBuf::from("/jogos/prisma/sons");
+        assert_eq!(pasta_dos_sons_com(None, exe()), ao_lado);
+        assert_eq!(pasta_dos_sons_com(Some(OsString::new()), exe()), ao_lado, "variável vazia vale como ausente");
+        assert_eq!(
+            pasta_dos_sons_com(Some(OsString::from("/tmp/meus-sons")), exe()),
+            PathBuf::from("/tmp/meus-sons"),
+            "a variável vence a pasta ao lado do executável"
+        );
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn sem_saber_onde_esta_o_executavel_a_pasta_dos_sons_e_a_sons_do_diretorio_atual() {
+        assert_eq!(pasta_dos_sons_com(None, None), std::path::PathBuf::from("./sons"));
     }
 }
