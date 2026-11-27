@@ -1263,7 +1263,7 @@ impl App {
             return;
         };
         self.limpar_depois_do_cheat(true);
-        self.jogar(a, b);
+        self.jogar_com(a, b, true);
     }
 
     // ---- Desfazer -----------------------------------------------------------------------
@@ -1375,6 +1375,13 @@ impl App {
 
     /// Joga a troca no motor (que resolve tudo de uma vez) e prepara a animação.
     fn jogar(&mut self, a: usize, b: usize) {
+        self.jogar_com(a, b, false);
+    }
+
+    /// A troca de `a` e `b`. Com `cheat`, uma jogada válida marca a partida como tendo usado
+    /// recurso de desenvolvedor ANTES de os recordes serem contados (como o `attempt(..., true)`
+    /// do original), então ela nunca sobe recorde.
+    fn jogar_com(&mut self, a: usize, b: usize, cheat: bool) {
         let base = self.estagio();
         // Guardado antes de a jogada contar: durante a animação o painel mostra este MELHOR.
         let melhor_antes = self.melhor_parado();
@@ -1383,6 +1390,9 @@ impl App {
         let jogo = self.jogo_mut();
         let antes = jogo.board;
         let resultado = jogo.play(a, b);
+        if cheat && resultado.valid {
+            jogo.cheats_used = true;
+        }
         let (pontos, nivel) = (jogo.score, jogo.level);
         let passos = montar(antes, a, b, &resultado, nivel, intensidade);
         self.registros.push(format!("PRISMA_M1 jogada valida={} pontos={} nivel={}", resultado.valid, pontos, nivel));
@@ -2065,6 +2075,25 @@ mod tests {
         assert_eq!(app.folha, None);
         terminar(&mut app);
         assert!(app.jogo().score > 0);
+    }
+
+    #[test]
+    fn jogada_automatica_conta_como_cheat_e_nao_sobe_recorde() {
+        let mut app = com_ferramentas();
+        assert!(!app.jogo().cheats_used);
+        app.apertar(Botao::JogadaAutomatica);
+        terminar(&mut app);
+        assert!(app.jogo().score > 0);
+        assert!(app.jogo().cheats_used, "a jogada automática é recurso de desenvolvedor");
+        assert_eq!(app.recordes(Mode::Zen), Recordes::zerados());
+    }
+
+    #[test]
+    fn jogada_automatica_sem_efeito_nao_marca_cheat() {
+        let mut app = com_ferramentas();
+        app.jogo_mut().ended = true;
+        app.apertar(Botao::JogadaAutomatica);
+        assert!(!app.jogo().cheats_used, "sem jogada válida a partida continua sem cheat");
     }
 
     #[test]
@@ -2933,6 +2962,30 @@ mod tests {
 
     fn ler(pasta: &Pasta, nome: &str) -> String {
         fs::read_to_string(pasta.0.join(nome)).unwrap_or_else(|erro| panic!("não li {nome}: {erro}"))
+    }
+
+    #[test]
+    fn jogada_automatica_marcada_como_cheat_sobrevive_a_fechar_e_abrir() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaCreditos);
+        for _ in 0..7 {
+            app.apertar(Botao::Versao);
+        }
+        app.apertar(Botao::AbaFerramentas);
+        app.apertar(Botao::JogadaAutomatica);
+        terminar(&mut app);
+        assert!(app.jogo().score > 0);
+        assert!(app.jogo().cheats_used);
+        assert!(!pasta.0.join("recordes-zen.json").exists(), "partida com cheat não grava recorde");
+        drop(app);
+
+        let mut reaberto = abrir(&pasta);
+        assert!(reaberto.jogo().cheats_used, "a marca volta junto com a partida");
+        assert_eq!(reaberto.recordes(Mode::Zen), Recordes::zerados());
+        jogar_inteira(&mut reaberto);
+        assert_eq!(reaberto.recordes(Mode::Zen), Recordes::zerados(), "continuar a partida marcada não sobe recorde");
     }
 
     fn linhas_m2(registro: &[String], tipo: &str) -> Vec<String> {
