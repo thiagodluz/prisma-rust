@@ -1302,8 +1302,15 @@ fn desenhar_folha_do_menu(formas: &Formas, app: &App, aba: Folha, tela: &TelaJog
     desenhar_painel(formas, folha, 0.04 * folha.w);
 
     let recordes_ativos = aba == Folha::Recordes;
-    botao_da_tela(formas, menu.aba_recordes, "Recordes", 1.05 * t, recordes_ativos, true);
-    botao_da_tela(formas, menu.aba_creditos, "Créditos", 1.05 * t, !recordes_ativos, true);
+    if app.ferramentas_liberadas() {
+        let abas = [(Folha::Recordes, "Recordes"), (Folha::Creditos, "Créditos"), (Folha::Ferramentas, "Ferramentas")];
+        for ((dona, rotulo), area) in abas.into_iter().zip(menu.abas_com_ferramentas) {
+            botao_da_tela(formas, area, rotulo, 1.05 * t, aba == dona, true);
+        }
+    } else {
+        botao_da_tela(formas, menu.aba_recordes, "Recordes", 1.05 * t, recordes_ativos, true);
+        botao_da_tela(formas, menu.aba_creditos, "Créditos", 1.05 * t, !recordes_ativos, true);
+    }
     botao_da_tela(formas, menu.fechar, "", t, false, true);
     desenhar_xis(encolher(menu.fechar, 0.3 * menu.fechar.h), WHITE);
 
@@ -1323,9 +1330,57 @@ fn desenhar_folha_do_menu(formas: &Formas, app: &App, aba: Folha, tela: &TelaJog
                 escrever(&linha.valor, Rect { x: dentro.x + 0.64 * dentro.w, w: 0.36 * dentro.w, ..dentro }, 1.1 * t, DESTAQUE, Alinhamento::Direita);
             }
         }
+    } else if aba == Folha::Ferramentas {
+        desenhar_ferramentas(formas, app, menu);
     } else {
-        escrever_paragrafos(&creditos(env!("CARGO_PKG_VERSION")), conteudo, 0.95 * t, TEXTO_SECUNDARIO);
+        // A primeira linha (a versão) fica sozinha em `versao`, onde os 7 toques contam.
+        let linhas = creditos(env!("CARGO_PKG_VERSION"));
+        if let Some((versao, resto)) = linhas.split_first() {
+            escrever(versao, menu.versao, 0.95 * t, TEXTO_SECUNDARIO, Alinhamento::Esquerda);
+            let abaixo = menu.versao.y + menu.versao.h;
+            let resto_area = Rect { y: abaixo, h: (conteudo.y + conteudo.h - abaixo).max(0.0), ..conteudo };
+            escrever_paragrafos(resto, resto_area, 0.95 * t, TEXTO_SECUNDARIO);
+        }
     }
+}
+
+/// A aba Ferramentas (o menu secreto): estado da partida, Desfazer, pontos e nível com – e +,
+/// atalhos, especiais, poderes e o interruptor "Impedir derrota". Com animação, tudo apagado.
+fn desenhar_ferramentas(formas: &Formas, app: &App, menu: &layout::TelaMenu) {
+    let t = menu.texto;
+    let f = &menu.ferramentas;
+    let estado = app.ferramentas();
+    let ativo = !estado.ocupado;
+    let situacao = if estado.com_cheats { "Com cheats, sem recordes" } else { "Partida normal" };
+    let linha = format!("{situacao} · {} de 50 para desfazer", estado.acoes);
+    escrever(&linha, f.estado, 0.9 * t, TEXTO_SECUNDARIO, Alinhamento::Centro);
+    botao_da_tela(formas, f.desfazer, "Desfazer última ação", t, true, ativo && estado.pode_desfazer);
+    for (menos, valor, mais, acao, texto, rotulo) in [
+        (f.pontos_menos, f.pontos_valor, f.pontos_mais, f.somar, estado.pontos.as_str(), "Somar pontos"),
+        (f.nivel_menos, f.nivel_valor, f.nivel_mais, f.ir, estado.nivel.as_str(), "Ir ao nível"),
+    ] {
+        botao_da_tela(formas, menos, "–", 1.2 * t, false, ativo);
+        desenhar_cartao(formas, valor);
+        escrever_com_estilo(texto, valor, 1.1 * t, TEXTO_PRINCIPAL, Alinhamento::Centro, Estilo::Titulo);
+        botao_da_tela(formas, mais, "+", 1.2 * t, false, ativo);
+        botao_da_tela(formas, acao, rotulo, 0.9 * t, true, ativo);
+    }
+    let comuns = [
+        (f.mais_100, "+100"),
+        (f.mais_1000, "+1.000"),
+        (f.proximo_nivel, "Próx. nível"),
+        (f.especiais[0], "Pulso"),
+        (f.especiais[1], "Raio"),
+        (f.especiais[2], "Espectro"),
+        (f.especiais[3], "Supernova"),
+        (f.embaralhar, "Embaralhar"),
+        (f.jogada_automatica, "Jogada auto"),
+        (f.explodir, "Explodir"),
+    ];
+    for (area, rotulo) in comuns {
+        botao_da_tela(formas, area, rotulo, 0.9 * t, false, ativo);
+    }
+    desenhar_linha_com_interruptor(formas, f.impedir_derrota, "Impedir derrota", estado.impedir_derrota, t);
 }
 
 /// O guia de respiração, na linha abaixo dos botões: a bolinha que cresce e encolhe, a palavra
