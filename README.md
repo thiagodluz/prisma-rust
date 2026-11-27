@@ -13,8 +13,9 @@ O Prisma original, em JavaScript, está em <https://github.com/thiagodluz/Prisma
 
 ## Estado
 
-Dá para jogar, no PC e no Android (APK de teste). A tela segue o visual "Novo" do original,
-com acabamento em vidro fosco e fontes próprias (`docs/notes/visual.md`).
+Dá para jogar no Android (APK de teste). O projeto é só para celular; o PC serve para
+desenvolver e testar. A tela segue o visual "Novo" do original, com acabamento em vidro fosco e
+fontes próprias (`docs/notes/visual.md`).
 
 **Já tem:**
 - modos Zen e Clássico, com partida e recordes salvos por modo, fim de partida e novo jogo;
@@ -25,8 +26,7 @@ com acabamento em vidro fosco e fontes próprias (`docs/notes/visual.md`).
 - menu secreto (7 toques na versão, em Créditos) com desfazer e cheats
   (`docs/notes/ferramentas.md`);
 - gestos interrompidos: puxar a barra de notificações ou minimizar o app no meio de um arrasto
-  não troca nenhuma pedra;
-- teclado no PC: setas, Enter/Espaço, Tab e Esc (`docs/notes/teclado-e-gestos.md`).
+  não troca nenhuma pedra (`docs/notes/gestos-interrompidos.md`).
 
 **Fora do projeto, de propósito:** versão para navegador e importação das partidas do app em JS.
 
@@ -36,7 +36,7 @@ com acabamento em vidro fosco e fontes próprias (`docs/notes/visual.md`).
   <https://github.com/thiagodluz/prisma-rust/releases/download/apk-mais-recente/prisma-rust.apk>
   e só é atualizado depois de passar nos celulares virtuais. Detalhes em
   `docs/notes/android-build.md`.
-- **PC:** `PRISMA_SONS=game/sons cargo run -p prisma_game` (no Linux precisa dos arquivos de
+- **PC (só para desenvolver e testar):** `PRISMA_SONS=game/sons cargo run -p prisma_game` (no Linux precisa dos arquivos de
   desenvolvimento do ALSA). As músicas e ambientes não ficam no git:
   `cargo run --manifest-path tools/Cargo.toml -- audio game/sons` baixa e prepara tudo; sem isso o
   jogo funciona com efeitos e avisa que falta a faixa. O jogo procura os sons na pasta de

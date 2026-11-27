@@ -1,6 +1,6 @@
-# Teclado e gestos interrompidos
+# Gestos interrompidos
 
-Item 4 da auditoria (gestos interrompidos e navegação por teclado). Plano:
+Item 4 da auditoria (gestos interrompidos; a parte de teclado foi retirada, veja abaixo). Plano:
 `docs/superpowers/plans/2026-11-27-prisma-gestos-teclado.md`.
 
 ## Gestos interrompidos
@@ -17,18 +17,11 @@ no quadro em que vê um toque cancelado ou a janela minimizada (`Interrupcoes`),
 `Evento::Cancelar` (`input::eventos_do_quadro`). O `Gestos` esquece o gesto e a barra de volume
 em arrasto grava o valor de agora.
 
-## Teclado (PC)
+## Teclado: feito e retirado
 
-| Tecla | O que faz |
-|---|---|
-| Setas | andam pelas casas (sem dar a volta); a primeira põe o foco no meio do tabuleiro (ou na pedra marcada). Com a barra de volume em foco, ←/→ mudam de 5 em 5 |
-| Enter / Espaço | tocam a casa em foco (duas vizinhas trocam) ou apertam o botão em foco; com um especial do menu secreto esperando, criam-no na casa |
-| Tab / Shift+Tab | passam pelos botões visíveis, pelas barras de volume (folha de Som) e pelo tabuleiro, em ordem de leitura |
-| Esc | fecha a pergunta, cancela a escolha de casa, fecha a folha ou desmarca a pedra, nessa ordem |
-
-O contorno (anel verde-água) só aparece depois de usar o teclado; um toque ou clique o esconde.
-Durante a animação, setas e Enter no tabuleiro não fazem nada; Tab e Esc continuam. Segurar a
-seta não repete.
+A navegação por teclado no PC (setas, Enter/Espaço, Tab, Esc e um contorno de foco) chegou a
+entrar na main (PR #9) e foi retirada em seguida: o projeto passou a ser só para celular. O código
+está no histórico do git (commits `1c48a72` e `682f8b4`).
 
 ## Só o aparelho confirma
 
