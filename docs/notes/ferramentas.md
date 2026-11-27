@@ -18,7 +18,7 @@ e a terceira aba, **Ferramentas**. Ela some ao fechar o app (não é gravada).
 | Nível | – / valor / + / Ir ao nível | escolhe de 1 a 10.000 (começa em 10) e vai; os pontos acompanham |
 | Atalhos | +100, +1.000, Próx. nível | — |
 | Especiais | Pulso, Raio, Espectro, Supernova | a folha fecha, aparece "Toque numa casa"; o próximo toque no tabuleiro escolhe a casa (fora dele, desiste). A Supernova funde três especiais na linha da casa |
-| Poderes | Embaralhar, Jogada auto, Explodir | embaralhar vale também no Clássico; a jogada automática é a da Dica |
+| Poderes | Embaralhar, Jogada auto, Explodir | embaralhar vale também no Clássico; a jogada automática é a da Dica e conta como cheat (a partida não sobe recorde) |
 | Impedir derrota | interruptor | o Clássico não acaba (se já acabou, volta com uma jogada) |
 
 –/+, Desfazer e Impedir derrota deixam a folha aberta; os outros a fecham para mostrar o
