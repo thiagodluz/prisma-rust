@@ -13,13 +13,20 @@ O Prisma original, em JavaScript, está em <https://github.com/thiagodluz/Prisma
 
 ## Estado
 
-Dá para jogar, no PC e no Android (APK de teste). A tela imita o visual "Novo" do original.
+Dá para jogar, no PC e no Android (APK de teste). A tela segue o visual "Novo" do original,
+com acabamento em vidro fosco e fontes próprias (`docs/notes/visual.md`).
 
-**Já tem:** modos Zen e Clássico, partida e recordes salvos por modo, fim de partida e novo jogo,
-dica, embaralhar (Zen), música e ambiente do Zen, efeitos sonoros, vibração, guia de respiração,
-folhas de Som, Recordes e Créditos, aviso na tela quando o progresso não está sendo salvo e o
-menu secreto (7 toques na versão, em Créditos) com desfazer e cheats (`docs/notes/ferramentas.md`) e
-teclado no PC: setas, Enter/Espaço, Tab e Esc (`docs/notes/teclado-e-gestos.md`).
+**Já tem:**
+- modos Zen e Clássico, com partida e recordes salvos por modo, fim de partida e novo jogo;
+- dica, embaralhar (Zen) e guia de respiração;
+- música e ambiente do Zen, efeitos sonoros e vibração, com folha de Som;
+- folhas de Recordes e Créditos;
+- aviso na tela quando o progresso não está sendo salvo;
+- menu secreto (7 toques na versão, em Créditos) com desfazer e cheats
+  (`docs/notes/ferramentas.md`);
+- gestos interrompidos: puxar a barra de notificações ou minimizar o app no meio de um arrasto
+  não troca nenhuma pedra;
+- teclado no PC: setas, Enter/Espaço, Tab e Esc (`docs/notes/teclado-e-gestos.md`).
 
 **Ainda não tem:** versão para navegador e importação das partidas do app em JS.
 
