@@ -391,6 +391,24 @@ fn posicao_do_modo(modo: Mode) -> usize {
     }
 }
 
+/// O que falhou ao gravar e ainda não foi gravado. Cada gravação seguinte tenta de novo o que ficou
+/// pendente, e o aviso "sem salvar" só some quando nada mais está pendente.
+#[derive(Clone, Copy, Debug, Default)]
+struct Pendencias {
+    /// A partida de cada modo (Zen, Clássico).
+    partidas: [bool; 2],
+    modo_ativo: bool,
+    /// Os recordes de cada modo.
+    recordes: [bool; 2],
+    preferencias: bool,
+}
+
+impl Pendencias {
+    fn alguma(&self) -> bool {
+        self.modo_ativo || self.preferencias || self.partidas.iter().chain(&self.recordes).any(|&pendente| pendente)
+    }
+}
+
 pub struct App {
     zen: Game,
     classico: Game,
@@ -408,8 +426,8 @@ pub struct App {
     salvador: Salvador,
     /// Os erros de gravação da última vez que gravei, para não repetir a mesma linha no registro.
     ultimos_erros: Vec<String>,
-    /// A última gravação da partida falhou (some quando uma gravação dá certo).
-    gravacao_falhou: bool,
+    /// O que falhou ao gravar e ainda não foi gravado (o aviso "sem salvar" fica até zerar).
+    pendente: Pendencias,
     /// Linhas "PRISMA_M1 ...", "PRISMA_M2 ..." e "PRISMA_M3 ..." que ainda não foram entregues (o
     /// teste do celular virtual lê).
     registros: Vec<String>,
@@ -497,7 +515,6 @@ impl App {
         ));
         let mut erros = Vec::new();
         app.gravar_recordes_que_mudaram(mudaram, &mut erros);
-        app.gravacao_falhou = !erros.is_empty();
         app.avisar_erros(erros);
         app
     }
@@ -516,7 +533,7 @@ impl App {
             recordes,
             salvador,
             ultimos_erros: Vec::new(),
-            gravacao_falhou: false,
+            pendente: Pendencias::default(),
             registros: vec![format!("PRISMA_M1 pronto modo={}", nome_do_modo(modo))],
             preferencias: Preferencias::default(),
             sons: Vec::new(),
@@ -1010,9 +1027,9 @@ impl App {
     /// Grava as preferências de som. Falha de gravação nunca interrompe o jogo: a escolha vale
     /// até fechar o app e o erro vai para o registro (uma vez, como os outros).
     fn gravar_preferencias(&mut self) {
-        let erros: Vec<String> = self.salvador.gravar_preferencias(&self.preferencias).err().into_iter().collect();
-        self.gravacao_falhou |= !erros.is_empty();
-        self.avisar_erros(erros);
+        let erro = self.salvador.gravar_preferencias(&self.preferencias).err();
+        self.pendente.preferencias = erro.is_some();
+        self.avisar_erros(erro.into_iter().collect());
     }
 
     fn pedir_dica(&mut self) {
@@ -1263,7 +1280,7 @@ impl App {
             return;
         };
         self.limpar_depois_do_cheat(true);
-        self.jogar(a, b);
+        self.jogar_com(a, b, true);
     }
 
     // ---- Desfazer -----------------------------------------------------------------------
@@ -1316,19 +1333,25 @@ impl App {
 
     // ---- Gravação ----------------------------------------------------------------------
 
-    /// Grava os recordes dos modos marcados em `mudaram` (os erros vão para `erros`).
+    /// Grava os recordes dos modos marcados em `mudaram` e os que ficaram sem gravar numa tentativa
+    /// anterior (os erros vão para `erros`).
     fn gravar_recordes_que_mudaram(&mut self, mudaram: [bool; 2], erros: &mut Vec<String>) {
         for modo in [Mode::Zen, Mode::Classic] {
             let posicao = posicao_do_modo(modo);
-            if mudaram[posicao] {
-                if let Err(erro) = self.salvador.gravar_recordes(modo, &self.recordes[posicao]) {
-                    erros.push(erro);
+            if mudaram[posicao] || self.pendente.recordes[posicao] {
+                match self.salvador.gravar_recordes(modo, &self.recordes[posicao]) {
+                    Ok(()) => self.pendente.recordes[posicao] = false,
+                    Err(erro) => {
+                        self.pendente.recordes[posicao] = true;
+                        erros.push(erro);
+                    }
                 }
             }
         }
     }
 
-    /// Grava a partida do modo atual, o modo ativo e os recordes que mudaram. Falha de gravação
+    /// Grava a partida do modo atual, o modo ativo e os recordes que mudaram, e tenta de novo tudo
+    /// o que ficou pendente (a partida do outro modo, recordes, preferências). Falha de gravação
     /// nunca interrompe o jogo: vai para o registro (uma vez, não a cada jogada) e o jogo segue.
     fn gravar_tudo(&mut self, recordes_mudaram: [bool; 2]) {
         self.aparar_pilhas_de_recordes();
@@ -1336,18 +1359,41 @@ impl App {
             return;
         }
         let mut erros = Vec::new();
-        match self.salvador.gravar_partida(self.jogo()) {
-            Ok(()) => {
-                let linha = format!("PRISMA_M2 gravado modo={} pontos={}", nome_do_modo(self.modo), self.jogo().score);
-                self.registros.push(linha);
+        for modo in [Mode::Zen, Mode::Classic] {
+            let posicao = posicao_do_modo(modo);
+            // A partida do modo atual sempre; a do outro só se uma gravação anterior falhou.
+            if modo != self.modo && !self.pendente.partidas[posicao] {
+                continue;
             }
-            Err(erro) => erros.push(erro),
+            match self.salvador.gravar_partida(self.partida(modo)) {
+                Ok(()) => {
+                    self.pendente.partidas[posicao] = false;
+                    if modo == self.modo {
+                        let linha =
+                            format!("PRISMA_M2 gravado modo={} pontos={}", nome_do_modo(modo), self.partida(modo).score);
+                        self.registros.push(linha);
+                    }
+                }
+                Err(erro) => {
+                    self.pendente.partidas[posicao] = true;
+                    erros.push(erro);
+                }
+            }
         }
-        if let Err(erro) = self.salvador.gravar_modo_ativo(self.modo) {
-            erros.push(erro);
+        match self.salvador.gravar_modo_ativo(self.modo) {
+            Ok(()) => self.pendente.modo_ativo = false,
+            Err(erro) => {
+                self.pendente.modo_ativo = true;
+                erros.push(erro);
+            }
         }
         self.gravar_recordes_que_mudaram(recordes_mudaram, &mut erros);
-        self.gravacao_falhou = !erros.is_empty();
+        if self.pendente.preferencias {
+            match self.salvador.gravar_preferencias(&self.preferencias) {
+                Ok(()) => self.pendente.preferencias = false,
+                Err(erro) => erros.push(erro),
+            }
+        }
         self.avisar_erros(erros);
     }
 
@@ -1375,6 +1421,13 @@ impl App {
 
     /// Joga a troca no motor (que resolve tudo de uma vez) e prepara a animação.
     fn jogar(&mut self, a: usize, b: usize) {
+        self.jogar_com(a, b, false);
+    }
+
+    /// A troca de `a` e `b`. Com `cheat`, uma jogada válida marca a partida como tendo usado
+    /// recurso de desenvolvedor ANTES de os recordes serem contados (como o `attempt(..., true)`
+    /// do original), então ela nunca sobe recorde.
+    fn jogar_com(&mut self, a: usize, b: usize, cheat: bool) {
         let base = self.estagio();
         // Guardado antes de a jogada contar: durante a animação o painel mostra este MELHOR.
         let melhor_antes = self.melhor_parado();
@@ -1383,6 +1436,9 @@ impl App {
         let jogo = self.jogo_mut();
         let antes = jogo.board;
         let resultado = jogo.play(a, b);
+        if cheat && resultado.valid {
+            jogo.cheats_used = true;
+        }
         let (pontos, nivel) = (jogo.score, jogo.level);
         let passos = montar(antes, a, b, &resultado, nivel, intensidade);
         self.registros.push(format!("PRISMA_M1 jogada valida={} pontos={} nivel={}", resultado.valid, pontos, nivel));
@@ -1596,7 +1652,7 @@ impl App {
             dialogo: self.dialogo,
             embaralhar_visivel: self.modo == Mode::Zen,
             dica_ativa: !jogo.ended,
-            sem_salvar: self.gravacao_falhou || self.salvador.com_problema(),
+            sem_salvar: self.pendente.alguma() || self.salvador.com_problema(),
         }
     }
 
@@ -2065,6 +2121,25 @@ mod tests {
         assert_eq!(app.folha, None);
         terminar(&mut app);
         assert!(app.jogo().score > 0);
+    }
+
+    #[test]
+    fn jogada_automatica_conta_como_cheat_e_nao_sobe_recorde() {
+        let mut app = com_ferramentas();
+        assert!(!app.jogo().cheats_used);
+        app.apertar(Botao::JogadaAutomatica);
+        terminar(&mut app);
+        assert!(app.jogo().score > 0);
+        assert!(app.jogo().cheats_used, "a jogada automática é recurso de desenvolvedor");
+        assert_eq!(app.recordes(Mode::Zen), Recordes::zerados());
+    }
+
+    #[test]
+    fn jogada_automatica_sem_efeito_nao_marca_cheat() {
+        let mut app = com_ferramentas();
+        app.jogo_mut().ended = true;
+        app.apertar(Botao::JogadaAutomatica);
+        assert!(!app.jogo().cheats_used, "sem jogada válida a partida continua sem cheat");
     }
 
     #[test]
@@ -2933,6 +3008,30 @@ mod tests {
 
     fn ler(pasta: &Pasta, nome: &str) -> String {
         fs::read_to_string(pasta.0.join(nome)).unwrap_or_else(|erro| panic!("não li {nome}: {erro}"))
+    }
+
+    #[test]
+    fn jogada_automatica_marcada_como_cheat_sobrevive_a_fechar_e_abrir() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaCreditos);
+        for _ in 0..7 {
+            app.apertar(Botao::Versao);
+        }
+        app.apertar(Botao::AbaFerramentas);
+        app.apertar(Botao::JogadaAutomatica);
+        terminar(&mut app);
+        assert!(app.jogo().score > 0);
+        assert!(app.jogo().cheats_used);
+        assert!(!pasta.0.join("recordes-zen.json").exists(), "partida com cheat não grava recorde");
+        drop(app);
+
+        let mut reaberto = abrir(&pasta);
+        assert!(reaberto.jogo().cheats_used, "a marca volta junto com a partida");
+        assert_eq!(reaberto.recordes(Mode::Zen), Recordes::zerados());
+        jogar_inteira(&mut reaberto);
+        assert_eq!(reaberto.recordes(Mode::Zen), Recordes::zerados(), "continuar a partida marcada não sobe recorde");
     }
 
     fn linhas_m2(registro: &[String], tipo: &str) -> Vec<String> {
@@ -4153,6 +4252,77 @@ mod tests {
         app.apertar(Botao::FecharSom);
         jogar_inteira(&mut app);
         assert!(app.jogo().score > 0);
+    }
+
+    #[test]
+    fn aviso_de_preferencias_nao_gravadas_fica_ate_elas_serem_gravadas() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        // O temporário do som.json vira uma pasta: gravar as preferências falha.
+        fs::create_dir_all(pasta.0.join("som.json.tmp")).unwrap();
+        let tela = tela();
+        abrir_folha(&mut app);
+        tocar_em(&mut app, &tela, tela.som.liga_musica.unwrap());
+        assert!(app.painel().sem_salvar, "a preferência não foi gravada");
+        app.apertar(Botao::FecharSom);
+        // A partida e o modo são gravados com sucesso, mas as preferências continuam pendentes.
+        jogar_inteira(&mut app);
+        assert!(ler(&pasta, "zen.json").contains("\"score\""), "a partida foi gravada");
+        assert!(app.painel().sem_salvar, "o aviso não pode sumir: as preferências ainda não foram gravadas");
+        // Com a pasta de volta ao normal, a próxima gravação tenta as preferências de novo.
+        fs::remove_dir_all(pasta.0.join("som.json.tmp")).unwrap();
+        jogar_inteira(&mut app);
+        assert!(!app.painel().sem_salvar, "tudo gravado: o aviso some");
+        assert!(abrir(&pasta).preferencias().musica_ligada, "a preferência chegou ao disco");
+    }
+
+    #[test]
+    fn aviso_de_recorde_nao_gravado_fica_ate_ele_ser_gravado() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        fs::create_dir_all(pasta.0.join("recordes-zen.json.tmp")).unwrap();
+        jogar_inteira(&mut app);
+        assert!(app.recordes(Mode::Zen).pontuacao > 0);
+        assert!(app.painel().sem_salvar, "o recorde não foi gravado");
+        // Trocar de modo grava a partida e o modo, mas não muda recorde nenhum.
+        app.apertar(Botao::Classico);
+        assert!(app.painel().sem_salvar, "o recorde do Zen continua sem gravar");
+        fs::remove_dir_all(pasta.0.join("recordes-zen.json.tmp")).unwrap();
+        app.apertar(Botao::Zen);
+        assert!(!app.painel().sem_salvar, "o recorde pendente foi regravado");
+        assert_eq!(abrir(&pasta).recordes(Mode::Zen), app.recordes(Mode::Zen), "e chegou ao disco");
+    }
+
+    #[test]
+    fn aviso_da_partida_do_outro_modo_nao_gravada_fica_ate_ela_ser_gravada() {
+        let pasta = pasta_de_teste();
+        let mut app = abrir(&pasta);
+        fs::create_dir_all(pasta.0.join("zen.json.tmp")).unwrap();
+        jogar_inteira(&mut app);
+        assert!(app.painel().sem_salvar, "a partida do Zen não foi gravada");
+        let pontos_do_zen = app.jogo().score;
+        app.apertar(Botao::Classico);
+        jogar_inteira(&mut app);
+        assert!(app.painel().sem_salvar, "a partida do Zen continua sem gravar, mesmo gravando a do Clássico");
+        fs::remove_dir_all(pasta.0.join("zen.json.tmp")).unwrap();
+        jogar_inteira(&mut app);
+        assert!(!app.painel().sem_salvar, "a partida do Zen foi regravada");
+        let mut zen = Game::new();
+        assert_eq!(Salvador::em(pasta.0.clone()).carregar_partida(Mode::Zen, &mut zen), Origem::Arquivo);
+        assert_eq!(zen.score, pontos_do_zen, "o que estava pendente é o que foi gravado");
+    }
+
+    #[test]
+    fn save_estragado_sem_copia_corrupt_avisa_e_nao_e_sobrescrito() {
+        let pasta = pasta_de_teste();
+        fs::create_dir_all(pasta.0.join("zen.json.corrupt")).unwrap();
+        fs::write(pasta.0.join("zen.json"), "lixo").unwrap();
+        let mut app = abrir(&pasta);
+        assert!(app.painel().sem_salvar, "o aviso já na abertura: a cópia do save ruim falhou");
+        jogar_inteira(&mut app);
+        assert!(app.jogo().score > 0, "o jogo continua jogável");
+        assert!(app.painel().sem_salvar);
+        assert_eq!(ler(&pasta, "zen.json"), "lixo", "o arquivo ruim não foi trocado");
     }
 
     #[test]

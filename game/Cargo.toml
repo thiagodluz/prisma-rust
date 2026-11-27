@@ -1,6 +1,6 @@
 [package]
 name = "prisma_game"
-version = "0.1.0"
+version = "1.0.0"
 # Edition 2021 de propósito: a ferramenta que gera o APK (cargo-quad-apk) não lê a 2024.
 # O teste `tests/workspace.rs` avisa se alguém mudar isso.
 edition = "2021"

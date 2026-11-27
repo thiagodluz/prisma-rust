@@ -196,6 +196,10 @@ fn o_fluxo_do_android_so_publica_depois_dos_emuladores_e_sem_apagar_a_release() 
     assert!(publicar.contains("needs: [apk, emulador]"), "o job `publicar` tem de esperar o apk e os emuladores.");
     assert!(publicar.contains("refs/heads/main"), "só a main publica.");
     assert!(publicar.contains("--clobber"), "o APK novo substitui o arquivo da release sem apagar a release.");
+    assert!(
+        publicar.contains("gh release create \"v$VERSAO\"") && publicar.contains("gh release view \"v$VERSAO\""),
+        "a release numerada v<versão> é criada uma vez só (se já existe, não é mexida)."
+    );
     assert!(!texto.contains("gh release delete"), "apagar a release deixa o link fora do ar se a criação falhar.");
     let apk = job(&texto, "apk");
     assert!(!apk.contains("gh release"), "o job `apk` não pode mexer na release: os emuladores ainda não rodaram.");

@@ -28,7 +28,7 @@ mod tom;
 mod vibracao;
 
 use crate::app::{App, Folha};
-use crate::input::{eventos_do_quadro, EstadoDoMouse, Evento};
+use crate::input::{eventos_do_quadro, EstadoDoMouse};
 use crate::salvar::Salvador;
 use crate::vibracao::Toque;
 use macroquad::audio::{load_sound_from_bytes, play_sound_once, Sound};

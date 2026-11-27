@@ -4,7 +4,8 @@
 //! Regras de ouro: **nunca dá pânico** e **nunca perde um save bom**.
 //! - Arquivo que não dá para usar (vazio, lixo, cortado, grande demais, de outro modo, recusado
 //!   pelo motor) é copiado para `<nome>.corrupt` (o original fica onde está) e aquele item
-//!   recomeça do zero. Os outros arquivos não são mexidos.
+//!   recomeça do zero. Os outros arquivos não são mexidos. Se a cópia falhar, o original fica
+//!   protegido (não é sobrescrito) e o aviso de salvamento aparece.
 //! - Gravar é feito em duas etapas: escreve um arquivo temporário e só depois troca o nome. Se
 //!   a escrita falhar, o arquivo antigo continua intacto.
 
@@ -40,8 +41,8 @@ pub struct Salvador {
     /// A pasta de dados devia existir e não foi achada (diferente de `nenhum`, que é de propósito).
     pasta_nao_achada: bool,
     /// Arquivos que existem mas não deu para ler (permissão, armazenamento): podem ter um save
-    /// bom, então NUNCA são sobrescritos nesta execução. Um arquivo estragado de verdade não entra
-    /// aqui: ele ganha a cópia `.corrupt` e pode ser trocado.
+    /// bom, então NUNCA são sobrescritos nesta execução. Um arquivo estragado de verdade só entra
+    /// aqui se a cópia `.corrupt` falhar; com a cópia feita, ele pode ser trocado.
     protegidos: RefCell<Vec<String>>,
 }
 
@@ -125,12 +126,15 @@ impl Salvador {
     }
 
     /// Copia o arquivo ruim para `<nome>.corrupt` (por cima de uma cópia anterior, se houver) e
-    /// devolve o motivo. Se a cópia falhar, o jogo segue assim mesmo: ela é só uma ajuda.
+    /// devolve o motivo. Se a cópia falhar, o arquivo ruim pode ser a única pista do que havia:
+    /// ele fica protegido (nunca é sobrescrito nesta execução) e o motivo conta que a cópia falhou.
     fn marcar_estragado(&self, nome: &str, motivo: impl Into<String>) -> String {
-        if let Some(pasta) = &self.pasta {
-            let _ = fs::copy(pasta.join(nome), pasta.join(format!("{nome}.corrupt")));
+        let motivo = motivo.into();
+        let Some(pasta) = &self.pasta else { return motivo };
+        match fs::copy(pasta.join(nome), pasta.join(format!("{nome}.corrupt"))) {
+            Ok(_) => motivo,
+            Err(erro) => self.proteger(nome, format!("{motivo} (e não consegui guardar a cópia: {erro})")),
         }
-        motivo.into()
     }
 
     /// Lê um arquivo de texto da pasta. `Ok(None)` = não existe (ou não há pasta); `Err` = existe
@@ -669,6 +673,42 @@ mod tests {
         assert!(!salvador.com_problema(), "lixo tem cópia .corrupt e pode ser trocado");
         assert_eq!(salvador.gravar_partida(&jogo), Ok(()));
         assert_eq!(fs::read_to_string(pasta.0.join("zen.json.corrupt")).unwrap(), "lixo");
+    }
+
+    #[test]
+    fn se_a_copia_corrupt_falhar_o_original_fica_protegido() {
+        // `.corrupt` ocupado por uma pasta: copiar para lá falha (o mesmo caminho de falta de espaço).
+        for (nome, modo) in [("zen.json", Mode::Zen), ("classico.json", Mode::Classic)] {
+            let pasta = pasta_de_teste();
+            fs::create_dir_all(pasta.0.join(format!("{nome}.corrupt"))).unwrap();
+            fs::write(pasta.0.join(nome), "lixo").unwrap();
+            let salvador = Salvador::em(pasta.0.clone());
+            let mut jogo = jogo_de_teste(8, modo, 3);
+            let origem = salvador.carregar_partida(modo, &mut jogo);
+            let Origem::Estragado(motivo) = origem else { panic!("{nome}: deveria ser estragado, veio {origem:?}") };
+            assert!(motivo.contains("cópia"), "{nome}: o motivo diz que a cópia falhou: {motivo}");
+            assert!(salvador.com_problema(), "{nome}: o aviso de que o progresso não será salvo");
+            let erro = salvador.gravar_partida(&jogo).unwrap_err();
+            assert!(erro.contains("preservado"), "{nome}: {erro}");
+            assert_eq!(fs::read_to_string(pasta.0.join(nome)).unwrap(), "lixo", "{nome}: o original continua intacto");
+        }
+    }
+
+    #[test]
+    fn se_a_copia_corrupt_falhar_nos_recordes_e_nas_preferencias_o_original_fica_protegido() {
+        let pasta = pasta_de_teste();
+        for nome in ["recordes-zen.json", "som.json"] {
+            fs::create_dir_all(pasta.0.join(format!("{nome}.corrupt"))).unwrap();
+            fs::write(pasta.0.join(nome), "lixo").unwrap();
+        }
+        let salvador = Salvador::em(pasta.0.clone());
+        assert_eq!(salvador.carregar_recordes(Mode::Zen), Recordes::zerados());
+        assert_eq!(salvador.carregar_preferencias().0, Preferencias::default());
+        assert!(salvador.com_problema());
+        assert!(salvador.gravar_recordes(Mode::Zen, &Recordes::zerados()).unwrap_err().contains("preservado"));
+        assert!(salvador.gravar_preferencias(&Preferencias::default()).unwrap_err().contains("preservado"));
+        assert_eq!(fs::read_to_string(pasta.0.join("recordes-zen.json")).unwrap(), "lixo");
+        assert_eq!(fs::read_to_string(pasta.0.join("som.json")).unwrap(), "lixo");
     }
 
     #[test]
