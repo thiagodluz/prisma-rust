@@ -315,3 +315,24 @@ jobs:
               --title "APK mais recente (versão de teste)" \
               --notes "$NOTAS"
           fi
+
+      # A versão numerada: quando a versão do jogo (`version` em game/Cargo.toml) ainda não tem release,
+      # cria a release `v<versão>` com este mesmo APK (que já passou nos celulares virtuais). Uma
+      # release numerada nunca é trocada nem apagada: se ela já existe, este passo não faz nada, e uma
+      # versão nova só nasce quando alguém muda o número em game/Cargo.toml.
+      - name: Publicar a versão numerada
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VERSAO=$(sed -n 's/^version = "\(.*\)"$/\1/p' game/Cargo.toml | head -1)
+          test -n "$VERSAO"
+          if gh release view "v$VERSAO" >/dev/null 2>&1; then
+            echo "A release v$VERSAO já existe: nada a fazer."
+            exit 0
+          fi
+          cp apk/prisma-rust.apk "prisma-rust-$VERSAO.apk"
+          gh release create "v$VERSAO" "prisma-rust-$VERSAO.apk" \
+            --target "$GITHUB_SHA" \
+            --title "Prisma (Rust) $VERSAO" \
+            --notes "Versão $VERSAO do Prisma em Rust para Android, gerada do commit ${GITHUB_SHA::7} depois de passar nos celulares virtuais. É um APK assinado com a chave fixa do app (de teste, sem Play Store): instala por cima da versão anterior e mantém a partida salva."
