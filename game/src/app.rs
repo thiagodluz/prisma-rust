@@ -9,7 +9,7 @@
 use crate::efeitos::{elevacao_da_cadeia, sinal_da_limpeza, Efeito, Sinal};
 use crate::formato::Recordes;
 use crate::fundo::Desejado;
-use crate::input::{Acao, Evento, Gestos};
+use crate::input::{casa_em, Acao, Evento, Gestos};
 use crate::layout::{Rect, TelaJogo, TelaSom};
 use crate::linha::{montar, Passo, Reprodutor};
 use crate::preferencias::{estado_da_respiracao, Canal, EstadoRespiracao, Intensidade, Preferencias};
@@ -76,6 +76,28 @@ pub enum Botao {
     AbaRecordes,
     AbaCreditos,
     FecharMenu,
+    /// A linha da versão, nos Créditos: 7 toques seguidos liberam a aba Ferramentas.
+    Versao,
+    // Daqui para baixo, só existem com a aba Ferramentas liberada (o menu secreto).
+    AbaFerramentas,
+    Desfazer,
+    PontosMenos,
+    PontosMais,
+    Somar,
+    NivelMenos,
+    NivelMais,
+    IrParaNivel,
+    Mais100,
+    Mais1000,
+    ProximoNivel,
+    Pulso,
+    Raio,
+    Espectro,
+    Supernova,
+    EmbaralharSemLimite,
+    JogadaAutomatica,
+    Explodir,
+    ImpedirDerrota,
 }
 
 /// Qual folha está aberta por cima do tabuleiro. Só uma de cada vez: a de Som, ou a do Menu
@@ -85,14 +107,56 @@ pub enum Folha {
     Som,
     Recordes,
     Creditos,
+    /// A aba do menu secreto (só existe depois dos 7 toques na versão).
+    Ferramentas,
 }
 
 impl Folha {
-    /// É uma das duas abas da folha do Menu?
+    /// É uma das abas da folha do Menu?
     pub fn e_do_menu(self) -> bool {
-        matches!(self, Folha::Recordes | Folha::Creditos)
+        matches!(self, Folha::Recordes | Folha::Creditos | Folha::Ferramentas)
     }
 }
+
+/// O especial que a aba Ferramentas cria na casa que o jogador tocar depois.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Especial {
+    Pulso,
+    Raio,
+    Espectro,
+    /// A Supernova não é uma pedra: são três especiais fundidos na linha da casa tocada.
+    Supernova,
+}
+
+/// O que a aba Ferramentas mostra (o desenho não lê o App por dentro).
+#[derive(Clone, Debug, PartialEq)]
+pub struct EstadoFerramentas {
+    /// O valor de pontos escolhido, já com ponto de milhar.
+    pub pontos: String,
+    /// O nível escolhido.
+    pub nivel: String,
+    /// Quantas ações a partida pode desfazer (até 50).
+    pub acoes: usize,
+    pub pode_desfazer: bool,
+    /// A partida já usou cheat (os recordes dela estão protegidos).
+    pub com_cheats: bool,
+    pub impedir_derrota: bool,
+    /// Há animação: os botões ficam apagados.
+    pub ocupado: bool,
+}
+
+/// Quantos toques seguidos na versão liberam as Ferramentas, e o tempo máximo entre dois deles.
+const TOQUES_PARA_LIBERAR: u8 = 7;
+const ENTRE_TOQUES_MS: f32 = 2_200.0;
+/// Os valores que a aba escolhe com − e +: o inicial, o passo e os limites (os do original).
+const PONTOS_INICIAIS: u64 = 5_000;
+const PASSO_DE_PONTOS: u64 = 1_000;
+const PONTOS_MINIMOS: u64 = 1_000;
+const PONTOS_MAXIMOS: u64 = 1_000_000;
+const NIVEL_INICIAL: u32 = 10;
+const NIVEL_MAXIMO: u32 = 10_000;
+/// O que o aviso diz quando o motor recusa um cheat.
+const CHEAT_RECUSADO: &str = "Confira os valores ou tente outra ação";
 
 impl Botao {
     /// A folha a que o botão pertence, se ele for de dentro de uma (o ♪ e o ≡, que abrem e fecham
@@ -111,7 +175,26 @@ impl Botao {
             | Botao::Som
             | Botao::Menu => None,
             Botao::AbaRecordes | Botao::FecharMenu => Some(Folha::Recordes),
-            Botao::AbaCreditos => Some(Folha::Creditos),
+            Botao::AbaCreditos | Botao::Versao => Some(Folha::Creditos),
+            Botao::AbaFerramentas
+            | Botao::Desfazer
+            | Botao::PontosMenos
+            | Botao::PontosMais
+            | Botao::Somar
+            | Botao::NivelMenos
+            | Botao::NivelMais
+            | Botao::IrParaNivel
+            | Botao::Mais100
+            | Botao::Mais1000
+            | Botao::ProximoNivel
+            | Botao::Pulso
+            | Botao::Raio
+            | Botao::Espectro
+            | Botao::Supernova
+            | Botao::EmbaralharSemLimite
+            | Botao::JogadaAutomatica
+            | Botao::Explodir
+            | Botao::ImpedirDerrota => Some(Folha::Ferramentas),
             Botao::FecharSom
             | Botao::SonsDoJogo
             | Botao::Testar
@@ -354,6 +437,16 @@ pub struct App {
     /// Os recordes de antes de cada ação que o "desfazer" do motor guardou, por modo (Zen,
     /// Clássico): sempre do tamanho do `undo_history` da partida do modo, e na mesma ordem.
     pilha_de_recordes: [Vec<Recordes>; 2],
+    /// A aba Ferramentas já foi liberada nesta abertura do app (não é gravada).
+    ferramentas_liberadas: bool,
+    /// Toques seguidos na linha da versão, e o tempo desde o último.
+    toques_na_versao: u8,
+    desde_o_toque_ms: f32,
+    /// Os valores escolhidos com − e + na aba Ferramentas.
+    pontos_escolhidos: u64,
+    nivel_escolhido: u32,
+    /// O especial esperando o toque numa casa (a folha fecha enquanto isso).
+    escolhendo: Option<Especial>,
 }
 
 impl App {
@@ -435,6 +528,12 @@ impl App {
             toques: Vec::new(),
             carregando: None,
             pilha_de_recordes: [Vec::new(), Vec::new()],
+            ferramentas_liberadas: false,
+            toques_na_versao: 0,
+            desde_o_toque_ms: 0.0,
+            pontos_escolhidos: PONTOS_INICIAIS,
+            nivel_escolhido: NIVEL_INICIAL,
+            escolhendo: None,
         }
     }
 
@@ -522,6 +621,19 @@ impl App {
         // Com uma folha aberta, só ela reage: o tabuleiro, as abas e os botões ficam "tampados".
         if self.folha.is_some() {
             self.tocar_na_folha(evento, tela);
+            return;
+        }
+        // Esperando a casa de um especial: o toque escolhe a casa (ou, fora do tabuleiro, desiste).
+        if let Some(especial) = self.escolhendo {
+            if let Evento::Baixo { x, y } = evento {
+                if self.ocupado() {
+                    return;
+                }
+                self.escolhendo = None;
+                if let Some(casa) = casa_em(tela.grade, x, y) {
+                    self.criar_especial(especial, casa);
+                }
+            }
             return;
         }
         if let Evento::Baixo { x, y } = evento {
@@ -686,6 +798,14 @@ impl App {
         if botao.so_do_zen() && self.modo != Mode::Zen {
             return;
         }
+        // A versão só conta com os Créditos abertos; os botões das Ferramentas, só com elas
+        // liberadas e abertas (a aba, com ela liberada).
+        match botao.da_folha() {
+            Some(Folha::Creditos) if botao == Botao::Versao && self.folha != Some(Folha::Creditos) => return,
+            Some(Folha::Ferramentas) if !self.ferramentas_liberadas => return,
+            Some(Folha::Ferramentas) if botao != Botao::AbaFerramentas && self.folha != Some(Folha::Ferramentas) => return,
+            _ => {}
+        }
         match botao {
             Botao::Zen => self.trocar_de_modo(Mode::Zen),
             Botao::Classico => self.trocar_de_modo(Mode::Classic),
@@ -733,6 +853,38 @@ impl App {
                 self.gravar_preferencias();
             }
             Botao::Vibracao => self.alternar_vibracao(),
+            Botao::Versao => self.tocar_na_versao(),
+            Botao::AbaFerramentas => self.folha = Some(Folha::Ferramentas),
+            Botao::Desfazer => self.desfazer(),
+            Botao::PontosMenos => self.pontos_escolhidos = self.pontos_escolhidos.saturating_sub(PASSO_DE_PONTOS).max(PONTOS_MINIMOS),
+            Botao::PontosMais => self.pontos_escolhidos = (self.pontos_escolhidos + PASSO_DE_PONTOS).min(PONTOS_MAXIMOS),
+            Botao::NivelMenos => self.nivel_escolhido = self.nivel_escolhido.saturating_sub(1).max(1),
+            Botao::NivelMais => self.nivel_escolhido = (self.nivel_escolhido + 1).min(NIVEL_MAXIMO),
+            Botao::Somar => {
+                let pontos = self.pontos_escolhidos as i64;
+                self.aplicar_cheat(|jogo| jogo.cheat_add_points(pontos), "Pontos adicionados", true);
+            }
+            Botao::Mais100 => self.aplicar_cheat(|jogo| jogo.cheat_add_points(100), "+100 pontos", true),
+            Botao::Mais1000 => self.aplicar_cheat(|jogo| jogo.cheat_add_points(1_000), "+1.000 pontos", true),
+            Botao::IrParaNivel => {
+                let nivel = i64::from(self.nivel_escolhido);
+                self.aplicar_cheat(|jogo| jogo.cheat_set_level(nivel), "Nível alterado", true);
+            }
+            Botao::ProximoNivel => {
+                let nivel = i64::from(self.jogo().level) + 1;
+                self.aplicar_cheat(|jogo| jogo.cheat_set_level(nivel), "Nível avançado", true);
+            }
+            Botao::Pulso => self.escolher_casa(Especial::Pulso),
+            Botao::Raio => self.escolher_casa(Especial::Raio),
+            Botao::Espectro => self.escolher_casa(Especial::Espectro),
+            Botao::Supernova => self.escolher_casa(Especial::Supernova),
+            Botao::EmbaralharSemLimite => self.embaralhar_sem_limite(),
+            Botao::JogadaAutomatica => self.jogada_automatica(),
+            Botao::Explodir => self.cheat_em_cascata(Game::cheat_explode),
+            Botao::ImpedirDerrota => {
+                let ligar = !self.jogo().no_defeat;
+                self.aplicar_cheat(|jogo| jogo.cheat_no_defeat(ligar), "Proteção contra derrota atualizada", false);
+            }
         }
     }
 
@@ -788,6 +940,7 @@ impl App {
     /// O ♪ e o ≡: com a folha deles aberta, fecham; senão abrem (trocando a outra folha, se houver
     /// uma aberta, e gravando o volume de um arrasto que estivesse acontecendo).
     fn alternar_folha(&mut self, alvo: Folha) {
+        self.escolhendo = None;
         let ja_aberta = self.folha.is_some_and(|aberta| aberta.e_do_menu() == alvo.e_do_menu());
         if ja_aberta {
             self.fechar_folha();
@@ -870,6 +1023,7 @@ impl App {
         if self.ocupado() || self.modo == modo {
             return;
         }
+        self.escolhendo = None;
         let mut mudaram = [false; 2];
         // O placar do modo que sai conta para o recorde dele; o do modo que entra também (o `hud()`
         // do JS confere o placar sempre que desenha).
@@ -901,6 +1055,7 @@ impl App {
             return;
         }
         self.dialogo = false;
+        self.escolhendo = None;
         // O placar da partida que acaba aqui conta para o recorde.
         let mut mudaram = [false; 2];
         mudaram[posicao_do_modo(self.modo)] = self.alcancar_recordes_de(self.modo);
@@ -937,6 +1092,150 @@ impl App {
         }
         let (pontos, nivel) = (self.partida(modo).score, self.partida(modo).level);
         self.recordes[posicao_do_modo(modo)].alcancar(pontos, nivel)
+    }
+
+    // ---- Menu secreto (aba Ferramentas) -------------------------------------------------
+
+    /// Um toque na linha da versão: o 7º seguido (com no máximo 2,2 s entre um e outro) libera
+    /// a aba Ferramentas.
+    fn tocar_na_versao(&mut self) {
+        if self.desde_o_toque_ms > ENTRE_TOQUES_MS {
+            self.toques_na_versao = 0;
+        }
+        self.desde_o_toque_ms = 0.0;
+        self.toques_na_versao += 1;
+        if self.toques_na_versao >= TOQUES_PARA_LIBERAR {
+            self.toques_na_versao = 0;
+            self.ferramentas_liberadas = true;
+            self.aviso = Temporizado::por("Ferramentas do desenvolvedor ativadas", AVISO_MS);
+        }
+    }
+
+    /// O que a aba Ferramentas mostra agora.
+    pub fn ferramentas(&self) -> EstadoFerramentas {
+        EstadoFerramentas {
+            pontos: formatar_numero(self.pontos_escolhidos),
+            nivel: self.nivel_escolhido.to_string(),
+            acoes: self.acoes_para_desfazer(),
+            pode_desfazer: self.pode_desfazer(),
+            com_cheats: self.jogo().cheats_used,
+            impedir_derrota: self.jogo().no_defeat,
+            ocupado: self.ocupado(),
+        }
+    }
+
+    /// A aba Ferramentas foi liberada nesta abertura do app?
+    pub fn ferramentas_liberadas(&self) -> bool {
+        self.ferramentas_liberadas
+    }
+
+    /// Esquece gesto, Dica e "+ganho" depois de um cheat (o aviso é dele).
+    fn limpar_depois_do_cheat(&mut self, fecha_a_folha: bool) {
+        if fecha_a_folha {
+            self.folha = None;
+        }
+        self.gestos.limpar();
+        self.dica = None;
+        self.ganho = None;
+    }
+
+    /// Um cheat sem cascata: aplica no motor, guarda os recordes de antes para o desfazer, avisa
+    /// e grava. Recusado, só avisa. `fecha_a_folha` fecha a folha para o jogador ver o tabuleiro.
+    fn aplicar_cheat(&mut self, cheat: impl FnOnce(&mut Game) -> bool, mensagem: &'static str, fecha_a_folha: bool) {
+        if self.ocupado() {
+            return;
+        }
+        let antes = self.recordes(self.modo);
+        if !cheat(self.jogo_mut()) {
+            self.aviso = Temporizado::por(CHEAT_RECUSADO, AVISO_MS);
+            return;
+        }
+        self.lembrar_recordes(self.modo, antes);
+        self.limpar_depois_do_cheat(fecha_a_folha);
+        self.aviso = Temporizado::por(mensagem, AVISO_MS);
+        self.gravar_tudo([false; 2]);
+    }
+
+    /// Um cheat que resolve o tabuleiro (Explodir, Supernova): anima como uma jogada.
+    fn cheat_em_cascata(&mut self, cheat: impl FnOnce(&mut Game) -> MoveResult) {
+        if self.ocupado() {
+            return;
+        }
+        let antes = self.recordes(self.modo);
+        let tabuleiro = self.jogo().board;
+        let base = self.estagio();
+        let melhor_antes = self.melhor_parado();
+        let resultado = cheat(self.jogo_mut());
+        if !resultado.valid {
+            self.aviso = Temporizado::por(CHEAT_RECUSADO, AVISO_MS);
+            return;
+        }
+        self.lembrar_recordes(self.modo, antes);
+        self.limpar_depois_do_cheat(true);
+        self.aviso = None;
+        self.animar_cascata(base, melhor_antes, tabuleiro, &resultado);
+        self.gravar_tudo([false; 2]);
+        self.encerrar_se_terminou();
+    }
+
+    /// Fecha a folha e espera o toque na casa onde o especial vai nascer.
+    fn escolher_casa(&mut self, especial: Especial) {
+        if self.ocupado() {
+            return;
+        }
+        self.limpar_depois_do_cheat(true);
+        self.aviso = None;
+        self.escolhendo = Some(especial);
+    }
+
+    /// Cria o especial na casa tocada (a Supernova é fundida na linha dela).
+    fn criar_especial(&mut self, especial: Especial, casa: usize) {
+        let casa = casa as i64;
+        let tipo = match especial {
+            Especial::Pulso => TileKind::Burst,
+            Especial::Raio => TileKind::Cross,
+            Especial::Espectro => TileKind::Spectrum,
+            Especial::Supernova => {
+                self.cheat_em_cascata(|jogo| jogo.cheat_supernova(casa));
+                return;
+            }
+        };
+        self.aplicar_cheat(|jogo| jogo.cheat_spawn_special(casa, tipo), "Especial criado", true);
+    }
+
+    /// Embaralha em qualquer modo, sem limite, com a animação do embaralhar.
+    fn embaralhar_sem_limite(&mut self) {
+        if self.ocupado() {
+            return;
+        }
+        let base = self.estagio();
+        let recordes = self.recordes(self.modo);
+        let antes = self.jogo().board;
+        if !self.jogo_mut().cheat_shuffle() {
+            self.aviso = Temporizado::por(CHEAT_RECUSADO, AVISO_MS);
+            return;
+        }
+        self.lembrar_recordes(self.modo, recordes);
+        self.limpar_depois_do_cheat(true);
+        let depois = self.jogo().board;
+        let reprodutor = Reprodutor::novo(vec![Passo::Embaralhar { antes, depois }]);
+        let melhor_antes = self.melhor_parado();
+        self.animacao = Some(EmAndamento::nova(reprodutor, base, Some("Tabuleiro reorganizado"), melhor_antes));
+        self.gravar_tudo([false; 2]);
+        self.observar(true);
+    }
+
+    /// Faz a jogada da Dica, como se o jogador a arrastasse.
+    fn jogada_automatica(&mut self) {
+        if self.ocupado() {
+            return;
+        }
+        let Some((a, b)) = self.jogo_mut().hint() else {
+            self.aviso = Temporizado::por("Embaralhe ou ative a proteção contra derrota", AVISO_MS);
+            return;
+        };
+        self.limpar_depois_do_cheat(true);
+        self.jogar(a, b);
     }
 
     // ---- Desfazer -----------------------------------------------------------------------
@@ -1092,6 +1391,7 @@ impl App {
         passar_tempo(&mut self.dica, dt);
         passar_tempo(&mut self.ganho, dt);
         passar_tempo(&mut self.aviso, dt);
+        self.desde_o_toque_ms = (self.desde_o_toque_ms + dt).min(1e9);
         // O guia de respiração só anda no Zen. Tempo infinito não conta (nem congela o relógio).
         if self.modo == Mode::Zen && dt.is_finite() {
             self.respiracao_ms = (self.respiracao_ms + dt) % CICLO_DA_RESPIRACAO_MS;
@@ -1192,12 +1492,18 @@ impl App {
         }
     }
 
-    /// Só para as cenas de foto: anima o resultado de um atalho do motor (`cheat_*`), que não vem
-    /// de uma troca de pedras. `antes` é o tabuleiro de antes do atalho. Os passos são os de uma
+    /// Anima o resultado de um atalho do motor (`cheat_explode`, `cheat_supernova`; também nas
+    /// cenas de foto), que não vem de uma troca de pedras. `antes` é o tabuleiro de antes do atalho. Os passos são os de uma
     /// jogada, menos a troca (que não existe no atalho).
     pub fn animar_atalho(&mut self, antes: Board, resultado: &MoveResult) {
         let base = self.estagio();
         let melhor_antes = self.melhor_parado();
+        self.animar_cascata(base, melhor_antes, antes, resultado);
+    }
+
+    /// Anima um resultado do motor sem a troca: o painel começa em `base` (o placar de antes) e
+    /// mostra `melhor_antes` como MELHOR até o fim.
+    fn animar_cascata(&mut self, base: Estagio, melhor_antes: u64, antes: Board, resultado: &MoveResult) {
         let nivel = self.jogo().level;
         let mut passos = montar(antes, 0, 0, resultado, nivel, self.intensidade());
         passos.retain(|passo| !matches!(passo, Passo::Troca { .. }));
@@ -1254,7 +1560,10 @@ impl App {
             progresso: (no_nivel as f32 / meta as f32).clamp(0.0, 1.0),
             rotulo: format!("{} / {} para o próximo nível", formatar_numero(no_nivel), formatar_numero(meta)),
             ganho: self.ganho.as_ref().map(|ganho| format!("+{}", formatar_numero(ganho.valor))),
-            aviso: self.aviso.as_ref().map(|aviso| aviso.valor.to_string()),
+            aviso: match self.escolhendo {
+                Some(_) => Some("Toque numa casa".to_string()),
+                None => self.aviso.as_ref().map(|aviso| aviso.valor.to_string()),
+            },
             fim: (jogo.ended && !self.ocupado()).then(|| (jogo.level.to_string(), formatar_numero(jogo.score))),
             dialogo: self.dialogo,
             embaralhar_visivel: self.modo == Mode::Zen,
@@ -1499,6 +1808,260 @@ mod tests {
         let pontos = app.jogo().score;
         app.desfazer();
         assert_eq!(app.jogo().score, pontos);
+    }
+
+    // ---- Menu secreto: aba Ferramentas e cheats ----
+
+    /// Um app com a aba Ferramentas liberada e aberta.
+    fn com_ferramentas() -> App {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaCreditos);
+        for _ in 0..7 {
+            app.apertar(Botao::Versao);
+        }
+        app.apertar(Botao::AbaFerramentas);
+        assert_eq!(app.folha, Some(Folha::Ferramentas));
+        app
+    }
+
+    #[test]
+    fn sete_toques_na_versao_liberam_a_aba() {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaCreditos);
+        for _ in 0..6 {
+            app.apertar(Botao::Versao);
+        }
+        assert!(!app.ferramentas_liberadas);
+        app.apertar(Botao::AbaFerramentas);
+        assert_eq!(app.folha, Some(Folha::Creditos), "a aba ainda não existe");
+        app.apertar(Botao::Versao);
+        assert!(app.ferramentas_liberadas);
+        assert_eq!(app.painel().aviso.as_deref(), Some("Ferramentas do desenvolvedor ativadas"));
+    }
+
+    #[test]
+    fn toques_espacados_nao_liberam() {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaCreditos);
+        for _ in 0..4 {
+            app.apertar(Botao::Versao);
+        }
+        app.avancar(2_300.0);
+        for _ in 0..3 {
+            app.apertar(Botao::Versao);
+        }
+        assert!(!app.ferramentas_liberadas);
+    }
+
+    #[test]
+    fn a_versao_so_conta_com_os_creditos_abertos() {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Menu);
+        for _ in 0..7 {
+            app.apertar(Botao::Versao);
+        }
+        assert!(!app.ferramentas_liberadas);
+    }
+
+    #[test]
+    fn botoes_da_aba_so_valem_liberada_e_com_ela_aberta() {
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::Mais100);
+        assert_eq!(app.jogo().score, 0, "sem liberar, nada");
+        let mut app = com_ferramentas();
+        app.apertar(Botao::AbaRecordes);
+        app.apertar(Botao::Mais100);
+        assert_eq!(app.jogo().score, 0, "liberada, mas com Recordes aberta");
+        app.apertar(Botao::AbaFerramentas);
+        app.apertar(Botao::Mais100);
+        assert_eq!(app.jogo().score, 100);
+    }
+
+    #[test]
+    fn passos_de_pontos_e_nivel_respeitam_os_limites() {
+        let mut app = com_ferramentas();
+        assert_eq!((app.pontos_escolhidos, app.nivel_escolhido), (5_000, 10));
+        for _ in 0..10 {
+            app.apertar(Botao::PontosMenos);
+            app.apertar(Botao::NivelMenos);
+        }
+        assert_eq!((app.pontos_escolhidos, app.nivel_escolhido), (1_000, 1));
+        app.apertar(Botao::PontosMais);
+        app.apertar(Botao::NivelMais);
+        assert_eq!((app.pontos_escolhidos, app.nivel_escolhido), (2_000, 2));
+        app.pontos_escolhidos = 1_000_000;
+        app.nivel_escolhido = 10_000;
+        app.apertar(Botao::PontosMais);
+        app.apertar(Botao::NivelMais);
+        assert_eq!((app.pontos_escolhidos, app.nivel_escolhido), (1_000_000, 10_000));
+        assert_eq!(app.folha, Some(Folha::Ferramentas), "−/+ deixam a folha aberta");
+        assert!(!app.jogo().cheats_used, "escolher o valor não é cheat");
+    }
+
+    #[test]
+    fn somar_e_ir_aplicam_e_avisam() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::Somar);
+        assert_eq!(app.jogo().score, 5_000);
+        assert!(app.jogo().cheats_used);
+        assert_eq!(app.pilha_de_recordes[0].len(), 1);
+        assert_eq!(app.painel().aviso.as_deref(), Some("Pontos adicionados"));
+        assert_eq!(app.folha, None, "o cheat fecha a folha");
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaFerramentas);
+        app.apertar(Botao::IrParaNivel);
+        assert_eq!(app.jogo().level, 10);
+        assert_eq!(app.painel().aviso.as_deref(), Some("Nível alterado"));
+    }
+
+    #[test]
+    fn mais_1000_e_proximo_nivel() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::Mais1000);
+        assert_eq!(app.jogo().score, 1_000);
+        assert_eq!(app.painel().aviso.as_deref(), Some("+1.000 pontos"));
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaFerramentas);
+        let nivel = app.jogo().level;
+        app.apertar(Botao::ProximoNivel);
+        assert_eq!(app.jogo().level, nivel + 1);
+        assert_eq!(app.painel().aviso.as_deref(), Some("Nível avançado"));
+    }
+
+    #[test]
+    fn especial_espera_o_toque_na_casa() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::Pulso);
+        assert_eq!(app.folha, None);
+        assert_eq!(app.escolhendo, Some(Especial::Pulso));
+        assert_eq!(app.painel().aviso.as_deref(), Some("Toque numa casa"));
+        tocar_casa(&mut app, 27);
+        assert_eq!(app.escolhendo, None);
+        assert_eq!(app.jogo().tile(27).map(|pedra| pedra.kind), Some(TileKind::Burst));
+        assert_eq!(app.painel().aviso.as_deref(), Some("Especial criado"));
+        assert_eq!(app.pilha_de_recordes[0].len(), 1);
+    }
+
+    #[test]
+    fn toque_fora_ou_abrir_folha_cancela_a_escolha() {
+        let tela = tela();
+        let mut app = com_ferramentas();
+        app.apertar(Botao::Raio);
+        let antes = app.jogo().board;
+        app.tocar(Evento::Baixo { x: 1.0, y: 1.0 }, &tela);
+        assert_eq!(app.escolhendo, None);
+        assert_eq!(app.jogo().board, antes);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaFerramentas);
+        app.apertar(Botao::Espectro);
+        app.apertar(Botao::Som);
+        assert_eq!(app.escolhendo, None);
+        app.apertar(Botao::Som);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaFerramentas);
+        app.apertar(Botao::Supernova);
+        app.apertar(Botao::Classico);
+        assert_eq!(app.escolhendo, None);
+        assert!(!app.jogo().cheats_used);
+    }
+
+    #[test]
+    fn supernova_e_explodir_animam_como_jogada() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::Explodir);
+        assert!(app.ocupado());
+        assert_eq!(app.painel().pontos, "0", "o placar sobe com a animação");
+        terminar(&mut app);
+        assert!(app.jogo().score > 0);
+        assert_eq!(app.pilha_de_recordes[0].len(), 1);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaFerramentas);
+        app.apertar(Botao::Supernova);
+        tocar_casa(&mut app, 0);
+        assert!(app.ocupado());
+        terminar(&mut app);
+        assert_eq!(app.pilha_de_recordes[0].len(), 2);
+    }
+
+    #[test]
+    fn jogada_automatica_joga_a_dica() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::JogadaAutomatica);
+        assert!(app.ocupado());
+        assert_eq!(app.folha, None);
+        terminar(&mut app);
+        assert!(app.jogo().score > 0);
+    }
+
+    #[test]
+    fn jogada_automatica_sem_jogada_avisa() {
+        let mut app = com_ferramentas();
+        // Partida encerrada: a Dica do motor não acha jogada.
+        app.jogo_mut().ended = true;
+        app.apertar(Botao::JogadaAutomatica);
+        assert!(!app.ocupado());
+        assert_eq!(app.painel().aviso.as_deref(), Some("Embaralhe ou ative a proteção contra derrota"));
+    }
+
+    #[test]
+    fn cheat_recusado_avisa() {
+        let mut app = com_ferramentas();
+        app.jogo_mut().score = 999_999_999;
+        app.apertar(Botao::Somar);
+        assert_eq!(app.jogo().score, 999_999_999);
+        assert_eq!(app.painel().aviso.as_deref(), Some("Confira os valores ou tente outra ação"));
+        assert!(app.pilha_de_recordes[0].is_empty());
+    }
+
+    #[test]
+    fn impedir_derrota_e_desfazer_ficam_na_folha() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::ImpedirDerrota);
+        assert!(app.jogo().no_defeat && app.jogo().cheats_used);
+        assert_eq!(app.folha, Some(Folha::Ferramentas));
+        assert!(app.ferramentas().impedir_derrota);
+        assert_eq!(app.ferramentas().acoes, 1);
+        app.apertar(Botao::Desfazer);
+        assert!(!app.jogo().no_defeat);
+        assert_eq!(app.folha, Some(Folha::Ferramentas));
+        assert_eq!(app.ferramentas().acoes, 0);
+    }
+
+    #[test]
+    fn embaralhar_sem_limite_vale_no_classico() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::FecharMenu);
+        app.apertar(Botao::Classico);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaFerramentas);
+        let antes = app.jogo().board;
+        app.apertar(Botao::EmbaralharSemLimite);
+        assert!(app.ocupado());
+        terminar(&mut app);
+        assert_ne!(app.jogo().board, antes);
+        assert_eq!(app.pilha_de_recordes[1].len(), 1);
+    }
+
+    #[test]
+    fn durante_a_animacao_a_aba_nao_faz_nada() {
+        let mut app = com_ferramentas();
+        app.apertar(Botao::FecharMenu);
+        let (a, b) = boa_jogada(&mut app);
+        arrastar(&mut app, a, b);
+        app.apertar(Botao::Menu);
+        app.apertar(Botao::AbaFerramentas);
+        let pontos = app.jogo().score;
+        for botao in [Botao::Mais100, Botao::Somar, Botao::Explodir, Botao::Desfazer, Botao::ImpedirDerrota, Botao::Pulso] {
+            app.apertar(botao);
+        }
+        assert_eq!(app.jogo().score, pontos);
+        assert!(!app.jogo().no_defeat);
+        assert_eq!(app.escolhendo, None);
+        assert!(app.ferramentas().ocupado);
     }
 
     /// A jogada que a Dica sugere (sempre válida).
