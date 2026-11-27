@@ -108,11 +108,21 @@ fn recordes_do_zen_da_cena() -> Recordes {
     Recordes { pontuacao: 98_765, nivel: 6, jogada: 3_200, terminadas: 0 }
 }
 
+/// Libera e abre a aba Ferramentas (7 toques na versão, nos Créditos).
+fn liberar_ferramentas(app: &mut App) {
+    app.apertar(Botao::Menu);
+    app.apertar(Botao::AbaCreditos);
+    for _ in 0..7 {
+        app.apertar(Botao::Versao);
+    }
+    app.apertar(Botao::AbaFerramentas);
+}
+
 /// Monta a cena `nome`, ou `None` se não existir. Os nomes são: `inicio`, `selecionada`,
 /// `dica`, `troca`, `limpando`, `queda`, `nivel`, `fim`, `dialogo`, `classico`, `som`,
 /// `som-classico`, `som-aviso`, `respiracao`, `recordes`, `creditos`, `particulas-pulso`,
 /// `particulas-raio`, `particulas-espectro`, `particulas-espectro-suave`,
-/// `particulas-espectro-vibrante` e `particulas-supernova`.
+/// `particulas-espectro-vibrante`, `particulas-supernova`, `ferramentas` e `escolher-casa`.
 pub fn cena(nome: &str) -> Option<App> {
     let mut app = App::com_sementes(7, 9);
     match nome {
@@ -186,6 +196,20 @@ pub fn cena(nome: &str) -> Option<App> {
             app.apertar(Botao::Menu);
             app.apertar(Botao::AbaCreditos);
         }
+        // A aba Ferramentas aberta, depois de um cheat (o Desfazer aceso e a partida marcada).
+        "ferramentas" => {
+            liberar_ferramentas(&mut app);
+            app.apertar(Botao::Mais100);
+            app.avancar(3000.0);
+            app.apertar(Botao::Menu);
+            app.apertar(Botao::AbaFerramentas);
+        }
+        // O Pulso esperando o toque numa casa.
+        "escolher-casa" => {
+            liberar_ferramentas(&mut app);
+            app.avancar(3000.0);
+            app.apertar(Botao::Pulso);
+        }
         // O guia de respiração com a folha fechada, 2 s depois de começar (no meio do inspirar).
         "respiracao" => {
             app = app.com_preferencias(preferencias_da_cena());
@@ -234,8 +258,10 @@ mod tests {
     use crate::preferencias::Fase;
     use prisma_engine::Mode;
 
-    const NOMES: [&str; 22] = [
+    const NOMES: [&str; 24] = [
         "inicio",
+        "ferramentas",
+        "escolher-casa",
         "selecionada",
         "dica",
         "troca",
@@ -345,6 +371,17 @@ mod tests {
         let guia = respiracao.guia_respiracao().expect("o guia está ligado");
         assert_eq!(guia.fase, Fase::Inspire);
         assert_eq!(guia.restante_s, 2);
+    }
+
+    #[test]
+    fn as_cenas_do_menu_secreto() {
+        let ferramentas = cena("ferramentas").unwrap();
+        assert!(ferramentas.ferramentas_liberadas());
+        assert_eq!(ferramentas.folha(), Some(Folha::Ferramentas));
+        assert!(ferramentas.ferramentas().pode_desfazer, "a foto mostra o Desfazer aceso");
+        let escolher = cena("escolher-casa").unwrap();
+        assert_eq!(escolher.folha(), None);
+        assert_eq!(escolher.painel().aviso.as_deref(), Some("Toque numa casa"));
     }
 
     #[test]

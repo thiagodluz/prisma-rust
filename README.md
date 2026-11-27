@@ -17,10 +17,10 @@ Dá para jogar, no PC e no Android (APK de teste). A tela imita o visual "Novo" 
 
 **Já tem:** modos Zen e Clássico, partida e recordes salvos por modo, fim de partida e novo jogo,
 dica, embaralhar (Zen), música e ambiente do Zen, efeitos sonoros, vibração, guia de respiração,
-folhas de Som, Recordes e Créditos, e aviso na tela quando o progresso não está sendo salvo.
+folhas de Som, Recordes e Créditos, aviso na tela quando o progresso não está sendo salvo e o
+menu secreto (7 toques na versão, em Créditos) com desfazer e cheats; veja `docs/notes/ferramentas.md`.
 
-**Ainda não tem:** menu secreto com desfazer e cheats na tela (o motor já tem a lógica), o visual
-"Anterior", navegação por teclado, versão para navegador e importação das partidas do app em JS.
+**Ainda não tem:** navegação por teclado, versão para navegador e importação das partidas do app em JS.
 
 ### Experimentar
 
