@@ -28,7 +28,7 @@ com acabamento em vidro fosco e fontes próprias (`docs/notes/visual.md`).
   não troca nenhuma pedra;
 - teclado no PC: setas, Enter/Espaço, Tab e Esc (`docs/notes/teclado-e-gestos.md`).
 
-**Ainda não tem:** versão para navegador.
+**Fora do projeto, de propósito:** versão para navegador e importação das partidas do app em JS.
 
 ### Experimentar
 
