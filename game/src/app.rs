@@ -351,6 +351,9 @@ pub struct App {
     /// O canal (Música ou Ambiente) cujo "Carregando…" está na tela agora: o laço mostra o aviso
     /// por um quadro antes de carregar a faixa, que trava a tela por um instante.
     carregando: Option<Canal>,
+    /// Os recordes de antes de cada ação que o "desfazer" do motor guardou, por modo (Zen,
+    /// Clássico): sempre do tamanho do `undo_history` da partida do modo, e na mesma ordem.
+    pilha_de_recordes: [Vec<Recordes>; 2],
 }
 
 impl App {
@@ -431,6 +434,7 @@ impl App {
             vibrador: false,
             toques: Vec::new(),
             carregando: None,
+            pilha_de_recordes: [Vec::new(), Vec::new()],
         }
     }
 
@@ -871,6 +875,10 @@ impl App {
         // do JS confere o placar sempre que desenha).
         mudaram[posicao_do_modo(self.modo)] = self.alcancar_recordes_de(self.modo);
         self.limpar_tela();
+        // Como no original (uma partida só, que recomeça o histórico ao trocar de modo): o
+        // desfazer das duas partidas é esquecido, e as pilhas de recordes com ele.
+        self.zen.undo_history.clear();
+        self.classico.undo_history.clear();
         self.modo = modo;
         if modo == Mode::Zen {
             self.respiracao_ms = 0.0;
@@ -913,14 +921,70 @@ impl App {
 
     /// O MELHOR que o painel mostra com o jogo parado: o recorde, ou o placar atual se já o passou.
     fn melhor_parado(&self) -> u64 {
-        self.recordes(self.modo).pontuacao.max(self.jogo().score)
+        let recorde = self.recordes(self.modo).pontuacao;
+        if self.jogo().cheats_used {
+            return recorde;
+        }
+        recorde.max(self.jogo().score)
     }
 
     /// Sobe os recordes do modo (pontuação e nível) até o placar que a partida dele mostra agora.
     /// Devolve se algo mudou.
     fn alcancar_recordes_de(&mut self, modo: Mode) -> bool {
+        // Partida com cheat nunca sobe recorde.
+        if self.partida(modo).cheats_used {
+            return false;
+        }
         let (pontos, nivel) = (self.partida(modo).score, self.partida(modo).level);
         self.recordes[posicao_do_modo(modo)].alcancar(pontos, nivel)
+    }
+
+    // ---- Desfazer -----------------------------------------------------------------------
+
+    /// Guarda os recordes do `modo` de antes de uma ação que o motor acabou de pôr no histórico
+    /// do desfazer (chame só com a ação aceita). A pilha fica do tamanho do histórico do motor.
+    fn lembrar_recordes(&mut self, modo: Mode, antes: Recordes) {
+        self.pilha_de_recordes[posicao_do_modo(modo)].push(antes);
+        self.aparar_pilhas_de_recordes();
+    }
+
+    /// Deixa cada pilha de recordes com o tamanho do histórico do motor, tirando as mais antigas
+    /// (o motor descarta as dele ao passar de 50, ao embaralhar, ao começar outra partida...).
+    fn aparar_pilhas_de_recordes(&mut self) {
+        for modo in [Mode::Zen, Mode::Classic] {
+            let tamanho = self.partida(modo).undo_history.len();
+            let pilha = &mut self.pilha_de_recordes[posicao_do_modo(modo)];
+            if pilha.len() > tamanho {
+                pilha.drain(..pilha.len() - tamanho);
+            }
+        }
+    }
+
+    /// Há alguma ação para desfazer na partida do modo atual?
+    pub fn pode_desfazer(&self) -> bool {
+        self.jogo().can_undo_last_move()
+    }
+
+    /// Quantas ações a partida do modo atual pode desfazer (até 50).
+    pub fn acoes_para_desfazer(&self) -> usize {
+        self.jogo().undo_history.len()
+    }
+
+    /// Volta a partida ao estado de antes da última ação e os recordes do modo aos de antes dela.
+    /// Não faz nada durante a animação nem sem histórico.
+    fn desfazer(&mut self) {
+        if self.ocupado() || !self.jogo_mut().undo_last_move() {
+            return;
+        }
+        let posicao = posicao_do_modo(self.modo);
+        let mut mudaram = [false; 2];
+        if let Some(recordes) = self.pilha_de_recordes[posicao].pop() {
+            mudaram[posicao] = self.recordes[posicao] != recordes;
+            self.recordes[posicao] = recordes;
+        }
+        self.limpar_tela();
+        self.aviso = Temporizado::por("Ação desfeita", AVISO_MS);
+        self.gravar_tudo(mudaram);
     }
 
     // ---- Gravação ----------------------------------------------------------------------
@@ -940,6 +1004,7 @@ impl App {
     /// Grava a partida do modo atual, o modo ativo e os recordes que mudaram. Falha de gravação
     /// nunca interrompe o jogo: vai para o registro (uma vez, não a cada jogada) e o jogo segue.
     fn gravar_tudo(&mut self, recordes_mudaram: [bool; 2]) {
+        self.aparar_pilhas_de_recordes();
         if !self.salvador.tem_pasta() {
             return;
         }
@@ -1006,9 +1071,14 @@ impl App {
             // Grava já, antes de a animação acabar: o motor resolveu a jogada inteira, e se o app
             // fechasse agora o jogador voltaria com o resultado dela. Jogada inválida não grava.
             let terminou = resultado.ended && self.modo == Mode::Classic;
+            let posicao = posicao_do_modo(self.modo);
+            let recordes_antes = self.recordes[posicao];
+            self.lembrar_recordes(self.modo, recordes_antes);
             let mut mudaram = [false; 2];
-            mudaram[posicao_do_modo(self.modo)] =
-                self.recordes[posicao_do_modo(self.modo)].registrar(pontos, nivel, resultado.earned, terminou);
+            // Partida com cheat nunca sobe recorde.
+            if !self.jogo().cheats_used {
+                mudaram[posicao] = self.recordes[posicao].registrar(pontos, nivel, resultado.earned, terminou);
+            }
             self.gravar_tudo(mudaram);
         }
         self.observar(true);
@@ -1330,6 +1400,105 @@ mod tests {
         let (x, y) = centro(&tela, casa);
         app.tocar(Evento::Baixo { x, y }, &tela);
         app.tocar(Evento::Cima { x, y }, &tela);
+    }
+
+    // ---- Menu secreto: recordes protegidos e desfazer ----
+
+    /// Uma jogada válida, já com a animação terminada.
+    fn jogar_e_terminar(app: &mut App) {
+        let (a, b) = boa_jogada(app);
+        arrastar(app, a, b);
+        terminar(app);
+    }
+
+    #[test]
+    fn partida_com_cheat_nao_sobe_recorde() {
+        let mut app = App::com_sementes(7, 9);
+        assert!(app.jogo_mut().cheat_add_points(100_000));
+        jogar_e_terminar(&mut app);
+        assert_eq!(app.recordes(Mode::Zen), Recordes::zerados());
+    }
+
+    #[test]
+    fn cheat_nao_sobe_recorde_ao_trocar_de_modo_nem_no_novo_jogo() {
+        let mut app = App::com_sementes(7, 9);
+        assert!(app.jogo_mut().cheat_add_points(100_000));
+        app.apertar(Botao::Classico);
+        app.apertar(Botao::Zen);
+        assert_eq!(app.recordes(Mode::Zen), Recordes::zerados());
+        assert!(app.jogo_mut().cheat_add_points(100_000));
+        app.apertar(Botao::NovoJogo);
+        app.apertar(Botao::Confirmar);
+        assert_eq!(app.recordes(Mode::Zen), Recordes::zerados());
+    }
+
+    #[test]
+    fn o_melhor_do_painel_nao_conta_placar_com_cheat() {
+        let mut app = App::com_sementes(7, 9);
+        assert!(app.jogo_mut().cheat_add_points(100_000));
+        assert_eq!(app.painel().melhor, "0");
+    }
+
+    #[test]
+    fn desfazer_volta_a_jogada_e_os_recordes() {
+        let mut app = App::com_sementes(7, 9);
+        jogar_e_terminar(&mut app);
+        assert!(app.recordes(Mode::Zen).pontuacao > 0, "a jogada bateu o recorde");
+        assert!(app.pode_desfazer());
+        app.desfazer();
+        assert_eq!(app.jogo().score, 0);
+        assert_eq!(app.recordes(Mode::Zen), Recordes::zerados());
+        assert!(app.jogo().cheats_used, "desfazer conta como recurso de desenvolvedor");
+        assert!(!app.pode_desfazer());
+    }
+
+    #[test]
+    fn a_pilha_de_recordes_acompanha_as_50_do_motor() {
+        let mut app = App::com_sementes(7, 9);
+        for _ in 0..55 {
+            let antes = app.recordes(Mode::Zen);
+            assert!(app.jogo_mut().cheat_add_points(100));
+            app.lembrar_recordes(Mode::Zen, antes);
+        }
+        assert_eq!(app.jogo().undo_history.len(), 50);
+        assert_eq!(app.pilha_de_recordes[0].len(), 50);
+        assert_eq!(app.acoes_para_desfazer(), 50);
+    }
+
+    #[test]
+    fn trocar_de_modo_e_embaralhar_limpam_o_historico() {
+        let mut app = App::com_sementes(7, 9);
+        jogar_e_terminar(&mut app);
+        app.apertar(Botao::Classico);
+        jogar_e_terminar(&mut app);
+        app.apertar(Botao::Zen);
+        assert!(app.zen.undo_history.is_empty() && app.classico.undo_history.is_empty());
+        assert!(app.pilha_de_recordes.iter().all(Vec::is_empty));
+        jogar_e_terminar(&mut app);
+        assert_eq!(app.pilha_de_recordes[0].len(), 1);
+        app.apertar(Botao::Embaralhar);
+        assert!(app.jogo().undo_history.is_empty());
+        assert!(app.pilha_de_recordes[0].is_empty());
+    }
+
+    #[test]
+    fn desfazer_sem_historico_nao_faz_nada() {
+        let mut app = App::com_sementes(7, 9);
+        let antes = app.jogo().board;
+        app.desfazer();
+        assert_eq!(app.jogo().board, antes);
+        assert!(!app.jogo().cheats_used);
+    }
+
+    #[test]
+    fn desfazer_durante_animacao_nao_faz_nada() {
+        let mut app = App::com_sementes(7, 9);
+        let (a, b) = boa_jogada(&mut app);
+        arrastar(&mut app, a, b);
+        assert!(app.ocupado());
+        let pontos = app.jogo().score;
+        app.desfazer();
+        assert_eq!(app.jogo().score, pontos);
     }
 
     /// A jogada que a Dica sugere (sempre válida).
