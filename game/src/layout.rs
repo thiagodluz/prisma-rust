@@ -207,8 +207,64 @@ pub struct TelaMenu {
     pub fechar: Rect,
     /// Onde entram as linhas de recordes ou o texto dos créditos.
     pub conteudo: Rect,
+    /// A linha da versão, no alto do conteúdo dos Créditos (7 toques liberam as Ferramentas).
+    pub versao: Rect,
+    /// As abas quando as Ferramentas estão liberadas: Recordes, Créditos e Ferramentas.
+    pub abas_com_ferramentas: [Rect; 3],
+    /// Os controles da aba Ferramentas, dentro de `conteudo`.
+    pub ferramentas: TelaFerramentas,
     /// Tamanho base da letra.
     pub texto: f32,
+}
+
+/// Os controles da aba Ferramentas (o menu secreto), em oito linhas da mesma altura: o estado
+/// da partida; Desfazer; pontos (−, valor, +, Somar); nível (−, valor, +, Ir); +100, +1.000 e
+/// Próximo nível; os quatro especiais; Embaralhar, Jogada automática e Explodir; Impedir derrota.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TelaFerramentas {
+    pub estado: Rect,
+    pub desfazer: Rect,
+    pub pontos_menos: Rect,
+    pub pontos_valor: Rect,
+    pub pontos_mais: Rect,
+    pub somar: Rect,
+    pub nivel_menos: Rect,
+    pub nivel_valor: Rect,
+    pub nivel_mais: Rect,
+    pub ir: Rect,
+    pub mais_100: Rect,
+    pub mais_1000: Rect,
+    pub proximo_nivel: Rect,
+    /// Pulso, Raio, Espectro e Supernova.
+    pub especiais: [Rect; 4],
+    pub embaralhar: Rect,
+    pub jogada_automatica: Rect,
+    pub explodir: Rect,
+    /// A linha inteira do interruptor "Impedir derrota".
+    pub impedir_derrota: Rect,
+}
+
+impl TelaFerramentas {
+    pub const VAZIA: TelaFerramentas = TelaFerramentas {
+        estado: Rect::VAZIO,
+        desfazer: Rect::VAZIO,
+        pontos_menos: Rect::VAZIO,
+        pontos_valor: Rect::VAZIO,
+        pontos_mais: Rect::VAZIO,
+        somar: Rect::VAZIO,
+        nivel_menos: Rect::VAZIO,
+        nivel_valor: Rect::VAZIO,
+        nivel_mais: Rect::VAZIO,
+        ir: Rect::VAZIO,
+        mais_100: Rect::VAZIO,
+        mais_1000: Rect::VAZIO,
+        proximo_nivel: Rect::VAZIO,
+        especiais: [Rect::VAZIO; 4],
+        embaralhar: Rect::VAZIO,
+        jogada_automatica: Rect::VAZIO,
+        explodir: Rect::VAZIO,
+        impedir_derrota: Rect::VAZIO,
+    };
 }
 
 impl TelaMenu {
@@ -219,6 +275,9 @@ impl TelaMenu {
         aba_creditos: Rect::VAZIO,
         fechar: Rect::VAZIO,
         conteudo: Rect::VAZIO,
+        versao: Rect::VAZIO,
+        abas_com_ferramentas: [Rect::VAZIO; 3],
+        ferramentas: TelaFerramentas::VAZIA,
         texto: 0.0,
     };
 }
@@ -541,13 +600,76 @@ fn folha_do_menu(folha: Rect, unidade: f32) -> TelaMenu {
     let faixa = |x: f32, y: f32, w: f32, h: f32| Rect { x, y, w, h };
     let x = folha.x + borda;
     let conteudo_y = topo + altura + espaco;
+    let conteudo = faixa(x, conteudo_y, largura, (folha.y + folha.h - borda - conteudo_y).max(0.0));
+    let aba3_w = (largura - altura - 3.0 * espaco) / 3.0;
+    let texto = TEXTO * unidade;
     TelaMenu {
         folha,
         aba_recordes: faixa(x, topo, aba_w, altura),
         aba_creditos: faixa(x + aba_w + espaco, topo, aba_w, altura),
         fechar: faixa(x + largura - altura, topo, altura, altura),
-        conteudo: faixa(x, conteudo_y, largura, (folha.y + folha.h - borda - conteudo_y).max(0.0)),
-        texto: TEXTO * unidade,
+        conteudo,
+        versao: faixa(conteudo.x, conteudo.y, conteudo.w, 1.6 * texto),
+        abas_com_ferramentas: [0.0, 1.0, 2.0].map(|i| faixa(x + i * (aba3_w + espaco), topo, aba3_w, altura)),
+        ferramentas: aba_ferramentas(conteudo, espaco, 1.4 * ABAS_ALTURA * unidade),
+        texto,
+    }
+}
+
+/// Divide uma linha em pedaços, da esquerda para a direita: cada largura é um peso, e
+/// `espaco` fica entre dois pedaços.
+fn repartir_linha(linha: Rect, pesos: &[f32], espaco: f32) -> Vec<Rect> {
+    let total: f32 = pesos.iter().sum();
+    let livre = (linha.w - espaco * (pesos.len() as f32 - 1.0)).max(0.0);
+    let mut x = linha.x;
+    pesos
+        .iter()
+        .map(|peso| {
+            let w = livre * peso / total;
+            let pedaco = Rect { x, w, ..linha };
+            x += w + espaco;
+            pedaco
+        })
+        .collect()
+}
+
+/// As oito linhas da aba Ferramentas dentro de `conteudo`, da mesma altura (no máximo
+/// `altura_maxima`, 1,4 vez a das abas), separadas por `espaco`.
+fn aba_ferramentas(conteudo: Rect, espaco: f32, altura_maxima: f32) -> TelaFerramentas {
+    const LINHAS: f32 = 8.0;
+    let h = ((conteudo.h - espaco * (LINHAS - 1.0)) / LINHAS).min(altura_maxima).max(0.0);
+    let linha = |i: f32| Rect { x: conteudo.x, y: conteudo.y + i * (h + espaco), w: conteudo.w, h };
+    // −, valor, +, ação: os botões − e + quadrados (se couber), a ação com 35% da largura.
+    let lado = h.min(0.16 * conteudo.w);
+    let com_passo = |i: f32| {
+        let resto = (conteudo.w - 2.0 * lado - 3.0 * espaco).max(0.0);
+        let pesos = [lado, resto * 0.55, lado, resto * 0.45];
+        repartir_linha(linha(i), &pesos, espaco)
+    };
+    let pontos = com_passo(2.0);
+    let nivel = com_passo(3.0);
+    let atalhos = repartir_linha(linha(4.0), &[1.0, 1.0, 1.0], espaco);
+    let especiais = repartir_linha(linha(5.0), &[1.0, 1.0, 1.0, 1.0], espaco);
+    let poderes = repartir_linha(linha(6.0), &[1.0, 1.0, 1.0], espaco);
+    TelaFerramentas {
+        estado: linha(0.0),
+        desfazer: linha(1.0),
+        pontos_menos: pontos[0],
+        pontos_valor: pontos[1],
+        pontos_mais: pontos[2],
+        somar: pontos[3],
+        nivel_menos: nivel[0],
+        nivel_valor: nivel[1],
+        nivel_mais: nivel[2],
+        ir: nivel[3],
+        mais_100: atalhos[0],
+        mais_1000: atalhos[1],
+        proximo_nivel: atalhos[2],
+        especiais: [especiais[0], especiais[1], especiais[2], especiais[3]],
+        embaralhar: poderes[0],
+        jogada_automatica: poderes[1],
+        explodir: poderes[2],
+        impedir_derrota: linha(7.0),
     }
 }
 
@@ -1463,6 +1585,66 @@ mod tests_tela_jogo {
         let sem_linhas = repartir_recordes(Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 }, 10.0, &[0, 0]);
         assert_eq!(sem_linhas.len(), 2);
         assert!(sem_linhas.iter().all(|bloco| bloco.cartoes.is_empty()));
+    }
+
+    /// Os retângulos da aba Ferramentas, com nome (para as mensagens dos testes).
+    fn controles_das_ferramentas(f: &TelaFerramentas) -> Vec<(String, Rect)> {
+        let mut todos = vec![
+            ("estado", f.estado), ("desfazer", f.desfazer),
+            ("pontos_menos", f.pontos_menos), ("pontos_valor", f.pontos_valor), ("pontos_mais", f.pontos_mais), ("somar", f.somar),
+            ("nivel_menos", f.nivel_menos), ("nivel_valor", f.nivel_valor), ("nivel_mais", f.nivel_mais), ("ir", f.ir),
+            ("mais_100", f.mais_100), ("mais_1000", f.mais_1000), ("proximo_nivel", f.proximo_nivel),
+            ("embaralhar", f.embaralhar), ("jogada_automatica", f.jogada_automatica), ("explodir", f.explodir),
+            ("impedir_derrota", f.impedir_derrota),
+        ]
+        .into_iter()
+        .map(|(nome, r)| (nome.to_string(), r))
+        .collect::<Vec<_>>();
+        todos.extend(f.especiais.iter().enumerate().map(|(i, r)| (format!("especial_{i}"), *r)));
+        todos
+    }
+
+    #[test]
+    fn a_aba_ferramentas_cabe_sem_sobrepor() {
+        let telas = [(320.0, 480.0), (360.0, 640.0), (540.0, 960.0), (720.0, 1280.0), (1080.0, 2400.0)];
+        for (largura, altura) in telas {
+            let menu = tela_jogo(largura, altura, true).menu;
+            let todos = controles_das_ferramentas(&menu.ferramentas);
+            for (nome, r) in &todos {
+                assert!(r.w > 0.0 && r.h > 0.0, "{nome} sem tamanho em {largura}x{altura}");
+                assert!(dentro(*r, menu.conteudo), "{nome} fora do conteúdo em {largura}x{altura}: {r:?}");
+                if largura >= 360.0 {
+                    assert!(r.h >= 32.0, "{nome} baixo demais em {largura}x{altura}: {}", r.h);
+                }
+            }
+            for (i, (nome_a, a)) in todos.iter().enumerate() {
+                for (nome_b, b) in &todos[i + 1..] {
+                    assert!(!se_cruzam(*a, *b), "{nome_a} e {nome_b} se cruzam em {largura}x{altura}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_linha_da_versao_fica_no_alto_dos_creditos() {
+        for (largura, altura) in CELULARES {
+            let menu = tela_jogo(largura, altura, true).menu;
+            assert!(dentro(menu.versao, menu.conteudo));
+            assert_eq!((menu.versao.x, menu.versao.y, menu.versao.w), (menu.conteudo.x, menu.conteudo.y, menu.conteudo.w));
+            assert!(menu.versao.h >= 1.5 * menu.texto && menu.versao.h < 0.2 * menu.conteudo.h, "{largura}x{altura}");
+        }
+    }
+
+    #[test]
+    fn as_tres_abas_dividem_a_largura() {
+        for (largura, altura) in CELULARES {
+            let menu = tela_jogo(largura, altura, true).menu;
+            let [recordes, creditos, ferramentas] = menu.abas_com_ferramentas;
+            assert!(recordes.x < creditos.x && creditos.x < ferramentas.x && ferramentas.x < menu.fechar.x);
+            assert!((recordes.w - ferramentas.w).abs() < 0.01 && (creditos.w - ferramentas.w).abs() < 0.01);
+            assert!(!se_cruzam(ferramentas, menu.fechar) && !se_cruzam(recordes, creditos) && !se_cruzam(creditos, ferramentas));
+            assert_eq!(recordes.y, menu.fechar.y);
+        }
     }
 
     #[test]

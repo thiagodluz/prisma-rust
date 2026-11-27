@@ -713,13 +713,41 @@ impl App {
         // Com a folha do Menu aberta, só existem o ♪, o ≡ (que fecha) e os controles dela.
         if self.folha.is_some_and(Folha::e_do_menu) {
             let menu = &tela.menu;
-            return vec![
-                (Botao::Som, tela.botao_som),
-                (Botao::Menu, tela.botao_menu),
-                (Botao::FecharMenu, menu.fechar),
-                (Botao::AbaRecordes, menu.aba_recordes),
-                (Botao::AbaCreditos, menu.aba_creditos),
-            ];
+            let mut botoes = vec![(Botao::Som, tela.botao_som), (Botao::Menu, tela.botao_menu), (Botao::FecharMenu, menu.fechar)];
+            if self.ferramentas_liberadas {
+                let [recordes, creditos, ferramentas] = menu.abas_com_ferramentas;
+                botoes.extend([(Botao::AbaRecordes, recordes), (Botao::AbaCreditos, creditos), (Botao::AbaFerramentas, ferramentas)]);
+            } else {
+                botoes.extend([(Botao::AbaRecordes, menu.aba_recordes), (Botao::AbaCreditos, menu.aba_creditos)]);
+            }
+            match self.folha {
+                Some(Folha::Creditos) => botoes.push((Botao::Versao, menu.versao)),
+                Some(Folha::Ferramentas) => {
+                    let f = &menu.ferramentas;
+                    botoes.extend([
+                        (Botao::Desfazer, f.desfazer),
+                        (Botao::PontosMenos, f.pontos_menos),
+                        (Botao::PontosMais, f.pontos_mais),
+                        (Botao::Somar, f.somar),
+                        (Botao::NivelMenos, f.nivel_menos),
+                        (Botao::NivelMais, f.nivel_mais),
+                        (Botao::IrParaNivel, f.ir),
+                        (Botao::Mais100, f.mais_100),
+                        (Botao::Mais1000, f.mais_1000),
+                        (Botao::ProximoNivel, f.proximo_nivel),
+                        (Botao::Pulso, f.especiais[0]),
+                        (Botao::Raio, f.especiais[1]),
+                        (Botao::Espectro, f.especiais[2]),
+                        (Botao::Supernova, f.especiais[3]),
+                        (Botao::EmbaralharSemLimite, f.embaralhar),
+                        (Botao::JogadaAutomatica, f.jogada_automatica),
+                        (Botao::Explodir, f.explodir),
+                        (Botao::ImpedirDerrota, f.impedir_derrota),
+                    ]);
+                }
+                _ => {}
+            }
+            return botoes;
         }
         // Com a folha de Som aberta, só existem o ♪ (que fecha), o ≡ e os controles dela.
         if self.folha == Some(Folha::Som) {
@@ -1823,6 +1851,48 @@ mod tests {
         app.apertar(Botao::AbaFerramentas);
         assert_eq!(app.folha, Some(Folha::Ferramentas));
         app
+    }
+
+    fn centro_de(r: Rect) -> (f32, f32) {
+        (r.x + r.w / 2.0, r.y + r.h / 2.0)
+    }
+
+    #[test]
+    fn os_botoes_da_aba_ficam_visiveis_so_liberada() {
+        let tela = tela();
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Menu);
+        let (x, y) = centro_de(tela.menu.abas_com_ferramentas[2]);
+        assert_ne!(app.botao_em(&tela, x, y), Some(Botao::AbaFerramentas), "sem liberar, a terceira aba não existe");
+        let mut app = com_ferramentas();
+        assert_eq!(app.botao_em(&tela, x, y), Some(Botao::AbaFerramentas));
+        let (x, y) = centro_de(tela.menu.ferramentas.somar);
+        assert_eq!(app.botao_em(&tela, x, y), Some(Botao::Somar));
+        let (x, y) = centro_de(tela.menu.ferramentas.especiais[3]);
+        assert_eq!(app.botao_em(&tela, x, y), Some(Botao::Supernova));
+        let (x, y) = centro_de(tela.menu.ferramentas.impedir_derrota);
+        assert_eq!(app.botao_em(&tela, x, y), Some(Botao::ImpedirDerrota));
+        app.apertar(Botao::AbaRecordes);
+        let (x, y) = centro_de(tela.menu.ferramentas.somar);
+        assert_ne!(app.botao_em(&tela, x, y), Some(Botao::Somar), "com Recordes aberta, os controles somem");
+        let (x, y) = centro_de(tela.menu.abas_com_ferramentas[0]);
+        assert_eq!(app.botao_em(&tela, x, y), Some(Botao::AbaRecordes));
+    }
+
+    #[test]
+    fn a_versao_so_e_tocavel_em_creditos() {
+        let tela = tela();
+        let (x, y) = centro_de(tela.menu.versao);
+        let mut app = App::com_sementes(7, 9);
+        app.apertar(Botao::Menu);
+        assert_ne!(app.botao_em(&tela, x, y), Some(Botao::Versao));
+        app.apertar(Botao::AbaCreditos);
+        assert_eq!(app.botao_em(&tela, x, y), Some(Botao::Versao));
+        for _ in 0..7 {
+            app.tocar(Evento::Baixo { x, y }, &tela);
+            app.tocar(Evento::Cima { x, y }, &tela);
+        }
+        assert!(app.ferramentas_liberadas());
     }
 
     #[test]
