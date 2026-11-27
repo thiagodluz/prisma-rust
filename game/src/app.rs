@@ -9,7 +9,7 @@
 use crate::efeitos::{elevacao_da_cadeia, sinal_da_limpeza, Efeito, Sinal};
 use crate::formato::Recordes;
 use crate::fundo::Desejado;
-use crate::input::{casa_em, Acao, Evento, Gestos, Tecla};
+use crate::input::{casa_em, Acao, Evento, Gestos};
 use crate::layout::{Rect, TelaJogo, TelaSom};
 use crate::linha::{montar, Passo, Reprodutor};
 use crate::preferencias::{estado_da_respiracao, Canal, EstadoRespiracao, Intensidade, Preferencias};
@@ -117,17 +117,6 @@ impl Folha {
         matches!(self, Folha::Recordes | Folha::Creditos | Folha::Ferramentas)
     }
 }
-
-/// O que o teclado está apontando: uma casa do tabuleiro, um botão ou uma barra de volume.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Foco {
-    Casa(usize),
-    Botao(Botao),
-    Volume(Canal),
-}
-
-/// A casa onde o foco entra no tabuleiro quando ainda não tem uma (o meio).
-const CASA_INICIAL_DO_FOCO: usize = 27;
 
 /// O especial que a aba Ferramentas cria na casa que o jogador tocar depois.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -394,18 +383,6 @@ fn descrever_origem(origem: &Origem, jogo: &Game) -> String {
     format!("{nome}:{}", jogo.score)
 }
 
-/// A casa ao lado de `casa` na direção da seta (a mesma casa na borda: não dá a volta).
-fn casa_vizinha(casa: usize, tecla: Tecla) -> usize {
-    let (linha, coluna) = (casa / SIZE, casa % SIZE);
-    match tecla {
-        Tecla::Esquerda if coluna > 0 => casa - 1,
-        Tecla::Direita if coluna + 1 < SIZE => casa + 1,
-        Tecla::Acima if linha > 0 => casa - SIZE,
-        Tecla::Abaixo if linha + 1 < SIZE => casa + SIZE,
-        _ => casa,
-    }
-}
-
 /// A posição do modo nas listas de duas casas (Zen, Clássico).
 fn posicao_do_modo(modo: Mode) -> usize {
     match modo {
@@ -470,10 +447,6 @@ pub struct App {
     nivel_escolhido: u32,
     /// O especial esperando o toque numa casa (a folha fecha enquanto isso).
     escolhendo: Option<Especial>,
-    /// Onde o teclado está, e se o contorno aparece (só depois de usar o teclado; um toque o
-    /// esconde, como o `:focus-visible` do navegador).
-    foco: Option<Foco>,
-    foco_visivel: bool,
 }
 
 impl App {
@@ -561,8 +534,6 @@ impl App {
             pontos_escolhidos: PONTOS_INICIAIS,
             nivel_escolhido: NIVEL_INICIAL,
             escolhendo: None,
-            foco: None,
-            foco_visivel: false,
         }
     }
 
@@ -647,7 +618,6 @@ impl App {
     /// Um evento do dedo (ou do mouse). O botão responde assim que o dedo encosta; o
     /// tabuleiro, quando o dedo solta (ver `input`).
     pub fn tocar(&mut self, evento: Evento, tela: &TelaJogo) {
-        self.foco_visivel = false;
         // Com uma folha aberta, só ela reage: o tabuleiro, as abas e os botões ficam "tampados".
         if self.folha.is_some() {
             self.tocar_na_folha(evento, tela);
@@ -1150,142 +1120,6 @@ impl App {
         }
         let (pontos, nivel) = (self.partida(modo).score, self.partida(modo).level);
         self.recordes[posicao_do_modo(modo)].alcancar(pontos, nivel)
-    }
-
-    // ---- Teclado -------------------------------------------------------------------------
-
-    /// O foco, se o contorno do teclado deve aparecer.
-    pub fn foco_visivel(&self) -> Option<Foco> {
-        self.foco.filter(|_| self.foco_visivel)
-    }
-
-    /// O foco visível e o lugar dele na tela; `None` se o contorno não aparece ou se o botão
-    /// (ou a barra) em foco não existe agora.
-    pub fn retangulo_do_foco(&self, tela: &TelaJogo) -> Option<(Foco, Rect)> {
-        let foco = self.foco_visivel()?;
-        self.paradas_do_teclado(tela).into_iter().find(|(parada, _)| match (parada, foco) {
-            (Foco::Casa(_), Foco::Casa(_)) => true,
-            (a, b) => *a == b,
-        }).map(|(parada, retangulo)| match (parada, foco) {
-            (Foco::Casa(_), Foco::Casa(casa)) => (foco, crate::layout::cell_rect(tela.grade, casa / SIZE, casa % SIZE)),
-            _ => (parada, retangulo),
-        })
-    }
-
-    /// Onde o Tab para, em ordem de leitura (de cima para baixo, da esquerda para a direita): os
-    /// botões visíveis, as barras de volume da folha de Som e o tabuleiro (uma parada só, que
-    /// guarda a casa onde o foco estava).
-    fn paradas_do_teclado(&self, tela: &TelaJogo) -> Vec<(Foco, Rect)> {
-        let mut paradas: Vec<(Foco, Rect)> =
-            self.botoes_visiveis(tela).into_iter().map(|(botao, retangulo)| (Foco::Botao(botao), retangulo)).collect();
-        if self.folha == Some(Folha::Som) && !self.dialogo {
-            for canal in [Canal::Efeitos, Canal::Musica, Canal::Ambiente] {
-                let barra = barra_do_canal(&tela.som, canal);
-                if barra.w > 0.0 && barra.h > 0.0 {
-                    paradas.push((Foco::Volume(canal), barra));
-                }
-            }
-        }
-        if self.folha.is_none() && !self.dialogo && !self.jogo().ended {
-            let casa = match self.foco {
-                Some(Foco::Casa(casa)) => casa,
-                _ => self.gestos.selecionada().unwrap_or(CASA_INICIAL_DO_FOCO),
-            };
-            paradas.push((Foco::Casa(casa), tela.grade));
-        }
-        paradas.sort_by(|(_, a), (_, b)| a.y.round().total_cmp(&b.y.round()).then(a.x.total_cmp(&b.x)));
-        paradas
-    }
-
-    /// Uma tecla. As setas andam pelas casas (ou mudam o volume em foco), Enter/Espaço tocam a
-    /// casa ou apertam o botão, Tab/Shift+Tab passam de parada em parada e Esc volta.
-    pub fn tecla(&mut self, tecla: Tecla, tela: &TelaJogo) {
-        self.foco_visivel = true;
-        match tecla {
-            Tecla::Voltar => self.voltar(),
-            Tecla::Proximo | Tecla::Anterior => {
-                let paradas = self.paradas_do_teclado(tela);
-                if paradas.is_empty() {
-                    return;
-                }
-                let atual = self.foco.and_then(|foco| {
-                    paradas.iter().position(|(parada, _)| match (parada, foco) {
-                        (Foco::Casa(_), Foco::Casa(_)) => true,
-                        (a, b) => *a == b,
-                    })
-                });
-                let total = paradas.len();
-                let proximo = match (atual, tecla) {
-                    (Some(i), Tecla::Proximo) => (i + 1) % total,
-                    (Some(i), _) => (i + total - 1) % total,
-                    (None, Tecla::Proximo) => 0,
-                    (None, _) => total - 1,
-                };
-                self.foco = Some(paradas[proximo].0);
-            }
-            Tecla::Esquerda | Tecla::Direita | Tecla::Acima | Tecla::Abaixo => match self.foco {
-                Some(Foco::Volume(canal)) => {
-                    let atual = i32::from(self.preferencias.volumes.de(canal));
-                    let passo = match tecla {
-                        Tecla::Esquerda | Tecla::Abaixo => -5,
-                        _ => 5,
-                    };
-                    let novo = (atual + passo).clamp(0, 100) as u8;
-                    if novo != self.preferencias.volumes.de(canal) {
-                        self.preferencias.volumes.definir(canal, novo);
-                        self.gravar_preferencias();
-                    }
-                }
-                Some(Foco::Casa(casa)) => {
-                    if !self.ocupado() {
-                        self.foco = Some(Foco::Casa(casa_vizinha(casa, tecla)));
-                    }
-                }
-                _ => {
-                    if self.folha.is_none() && !self.dialogo && !self.jogo().ended {
-                        self.foco = Some(Foco::Casa(self.gestos.selecionada().unwrap_or(CASA_INICIAL_DO_FOCO)));
-                    }
-                }
-            },
-            Tecla::Confirmar => match self.foco {
-                Some(Foco::Casa(casa)) => self.confirmar_casa(casa),
-                Some(Foco::Botao(botao)) if self.botoes_visiveis(tela).iter().any(|(visivel, _)| *visivel == botao) => {
-                    self.apertar(botao)
-                }
-                _ => {}
-            },
-        }
-    }
-
-    /// Enter numa casa: escolhe a casa do especial pendente, ou toca nela como o dedo tocaria.
-    fn confirmar_casa(&mut self, casa: usize) {
-        if self.folha.is_some() || self.ocupado() {
-            return;
-        }
-        if let Some(especial) = self.escolhendo.take() {
-            self.criar_especial(especial, casa);
-            return;
-        }
-        if self.bloqueado() {
-            return;
-        }
-        self.dica = None;
-        if let Acao::Trocar(a, b) = self.gestos.tocar_na_casa(casa) {
-            self.jogar(a, b);
-        }
-    }
-
-    /// Esc: fecha a pergunta, a escolha de casa, a folha ou desmarca a pedra (nessa ordem).
-    fn voltar(&mut self) {
-        if self.dialogo {
-            self.dialogo = false;
-        } else if self.escolhendo.is_some() {
-            self.escolhendo = None;
-        } else if self.folha.is_some() {
-            self.fechar_folha();
-        } else {
-            self.gestos.limpar();
-        }
     }
 
     // ---- Menu secreto (aba Ferramentas) -------------------------------------------------
@@ -1867,7 +1701,7 @@ mod tests {
     use super::*;
     use crate::formato::partida_para_json;
     use crate::fundo::Desejado;
-    use crate::input::{Evento, Tecla};
+    use crate::input::Evento;
     use crate::layout::{cell_rect, tela_jogo, Rect, TelaJogo};
     use crate::linha::{Passo, Reprodutor};
     use crate::vibracao::Toque;
@@ -2314,174 +2148,6 @@ mod tests {
         assert_eq!(app.jogo().score, 0);
         arrastar(&mut app, a, b);
         assert!(app.ocupado(), "o arrasto seguinte joga");
-    }
-
-    // ---- Teclado ----
-
-    fn teclar(app: &mut App, teclas: &[Tecla]) {
-        let tela = tela();
-        for tecla in teclas {
-            app.tecla(*tecla, &tela);
-        }
-    }
-
-    #[test]
-    fn setas_levam_o_foco_ao_tabuleiro_e_andam_sem_dar_a_volta() {
-        let mut app = App::com_sementes(7, 9);
-        teclar(&mut app, &[Tecla::Direita]);
-        assert_eq!(app.foco_visivel(), Some(Foco::Casa(27)), "a primeira seta põe o foco no meio do tabuleiro");
-        teclar(&mut app, &[Tecla::Direita, Tecla::Abaixo]);
-        assert_eq!(app.foco_visivel(), Some(Foco::Casa(36)));
-        app.foco = Some(Foco::Casa(7));
-        teclar(&mut app, &[Tecla::Direita, Tecla::Acima]);
-        assert_eq!(app.foco_visivel(), Some(Foco::Casa(7)), "não passa da borda nem dá a volta");
-        app.foco = Some(Foco::Casa(8));
-        teclar(&mut app, &[Tecla::Esquerda]);
-        assert_eq!(app.foco_visivel(), Some(Foco::Casa(8)), "da coluna 0 não volta para a linha de cima");
-    }
-
-    #[test]
-    fn enter_em_duas_vizinhas_troca() {
-        let mut app = App::com_sementes(7, 9);
-        let (a, b) = boa_jogada(&mut app);
-        app.foco = Some(Foco::Casa(a));
-        teclar(&mut app, &[Tecla::Confirmar]);
-        assert_eq!(app.gestos().selecionada(), Some(a));
-        app.foco = Some(Foco::Casa(b));
-        teclar(&mut app, &[Tecla::Confirmar]);
-        assert!(app.ocupado(), "a troca começou");
-    }
-
-    #[test]
-    fn durante_a_animacao_setas_e_enter_no_tabuleiro_nao_fazem_nada() {
-        let mut app = App::com_sementes(7, 9);
-        let (a, b) = boa_jogada(&mut app);
-        arrastar(&mut app, a, b);
-        app.foco = Some(Foco::Casa(10));
-        teclar(&mut app, &[Tecla::Direita, Tecla::Confirmar]);
-        assert_eq!(app.foco_visivel(), Some(Foco::Casa(10)));
-        assert_eq!(app.gestos().selecionada(), None);
-    }
-
-    #[test]
-    fn tab_percorre_tabuleiro_e_botoes_em_ordem_de_leitura_e_shift_tab_volta() {
-        let tela = tela();
-        let mut app = App::com_sementes(7, 9);
-        let mut vistos = Vec::new();
-        for _ in 0..12 {
-            teclar(&mut app, &[Tecla::Proximo]);
-            vistos.push(app.foco_visivel().unwrap());
-        }
-        // Topo (♪, ≡), tabuleiro, Embaralhar, Dica, Novo jogo, Zen, Clássico — e recomeça.
-        assert_eq!(
-            &vistos[..7],
-            &[
-                Foco::Botao(Botao::Som),
-                Foco::Botao(Botao::Menu),
-                Foco::Casa(27),
-                Foco::Botao(Botao::Embaralhar),
-                Foco::Botao(Botao::Dica),
-                Foco::Botao(Botao::NovoJogo),
-                Foco::Botao(Botao::Zen),
-            ]
-        );
-        assert_eq!(vistos[7], Foco::Botao(Botao::Classico));
-        assert_eq!(vistos[8], Foco::Botao(Botao::Som), "dá a volta");
-        // O 12º Tab parou no Embaralhar; Shift+Tab volta ao tabuleiro.
-        teclar(&mut app, &[Tecla::Anterior]);
-        assert_eq!(app.foco_visivel(), Some(vistos[10]));
-        assert_eq!(vistos[10], Foco::Casa(27));
-        let _ = tela;
-    }
-
-    #[test]
-    fn enter_aperta_o_botao_em_foco_e_botao_sumido_nao() {
-        let mut app = App::com_sementes(7, 9);
-        app.foco = Some(Foco::Botao(Botao::Classico));
-        teclar(&mut app, &[Tecla::Confirmar]);
-        assert_eq!(app.modo(), Mode::Classic);
-        // No Clássico o Embaralhar não existe: Enter não faz nada e Tab recomeça do início.
-        app.foco = Some(Foco::Botao(Botao::Embaralhar));
-        let antes = app.jogo().board;
-        teclar(&mut app, &[Tecla::Confirmar]);
-        assert_eq!(app.jogo().board, antes);
-        assert!(!app.ocupado());
-        teclar(&mut app, &[Tecla::Proximo]);
-        assert_eq!(app.foco_visivel(), Some(Foco::Botao(Botao::Som)));
-    }
-
-    #[test]
-    fn esc_fecha_dialogo_folha_escolha_e_selecao_nessa_ordem() {
-        let mut app = App::com_sementes(7, 9);
-        app.apertar(Botao::NovoJogo);
-        teclar(&mut app, &[Tecla::Voltar]);
-        assert!(!app.painel().dialogo);
-        app.apertar(Botao::Som);
-        teclar(&mut app, &[Tecla::Voltar]);
-        assert_eq!(app.folha(), None);
-        tocar_casa(&mut app, 20);
-        assert_eq!(app.gestos().selecionada(), Some(20));
-        teclar(&mut app, &[Tecla::Voltar]);
-        assert_eq!(app.gestos().selecionada(), None);
-        let mut app = com_ferramentas();
-        app.apertar(Botao::Raio);
-        teclar(&mut app, &[Tecla::Voltar]);
-        assert_eq!(app.escolhendo, None);
-        assert_eq!(app.painel().aviso, None);
-    }
-
-    #[test]
-    fn enter_numa_casa_cria_o_especial_escolhido() {
-        let mut app = com_ferramentas();
-        app.apertar(Botao::Pulso);
-        app.foco = Some(Foco::Casa(27));
-        teclar(&mut app, &[Tecla::Confirmar]);
-        assert_eq!(app.jogo().tile(27).map(|pedra| pedra.kind), Some(TileKind::Burst));
-    }
-
-    #[test]
-    fn setas_mudam_o_volume_em_foco_e_gravam() {
-        let mut app = App::com_sementes(7, 9);
-        app.apertar(Botao::Som);
-        let mut achou = false;
-        for _ in 0..20 {
-            teclar(&mut app, &[Tecla::Proximo]);
-            if app.foco_visivel() == Some(Foco::Volume(Canal::Efeitos)) {
-                achou = true;
-                break;
-            }
-        }
-        assert!(achou, "a barra de volume dos efeitos entra no Tab");
-        let antes = app.preferencias().volumes.efeitos;
-        teclar(&mut app, &[Tecla::Esquerda]);
-        assert_eq!(app.preferencias().volumes.efeitos, antes - 5);
-        teclar(&mut app, &[Tecla::Direita, Tecla::Direita]);
-        assert_eq!(app.preferencias().volumes.efeitos, antes + 5);
-        app.preferencias.volumes.efeitos = 100;
-        teclar(&mut app, &[Tecla::Direita]);
-        assert_eq!(app.preferencias().volumes.efeitos, 100);
-    }
-
-    #[test]
-    fn o_clique_esconde_o_contorno_do_teclado() {
-        let mut app = App::com_sementes(7, 9);
-        teclar(&mut app, &[Tecla::Proximo]);
-        assert!(app.foco_visivel().is_some());
-        tocar_casa(&mut app, 5);
-        assert_eq!(app.foco_visivel(), None);
-        teclar(&mut app, &[Tecla::Proximo]);
-        assert!(app.foco_visivel().is_some(), "o teclado traz o contorno de volta");
-    }
-
-    #[test]
-    fn o_retangulo_do_foco_some_quando_o_botao_some() {
-        let tela = tela();
-        let mut app = App::com_sementes(7, 9);
-        app.foco = Some(Foco::Botao(Botao::Embaralhar));
-        app.foco_visivel = true;
-        assert_eq!(app.retangulo_do_foco(&tela).map(|(_, r)| r), tela.botao_embaralhar);
-        app.apertar(Botao::Classico);
-        assert_eq!(app.retangulo_do_foco(&tela), None);
     }
 
     /// A jogada que a Dica sugere (sempre válida).

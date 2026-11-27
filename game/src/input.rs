@@ -29,23 +29,6 @@ pub enum Evento {
     Cancelar,
 }
 
-/// Uma tecla que o jogo entende (o laço traduz as do teclado de verdade).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tecla {
-    Esquerda,
-    Direita,
-    Acima,
-    Abaixo,
-    /// Enter ou Espaço.
-    Confirmar,
-    /// Tab.
-    Proximo,
-    /// Shift + Tab.
-    Anterior,
-    /// Esc.
-    Voltar,
-}
-
 /// O botão do mouse (ou o dedo, que o Macroquad transforma em mouse) num quadro.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EstadoDoMouse {
@@ -197,7 +180,7 @@ impl Gestos {
     }
 
     /// Um toque na casa: marca, desmarca, troca com a vizinha ou muda a marcação.
-    pub fn tocar_na_casa(&mut self, casa: usize) -> Acao {
+    fn tocar_na_casa(&mut self, casa: usize) -> Acao {
         match self.selecionada {
             None => {
                 self.selecionada = Some(casa);

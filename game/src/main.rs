@@ -28,7 +28,7 @@ mod tom;
 mod vibracao;
 
 use crate::app::{App, Folha};
-use crate::input::{eventos_do_quadro, EstadoDoMouse, Tecla};
+use crate::input::{eventos_do_quadro, EstadoDoMouse, Evento};
 use crate::salvar::Salvador;
 use crate::vibracao::Toque;
 use macroquad::audio::{load_sound_from_bytes, play_sound_once, Sound};
@@ -197,23 +197,6 @@ async fn rodar_vitrine(foto: Option<String>) {
     }
 }
 
-/// As teclas apertadas neste quadro, já traduzidas para o que o jogo entende.
-fn teclas_do_quadro() -> Vec<Tecla> {
-    let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
-    let pares = [
-        (KeyCode::Left, Tecla::Esquerda),
-        (KeyCode::Right, Tecla::Direita),
-        (KeyCode::Up, Tecla::Acima),
-        (KeyCode::Down, Tecla::Abaixo),
-        (KeyCode::Enter, Tecla::Confirmar),
-        (KeyCode::KpEnter, Tecla::Confirmar),
-        (KeyCode::Space, Tecla::Confirmar),
-        (KeyCode::Tab, if shift { Tecla::Anterior } else { Tecla::Proximo }),
-        (KeyCode::Escape, Tecla::Voltar),
-    ];
-    pares.into_iter().filter(|(codigo, _)| is_key_pressed(*codigo)).map(|(_, tecla)| tecla).collect()
-}
-
 /// Escuta os eventos crus do Macroquad de um quadro só para saber se o sistema interrompeu o
 /// toque: o Android cancelou o dedo (a barra de notificações, por exemplo) ou a janela foi
 /// minimizada (o Macroquad então anuncia o botão como solto, o que viraria uma jogada).
@@ -357,10 +340,6 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
             app.tocar(evento, &tela);
         }
         ultima_posicao = (x, y);
-        // O teclado (no PC): setas, Enter/Espaço, Tab/Shift+Tab e Esc.
-        for tecla in teclas_do_quadro() {
-            app.tecla(tecla, &tela);
-        }
 
         // Sem limitar o tempo: ao voltar do segundo plano a animação simplesmente termina.
         // (No modo foto o jogo fica parado, para a cena sair exatamente como foi montada.)
