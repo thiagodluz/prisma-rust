@@ -29,6 +29,58 @@ pub enum Evento {
     Cancelar,
 }
 
+/// Uma tecla que o jogo entende (o laço traduz as do teclado de verdade).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tecla {
+    Esquerda,
+    Direita,
+    Acima,
+    Abaixo,
+    /// Enter ou Espaço.
+    Confirmar,
+    /// Tab.
+    Proximo,
+    /// Shift + Tab.
+    Anterior,
+    /// Esc.
+    Voltar,
+}
+
+/// O botão do mouse (ou o dedo, que o Macroquad transforma em mouse) num quadro.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EstadoDoMouse {
+    /// Encostou neste quadro.
+    pub apertou: bool,
+    /// Está encostado.
+    pub segurando: bool,
+    /// Soltou neste quadro (o Macroquad também diz isso quando a janela some).
+    pub soltou: bool,
+    pub x: f32,
+    pub y: f32,
+    /// Onde estava no quadro anterior.
+    pub ultima: (f32, f32),
+}
+
+/// Os eventos de um quadro, na ordem: encostar, andar, soltar. Se o sistema interrompeu o gesto
+/// neste quadro (toque cancelado, janela minimizada), só sai `Cancelar`: o "soltar" que o
+/// Macroquad anuncia nessa hora não é do jogador e não pode completar uma troca.
+pub fn eventos_do_quadro(mouse: EstadoDoMouse, interrompido: bool) -> Vec<Evento> {
+    if interrompido {
+        return vec![Evento::Cancelar];
+    }
+    let (x, y) = (mouse.x, mouse.y);
+    let mut eventos = Vec::new();
+    if mouse.apertou {
+        eventos.push(Evento::Baixo { x, y });
+    } else if mouse.segurando && (x, y) != mouse.ultima {
+        eventos.push(Evento::Mover { x, y });
+    }
+    if mouse.soltou {
+        eventos.push(Evento::Cima { x, y });
+    }
+    eventos
+}
+
 /// O que o gesto pede que o jogo faça.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Acao {
@@ -145,7 +197,7 @@ impl Gestos {
     }
 
     /// Um toque na casa: marca, desmarca, troca com a vizinha ou muda a marcação.
-    fn tocar_na_casa(&mut self, casa: usize) -> Acao {
+    pub fn tocar_na_casa(&mut self, casa: usize) -> Acao {
         match self.selecionada {
             None => {
                 self.selecionada = Some(casa);
@@ -195,6 +247,32 @@ fn alvo_do_gesto(inicio: Inicio, x: f32, y: f32, lado: f32) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mouse(apertou: bool, segurando: bool, soltou: bool, x: f32, ultima: f32) -> EstadoDoMouse {
+        EstadoDoMouse { apertou, segurando, soltou, x, y: 10.0, ultima: (ultima, 10.0) }
+    }
+
+    #[test]
+    fn quadro_sem_interrupcao_segue_baixo_mover_cima() {
+        assert_eq!(eventos_do_quadro(mouse(true, true, false, 5.0, 0.0), false), vec![Evento::Baixo { x: 5.0, y: 10.0 }]);
+        assert_eq!(eventos_do_quadro(mouse(false, true, false, 7.0, 5.0), false), vec![Evento::Mover { x: 7.0, y: 10.0 }]);
+        assert_eq!(eventos_do_quadro(mouse(false, true, false, 7.0, 7.0), false), vec![], "parado não move");
+        assert_eq!(eventos_do_quadro(mouse(false, false, true, 9.0, 7.0), false), vec![Evento::Cima { x: 9.0, y: 10.0 }]);
+        // Encostou e soltou no mesmo quadro (um toque rápido): os dois, nessa ordem.
+        assert_eq!(
+            eventos_do_quadro(mouse(true, false, true, 3.0, 0.0), false),
+            vec![Evento::Baixo { x: 3.0, y: 10.0 }, Evento::Cima { x: 3.0, y: 10.0 }]
+        );
+    }
+
+    #[test]
+    fn quadro_interrompido_so_cancela() {
+        // O Macroquad anuncia o botão "solto" quando a janela some: isso não pode virar jogada.
+        assert_eq!(eventos_do_quadro(mouse(false, false, true, 9.0, 7.0), true), vec![Evento::Cancelar]);
+        assert_eq!(eventos_do_quadro(mouse(false, true, false, 9.0, 7.0), true), vec![Evento::Cancelar]);
+        assert_eq!(eventos_do_quadro(mouse(true, true, false, 9.0, 7.0), true), vec![Evento::Cancelar]);
+    }
+
 
     /// O tabuleiro de teste: começa em (100, 200) e tem 400 px de lado, então cada casa mede 50 px.
     const TAB: Rect = Rect { x: 100.0, y: 200.0, w: 400.0, h: 400.0 };
