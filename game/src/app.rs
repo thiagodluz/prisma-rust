@@ -2134,6 +2134,22 @@ mod tests {
         assert!(app.ferramentas().ocupado);
     }
 
+    #[test]
+    fn arrasto_cancelado_nao_joga_e_o_proximo_funciona() {
+        let tela = tela();
+        let mut app = App::com_sementes(7, 9);
+        let (a, b) = boa_jogada(&mut app);
+        let ((ax, ay), (bx, by)) = (centro(&tela, a), centro(&tela, b));
+        app.tocar(Evento::Baixo { x: ax, y: ay }, &tela);
+        app.tocar(Evento::Mover { x: bx, y: by }, &tela);
+        app.tocar(Evento::Cancelar, &tela);
+        app.tocar(Evento::Cima { x: bx, y: by }, &tela);
+        assert!(!app.ocupado(), "o gesto cancelado não vira troca");
+        assert_eq!(app.jogo().score, 0);
+        arrastar(&mut app, a, b);
+        assert!(app.ocupado(), "o arrasto seguinte joga");
+    }
+
     /// A jogada que a Dica sugere (sempre válida).
     fn boa_jogada(app: &mut App) -> (usize, usize) {
         app.jogo_mut().hint().expect("o tabuleiro tem jogada")

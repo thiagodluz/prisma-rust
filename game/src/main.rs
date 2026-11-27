@@ -28,7 +28,7 @@ mod tom;
 mod vibracao;
 
 use crate::app::{App, Folha};
-use crate::input::Evento;
+use crate::input::{eventos_do_quadro, EstadoDoMouse, Evento};
 use crate::salvar::Salvador;
 use crate::vibracao::Toque;
 use macroquad::audio::{load_sound_from_bytes, play_sound_once, Sound};
@@ -197,6 +197,28 @@ async fn rodar_vitrine(foto: Option<String>) {
     }
 }
 
+/// Escuta os eventos crus do Macroquad de um quadro só para saber se o sistema interrompeu o
+/// toque: o Android cancelou o dedo (a barra de notificações, por exemplo) ou a janela foi
+/// minimizada (o Macroquad então anuncia o botão como solto, o que viraria uma jogada).
+#[derive(Default)]
+struct Interrupcoes {
+    houve: bool,
+}
+
+impl macroquad::miniquad::EventHandler for Interrupcoes {
+    fn update(&mut self) {}
+    fn draw(&mut self) {}
+    fn touch_event(&mut self, fase: macroquad::miniquad::TouchPhase, _id: u64, _x: f32, _y: f32) {
+        if fase == macroquad::miniquad::TouchPhase::Cancelled {
+            self.houve = true;
+        }
+    }
+    fn window_minimized_event(&mut self) {
+        self.houve = true;
+    }
+}
+
+
 /// A linha de registro de um toque (início do dedo), em pixels reais da tela do app. O teste
 /// do celular virtual toca num ponto conhecido da tela e compara com esta linha para saber
 /// quanto a janela do app está deslocada (por exemplo pela barra de status): o `adb` toca em
@@ -295,18 +317,27 @@ async fn rodar_jogo(foto: Option<String>, cena: Option<String>, dados: Option<St
     // escrita no registro.
     let mut geometria_registrada: Option<(f32, f32, Mode, Option<Folha>)> = None;
     let mut ultima_posicao = (-1.0f32, -1.0f32);
+    // Para saber, a cada quadro, se o sistema interrompeu o toque (ver `Interrupcoes`).
+    let assinante = macroquad::input::utils::register_input_subscriber();
     loop {
         // No celular o toque vira clique do mouse (o Macroquad faz isso sozinho, como no M0b).
         let tela = calcular_tela(&app);
         let (x, y) = mouse_position();
-        if is_mouse_button_pressed(MouseButton::Left) {
+        let mouse = EstadoDoMouse {
+            apertou: is_mouse_button_pressed(MouseButton::Left),
+            segurando: is_mouse_button_down(MouseButton::Left),
+            soltou: is_mouse_button_released(MouseButton::Left),
+            x,
+            y,
+            ultima: ultima_posicao,
+        };
+        if mouse.apertou {
             info!("{}", linha_de_toque(x, y, screen_dpi_scale()));
-            app.tocar(Evento::Baixo { x, y }, &tela);
-        } else if is_mouse_button_down(MouseButton::Left) && (x, y) != ultima_posicao {
-            app.tocar(Evento::Mover { x, y }, &tela);
         }
-        if is_mouse_button_released(MouseButton::Left) {
-            app.tocar(Evento::Cima { x, y }, &tela);
+        let mut interrupcoes = Interrupcoes::default();
+        macroquad::input::utils::repeat_all_miniquad_input(&mut interrupcoes, assinante);
+        for evento in eventos_do_quadro(mouse, interrupcoes.houve) {
+            app.tocar(evento, &tela);
         }
         ultima_posicao = (x, y);
 
