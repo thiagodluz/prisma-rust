@@ -290,6 +290,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Só para ler a versão em game/Cargo.toml (o passo da release numerada).
+      - uses: actions/checkout@v4
+
       - name: Baixar o APK gerado
         uses: actions/download-artifact@v4
         with:

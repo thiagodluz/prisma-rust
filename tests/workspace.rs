@@ -197,6 +197,10 @@ fn o_fluxo_do_android_so_publica_depois_dos_emuladores_e_sem_apagar_a_release() 
     assert!(publicar.contains("refs/heads/main"), "só a main publica.");
     assert!(publicar.contains("--clobber"), "o APK novo substitui o arquivo da release sem apagar a release.");
     assert!(
+        publicar.contains("actions/checkout"),
+        "o passo da release numerada lê game/Cargo.toml, então o job `publicar` precisa baixar o código."
+    );
+    assert!(
         publicar.contains("gh release create \"v$VERSAO\"") && publicar.contains("gh release view \"v$VERSAO\""),
         "a release numerada v<versão> é criada uma vez só (se já existe, não é mexida)."
     );
